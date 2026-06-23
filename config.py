@@ -52,4 +52,6 @@ LIVE_MOM_MIN = 0.0005      # min up-move over the lookback to fire a BUY (0.05%)
 LIVE_IMB_MIN = 0.10        # min order-book imbalance (bid-heavy) to fire
 LIVE_TARGET = 0.0          # "correct" if best net move in the window clears this (after costs)
 LIVE_POLL_SEC = 1.0        # how often we poll quotes (1s)
-LIVE_CONSEC_UPS = 5        # streak rule: this many consecutive price+volume rises -> recommend BUY
+LIVE_CONSEC_UPS = 5        # (backtest streak mode) consecutive price rises -> BUY
+LIVE_WINDOW_SEC = 10       # live rule: rolling window length in seconds
+LIVE_MIN_UPS = 6           # recommend BUY if >= this many of the last 10 ticks were up (majority)

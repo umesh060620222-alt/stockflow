@@ -82,21 +82,19 @@ class LiveEngine:
             time.sleep(max(0.2, config.LIVE_POLL_SEC - (time.time() - t0)))
 
     def _signal(self, sym, now):
-        """Streak rule: count consecutive ticks where BOTH price and (cumulative)
-        volume rose vs the previous tick. Any dip/flat resets the count to 0 and we
-        start fresh from this point. On LIVE_CONSEC_UPS in a row -> BUY recommendation."""
+        """Rolling-window majority rule: over the last LIVE_WINDOW_SEC ticks (~seconds),
+        if at least LIVE_MIN_UPS were up-ticks (majority rising) -> BUY recommendation.
+        Softer than a pure streak: tolerates a dip as long as the window stays mostly up."""
         dq = self.ticks[sym]
-        if len(dq) < 2:
+        W = config.LIVE_WINDOW_SEC
+        if len(dq) < W + 1:
             return
-        cur, prev = dq[-1], dq[-2]
-        if cur[1] > prev[1]:               # price rose vs the previous tick
-            self.streak[sym] += 1
-        else:
-            self.streak[sym] = 0           # a dip/flat resets the streak to this point
         if any(p["symbol"] == sym for p in self.pending):
             return                          # already have an open call on this symbol
-        if self.streak[sym] >= config.LIVE_CONSEC_UPS:
-            self.streak[sym] = 0
+        win = list(dq)[-(W + 1):]           # W+1 ticks => W consecutive deltas
+        ups = sum(1 for a, b in zip(win[1:], win[:-1]) if a[1] > b[1])
+        if ups >= config.LIVE_MIN_UPS:
+            cur = dq[-1]
             with self.lock:
                 self.pending.append({"symbol": sym, "side": "long", "ts": now,
                                      "entry": cur[1], "best": cur[1],
