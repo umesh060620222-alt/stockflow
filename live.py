@@ -23,6 +23,7 @@ class LiveEngine:
         self.running = False
         self.thread = None
         self.ticks = defaultdict(lambda: deque(maxlen=180))  # (t, ltp, vwap, vol, bidq, askq)
+        self.streak = defaultdict(int)    # per-symbol count of consecutive price+volume rises
         self.pending = []                 # open recommendations awaiting grading
         self.history = deque(maxlen=200)  # graded recommendations (newest first)
         self.score = {"total": 0, "correct": 0, "directional": 0}
@@ -72,7 +73,7 @@ class LiveEngine:
                     bidq = sum(x.get("quantity", 0) for x in depth.get("buy", []))
                     askq = sum(x.get("quantity", 0) for x in depth.get("sell", []))
                     self.ticks[sym].append((now, ltp, vwap, vol, bidq, askq))
-                    self._signal(sym, now, ltp, vwap)
+                    self._signal(sym, now)
                 self._grade(now)
                 self.polls += 1
                 self.last_error = None
@@ -80,21 +81,27 @@ class LiveEngine:
                 self.last_error = str(e)
             time.sleep(max(0.2, config.LIVE_POLL_SEC - (time.time() - t0)))
 
-    def _signal(self, sym, now, ltp, vwap):
+    def _signal(self, sym, now):
+        """Streak rule: count consecutive ticks where BOTH price and (cumulative)
+        volume rose vs the previous tick. Any dip/flat resets the count to 0 and we
+        start fresh from this point. On LIVE_CONSEC_UPS in a row -> BUY recommendation."""
         dq = self.ticks[sym]
-        if len(dq) < config.LIVE_LOOKBACK_S + 1:
+        if len(dq) < 2:
             return
+        cur, prev = dq[-1], dq[-2]
+        price_up = cur[1] > prev[1]
+        vol_up = cur[3] > prev[3]          # cumulative volume rose => trades happened this tick
+        if price_up and vol_up:
+            self.streak[sym] += 1
+        else:
+            self.streak[sym] = 0           # a dip resets the streak to this point
         if any(p["symbol"] == sym for p in self.pending):
-            return   # one open recommendation per symbol at a time
-        past = dq[-config.LIVE_LOOKBACK_S - 1]
-        mom = (ltp - past[1]) / past[1] if past[1] else 0
-        dvol = dq[-1][3] - past[3]
-        bidq, askq = dq[-1][4], dq[-1][5]
-        imb = (bidq - askq) / (bidq + askq) if (bidq + askq) else 0
-        if ltp > vwap and mom >= config.LIVE_MOM_MIN and imb >= config.LIVE_IMB_MIN and dvol > 0:
+            return                          # already have an open call on this symbol
+        if self.streak[sym] >= config.LIVE_CONSEC_UPS:
+            self.streak[sym] = 0
             with self.lock:
                 self.pending.append({"symbol": sym, "side": "long", "ts": now,
-                                     "entry": ltp, "best": ltp,
+                                     "entry": cur[1], "best": cur[1],
                                      "deadline": now + config.LIVE_HORIZON_S})
 
     def _grade(self, now):
