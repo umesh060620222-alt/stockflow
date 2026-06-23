@@ -89,12 +89,10 @@ class LiveEngine:
         if len(dq) < 2:
             return
         cur, prev = dq[-1], dq[-2]
-        price_up = cur[1] > prev[1]
-        vol_up = cur[3] > prev[3]          # cumulative volume rose => trades happened this tick
-        if price_up and vol_up:
+        if cur[1] > prev[1]:               # price rose vs the previous tick
             self.streak[sym] += 1
         else:
-            self.streak[sym] = 0           # a dip resets the streak to this point
+            self.streak[sym] = 0           # a dip/flat resets the streak to this point
         if any(p["symbol"] == sym for p in self.pending):
             return                          # already have an open call on this symbol
         if self.streak[sym] >= config.LIVE_CONSEC_UPS:

@@ -24,8 +24,9 @@ def add_indicators(df: pd.DataFrame, bench_ret: pd.Series | None) -> pd.DataFram
         d["mom"] = d["close"].pct_change(config.MOM_LOOKBACK)
         d["ret_open"] = d["close"] / d["close"].iloc[0] - 1.0
         d["bar_idx"] = range(len(d))
-        # streak mode: consecutive bars where BOTH price and volume rose
-        up = (d["close"] > d["close"].shift(1)) & (d["volume"] > d["volume"].shift(1))
+        # streak mode: consecutive bars where price rose (matches the live tick rule,
+        # where cumulative volume always rises so the effective trigger is price).
+        up = d["close"] > d["close"].shift(1)
         blocks = (up != up.shift()).cumsum()
         run = up.groupby(blocks).cumcount() + 1
         d["streak"] = run.where(up, 0).astype(int)
