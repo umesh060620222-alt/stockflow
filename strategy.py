@@ -24,6 +24,11 @@ def add_indicators(df: pd.DataFrame, bench_ret: pd.Series | None) -> pd.DataFram
         d["mom"] = d["close"].pct_change(config.MOM_LOOKBACK)
         d["ret_open"] = d["close"] / d["close"].iloc[0] - 1.0
         d["bar_idx"] = range(len(d))
+        # streak mode: consecutive bars where BOTH price and volume rose
+        up = (d["close"] > d["close"].shift(1)) & (d["volume"] > d["volume"].shift(1))
+        blocks = (up != up.shift()).cumsum()
+        run = up.groupby(blocks).cumcount() + 1
+        d["streak"] = run.where(up, 0).astype(int)
         out.append(d)
     res = pd.concat(out)
     if bench_ret is not None:
@@ -38,6 +43,11 @@ def entry_signal(row) -> str | None:
     """Return 'long', 'short', or None for this bar (evaluated on bar close)."""
     if row["bar_idx"] < config.SKIP_OPEN_BARS:
         return None
+
+    if config.MODE == "streak":
+        # N consecutive price+volume rises -> BUY (matches the live streak rule)
+        return "long" if row["streak"] >= config.LIVE_CONSEC_UPS else None
+
     if pd.isna(row["vol_avg"]) or row["vol_avg"] <= 0:
         return None
     vol_surge = row["volume"] > config.VOL_MULT * row["vol_avg"]
