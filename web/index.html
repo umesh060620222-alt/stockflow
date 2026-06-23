@@ -109,9 +109,22 @@ async function zstatus(){
 }
 zstatus();
 
+// Auto-capture: when Kite redirects back here with ?request_token=..., connect
+// automatically (no copy-paste) and clean the URL.
+(async function(){
+  const rt = new URLSearchParams(location.search).get("request_token");
+  if(!rt) return;
+  document.getElementById("zmsg").textContent = "connecting…";
+  const d = await (await fetch("/api/auth/token",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({request_token:rt})})).json();
+  document.getElementById("zmsg").textContent = d.connected ? ("✓ connected "+(d.user||"")) : (d.error||"failed");
+  history.replaceState({}, "", location.pathname);
+  zstatus();
+})();
+
 async function zopen(){
   const d = await (await fetch("/api/auth/url")).json();
-  if(d.url) window.open(d.url, "_blank");
+  if(d.url) location.href = d.url;   // same tab -> Kite redirects back here with the token
   else document.getElementById("zmsg").textContent = d.error || "no login url";
 }
 
