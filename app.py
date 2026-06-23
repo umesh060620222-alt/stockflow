@@ -81,14 +81,15 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        path = self.path.split("?", 1)[0]          # ignore query string when routing
+        if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
-        if self.path == "/api/defaults":
+        if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
-        if self.path == "/api/auth/status":
+        if path == "/api/auth/status":
             return self._send(200, dumps({"connected": Z.auth_status(), "source": config.SOURCE}))
-        if self.path == "/api/auth/url":
+        if path == "/api/auth/url":
             try:
                 return self._send(200, dumps({"url": Z.login_url()}))
             except Exception as e:
@@ -96,15 +97,16 @@ class H(BaseHTTPRequestHandler):
         self._send(404, dumps({"error": "not found"}))
 
     def do_POST(self):
+        path = self.path.split("?", 1)[0]
         n = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(n) or "{}") if n else {}
-        if self.path == "/api/auth/token":
+        if path == "/api/auth/token":
             try:
                 user = Z.exchange_token(body.get("request_token", ""))
                 return self._send(200, dumps({"connected": True, "user": user}))
             except Exception as e:
                 return self._send(200, dumps({"error": f"{type(e).__name__}: {e}"}))
-        if self.path != "/api/run":
+        if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:
             out = run_algo(body)
