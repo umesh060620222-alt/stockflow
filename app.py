@@ -10,6 +10,7 @@ import json, os, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config, data as D, strategy as S, engine as E, zerodha as Z
+from live import ENGINE as LIVE
 
 HERE = os.path.dirname(__file__)
 
@@ -89,6 +90,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":
             return self._send(200, dumps({"connected": Z.auth_status(), "source": config.SOURCE}))
+        if path == "/api/live/state":
+            return self._send(200, dumps(LIVE.state()))
         if path == "/api/auth/url":
             try:
                 return self._send(200, dumps({"url": Z.login_url()}))
@@ -106,6 +109,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"connected": True, "user": user}))
             except Exception as e:
                 return self._send(200, dumps({"error": f"{type(e).__name__}: {e}"}))
+        if path == "/api/live/start":
+            if not Z.auth_status():
+                return self._send(200, dumps({"error": "connect Zerodha first"}))
+            LIVE.start()
+            return self._send(200, dumps(LIVE.state()))
+        if path == "/api/live/stop":
+            LIVE.stop()
+            return self._send(200, dumps(LIVE.state()))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:

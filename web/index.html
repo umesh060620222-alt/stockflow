@@ -86,6 +86,17 @@
       <div id="results" class="muted">Set params and hit Run. First Zerodha pull takes a few seconds.</div>
     </div>
   </div>
+
+  <div class="card" style="margin-top:18px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <b style="font-size:14px">Live recommendations · 30s self-grade</b>
+      <button id="livebtn" style="width:auto;margin:0;padding:7px 12px" onclick="toggleLive()">Start live</button>
+      <span id="livemeta" class="muted"></span>
+    </div>
+    <div id="livescore" class="stats" style="margin-top:12px;display:none"></div>
+    <table id="livetbl" style="display:none"><thead><tr><th>time</th><th>symbol</th><th>side</th><th>best move</th><th>net (after cost)</th><th>verdict</th></tr></thead><tbody id="livebody"></tbody></table>
+    <div id="livenote" class="muted" style="margin-top:8px">Recommends every second, then grades each call 30s later (best exit, after costs). Needs Zerodha connected + market open.</div>
+  </div>
 </div>
 
 <script>
@@ -192,6 +203,47 @@ function render(d){
     <table><thead><tr><th>time</th><th>symbol</th><th>side</th><th>exit</th><th>net</th><th>held</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div class="muted" style="margin-top:8px">showing ${Math.min(40,d.trades.length)} of ${d.trades.length} trades</div>`;
+}
+
+let LIVE_TIMER=null;
+async function toggleLive(){
+  const st = await (await fetch("/api/live/state")).json();
+  if(st.running){ await fetch("/api/live/stop",{method:"POST"}); stopPoll(); pollLive(); }
+  else {
+    const r = await (await fetch("/api/live/start",{method:"POST"})).json();
+    if(r.error){ document.getElementById("livenote").textContent = r.error; return; }
+    startPoll();
+  }
+}
+function startPoll(){
+  document.getElementById("livebtn").textContent="Stop live";
+  if(LIVE_TIMER) clearInterval(LIVE_TIMER);
+  LIVE_TIMER=setInterval(pollLive,1500); pollLive();
+}
+function stopPoll(){
+  document.getElementById("livebtn").textContent="Start live";
+  if(LIVE_TIMER){ clearInterval(LIVE_TIMER); LIVE_TIMER=null; }
+}
+async function pollLive(){
+  const d = await (await fetch("/api/live/state")).json();
+  if(!d.running && LIVE_TIMER) stopPoll();
+  document.getElementById("livemeta").innerHTML =
+    (d.running?'<span class="pos">● live</span>':'○ stopped')+` · polls ${d.polls} · pending ${d.pending}`+
+    (d.last_error?` · <span class="neg">${d.last_error}</span>`:"");
+  const sc=d.scorecard, scEl=document.getElementById("livescore");
+  const stat=(k,v)=>`<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  scEl.style.display="grid";
+  scEl.innerHTML = stat("Recommendations",sc.total)+stat("Profitable in 30s",sc.accuracy_pct+"%")+
+                   stat("Directional up",sc.directional_pct+"%")+stat("Correct",sc.correct);
+  const tbl=document.getElementById("livetbl"), body=document.getElementById("livebody");
+  if(d.recent && d.recent.length){
+    tbl.style.display="table";
+    body.innerHTML = d.recent.map(r=>`<tr>
+      <td>${r.time}</td><td>${r.symbol.replace('.NS','')}</td><td><span class="pill">${r.side}</span></td>
+      <td class="${r.best_move_pct>=0?'pos':'neg'}">${r.best_move_pct>=0?'+':''}${r.best_move_pct}%</td>
+      <td class="${r.net_best_pct>=0?'pos':'neg'}">${r.net_best_pct>=0?'+':''}${r.net_best_pct}%</td>
+      <td class="${r.correct?'pos':'neg'}">${r.correct?'✓ correct':'✗ no'}</td></tr>`).join("");
+  }
 }
 </script>
 </body>

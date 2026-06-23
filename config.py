@@ -44,3 +44,11 @@ SLIPPAGE_PCT = 0.0003      # per side; entries/exits don't fill at the exact pri
 
 # --- capital (for P&L reporting only; signal quality is per-trade %) ---
 CAPITAL_PER_TRADE = 10000
+
+# --- live mode (per-second recommend + 30s self-grade) ---
+LIVE_HORIZON_S = 30        # the recommendation must pay off within this many seconds
+LIVE_LOOKBACK_S = 5        # seconds of micro-momentum used to trigger
+LIVE_MOM_MIN = 0.0005      # min up-move over the lookback to fire a BUY (0.05%)
+LIVE_IMB_MIN = 0.10        # min order-book imbalance (bid-heavy) to fire
+LIVE_TARGET = 0.0          # "correct" if best net move in the window clears this (after costs)
+LIVE_POLL_SEC = 1.0        # how often we poll quotes (1s)
