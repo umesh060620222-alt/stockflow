@@ -123,9 +123,13 @@ zstatus();
 })();
 
 async function zopen(){
-  const d = await (await fetch("/api/auth/url")).json();
-  if(d.url) location.href = d.url;   // same tab -> Kite redirects back here with the token
-  else document.getElementById("zmsg").textContent = d.error || "no login url";
+  const msg = document.getElementById("zmsg");
+  msg.textContent = "";
+  let d;
+  try { d = await (await fetch("/api/auth/url")).json(); }
+  catch(e){ msg.textContent = "could not reach /api/auth/url"; return; }
+  if(d && d.url) window.open(d.url, "_blank");   // new tab; Kite redirects it back here with the token
+  else msg.textContent = "login URL unavailable — " + ((d && d.error) || "set KITE_API_KEY on Railway");
 }
 
 async function zconnect(){
