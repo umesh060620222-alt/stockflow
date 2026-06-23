@@ -1,0 +1,7 @@
+kite_secrets.py
+access_token.json
+instruments_nse.csv
+data/
+trades.csv
+__pycache__/
+*.pyc

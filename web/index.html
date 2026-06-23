@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>stockflow — algo lab</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{font-family:Inter,system-ui,sans-serif;background:#0f1011;color:#e4e4e7;margin:0;padding:24px}
+  h1{font-size:20px;margin:0 0 2px}.muted{color:#9ca3af;font-size:13px}
+  .wrap{max-width:1100px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:300px 1fr;gap:20px;margin-top:18px}
+  .card{background:#1b1c1f;border:1px solid #2a2c30;border-radius:14px;padding:18px}
+  label{display:block;font-size:12px;color:#9ca3af;margin:10px 0 4px}
+  input,select{width:100%;background:#101113;border:1px solid #2a2c30;border-radius:8px;
+    color:#e4e4e7;padding:8px;font-size:13px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  button{width:100%;margin-top:16px;background:#fbbf24;color:#0f1011;border:0;border-radius:9px;
+    padding:11px;font-weight:700;font-size:14px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:wait}
+  .verdict{font-size:16px;font-weight:700;padding:12px;border-radius:10px;text-align:center;margin-bottom:14px}
+  .edge{background:#0c2a1c;color:#34d399;border:1px solid #14532d}
+  .noedge{background:#2a1414;color:#f87171;border:1px solid #4c1d1d}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .stat{background:#101113;border:1px solid #2a2c30;border-radius:10px;padding:10px}
+  .stat .k{font-size:11px;color:#9ca3af}.stat .v{font-size:17px;font-weight:700;margin-top:2px}
+  .pos{color:#34d399}.neg{color:#f87171}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #23252a}
+  th{color:#9ca3af;font-weight:600}
+  .pill{font-size:10px;padding:1px 6px;border-radius:6px;background:#23252a}
+  #status{font-size:12px;color:#9ca3af;min-height:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>stockflow <span class="muted">— intraday algo lab</span></h1>
+  <div class="muted">Tune params → Run → read the net-of-cost verdict on real data. Paper only.</div>
+
+  <div class="grid">
+    <!-- controls -->
+    <div class="card">
+      <label>Data source</label>
+      <select id="source"><option value="zerodha">zerodha (live)</option><option value="yfinance">yfinance (free)</option></select>
+      <div class="row">
+        <div><label>Interval</label><select id="interval"><option>5m</option><option>1m</option></select></div>
+        <div><label>Period</label><select id="period"><option>1d</option><option>5d</option><option>7d</option></select></div>
+      </div>
+
+      <label>Entry mode</label>
+      <select id="mode"><option value="momentum">momentum (chase)</option><option value="meanrev">mean-reversion (fade)</option></select>
+
+      <div class="row">
+        <div><label>Vol surge ×</label><input id="vol_mult" type="number" step="0.1"></div>
+        <div><label>Momentum bars</label><input id="mom_lookback" type="number"></div>
+      </div>
+      <div class="row">
+        <div><label>Deviation % (meanrev)</label><input id="deviation_pct" type="number" step="0.001"></div>
+        <div><label>Time stop (min)</label><input id="time_stop_min" type="number"></div>
+      </div>
+      <div class="row">
+        <div><label>Target (frac)</label><input id="target_pct" type="number" step="0.001"></div>
+        <div><label>Stop (frac)</label><input id="stop_pct" type="number" step="0.001"></div>
+      </div>
+      <div class="row">
+        <div><label>Max positions</label><input id="max_positions" type="number"></div>
+        <div><label>Cost % (frac)</label><input id="cost_pct" type="number" step="0.0001"></div>
+      </div>
+
+      <button id="run" onclick="runAlgo()">Run algo</button>
+      <div id="status" style="margin-top:10px"></div>
+    </div>
+
+    <!-- results -->
+    <div class="card">
+      <div id="results" class="muted">Set params and hit Run. First Zerodha pull takes a few seconds.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const FIELDS = ["source","interval","period","mode","vol_mult","mom_lookback","deviation_pct",
+  "time_stop_min","target_pct","stop_pct","max_positions","cost_pct"];
+
+async function loadDefaults(){
+  const d = await (await fetch("/api/defaults")).json();
+  for(const f of FIELDS){ if(d[f]!==undefined && document.getElementById(f)) document.getElementById(f).value = d[f]; }
+}
+loadDefaults();
+
+function num(v){ return (v===""||v===null)?null:(isNaN(+v)?v:+v); }
+
+async function runAlgo(){
+  const btn=document.getElementById("run"); btn.disabled=true;
+  document.getElementById("status").textContent="Fetching data + replaying…";
+  const body={}; for(const f of FIELDS){ body[f]=document.getElementById(f).value; }
+  try{
+    const r = await fetch("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d = await r.json();
+    if(d.error){ render_err(d.error); }
+    else render(d);
+  }catch(e){ render_err(String(e)); }
+  btn.disabled=false; document.getElementById("status").textContent="";
+}
+
+function render_err(msg){
+  document.getElementById("results").innerHTML =
+    `<div class="verdict noedge">Error</div><div class="muted">${msg}</div>`;
+}
+
+function render(d){
+  const s=d.summary; if(!s||s.note){ document.getElementById("results").innerHTML=
+    `<div class="muted">No signals fired with these thresholds. Loosen vol surge / deviation.</div>`; return; }
+  const edge = s.expectancy_pct>0;
+  const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}</span>`;
+  const stat=(k,v)=>`<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const rows=d.trades.slice(0,40).map(t=>`<tr>
+    <td>${t.entry_ts.slice(11)}</td><td>${t.symbol.replace('.NS','')}</td>
+    <td><span class="pill">${t.side}</span></td><td>${t.reason}</td>
+    <td class="${t.net_pct>=0?'pos':'neg'}">${t.net_pct>=0?'+':''}${t.net_pct}%</td>
+    <td>${t.minutes}m</td></tr>`).join("");
+  document.getElementById("results").innerHTML = `
+    <div class="verdict ${edge?'edge':'noedge'}">
+      ${edge?'EDGE — +EV after costs':'NO EDGE — −EV after costs'} · expectancy ${sign(s.expectancy_pct)}%/trade
+    </div>
+    <div class="muted" style="margin-bottom:10px">${d.n_symbols} symbols · sessions ${d.sessions[0]} → ${d.sessions[d.sessions.length-1]} · mode=${d.params.mode}</div>
+    <div class="stats">
+      ${stat("Trades",s.n_trades)}
+      ${stat("Win rate",s.win_rate_pct+"%")}
+      ${stat("Net total",sign(s.net_total_pct)+"%")}
+      ${stat("Gross total",sign(s.gross_total_pct)+"%")}
+      ${stat("Avg win",sign(s.avg_win_pct)+"%")}
+      ${stat("Avg loss",sign(s.avg_loss_pct)+"%")}
+      ${stat("Longs/Shorts",s.longs+" / "+s.shorts)}
+      ${stat("Avg hold",s.avg_minutes+"m")}
+    </div>
+    <div class="muted">exits: ${Object.entries(s.by_reason).map(([k,v])=>k+"="+v).join(", ")}</div>
+    <table><thead><tr><th>time</th><th>symbol</th><th>side</th><th>exit</th><th>net</th><th>held</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="muted" style="margin-top:8px">showing ${Math.min(40,d.trades.length)} of ${d.trades.length} trades</div>`;
+}
+</script>
+</body>
+</html>
