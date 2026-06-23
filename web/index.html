@@ -38,6 +38,15 @@
   <h1>stockflow <span class="muted">— intraday algo lab</span></h1>
   <div class="muted">Tune params → Run → read the net-of-cost verdict on real data. Paper only.</div>
 
+  <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <b style="font-size:13px">Zerodha:</b>
+    <span id="zstatus" class="muted">checking…</span>
+    <button style="width:auto;margin:0;padding:7px 12px" onclick="zopen()">1 · Open Kite login</button>
+    <input id="reqtok" placeholder="paste request_token" style="width:240px">
+    <button style="width:auto;margin:0;padding:7px 12px" onclick="zconnect()">2 · Connect</button>
+    <span id="zmsg" class="muted"></span>
+  </div>
+
   <div class="grid">
     <!-- controls -->
     <div class="card">
@@ -88,6 +97,33 @@ async function loadDefaults(){
   for(const f of FIELDS){ if(d[f]!==undefined && document.getElementById(f)) document.getElementById(f).value = d[f]; }
 }
 loadDefaults();
+
+async function zstatus(){
+  try{
+    const d = await (await fetch("/api/auth/status")).json();
+    const el = document.getElementById("zstatus");
+    el.innerHTML = d.connected
+      ? '<span class="pos">● connected today</span>'
+      : '<span class="neg">● not connected</span> — needed for source=zerodha';
+  }catch(e){}
+}
+zstatus();
+
+async function zopen(){
+  const d = await (await fetch("/api/auth/url")).json();
+  if(d.url) window.open(d.url, "_blank");
+  else document.getElementById("zmsg").textContent = d.error || "no login url";
+}
+
+async function zconnect(){
+  const rt = document.getElementById("reqtok").value.trim();
+  if(!rt){ document.getElementById("zmsg").textContent="paste the request_token first"; return; }
+  document.getElementById("zmsg").textContent="connecting…";
+  const d = await (await fetch("/api/auth/token",{method:"POST",headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({request_token:rt})})).json();
+  document.getElementById("zmsg").textContent = d.connected ? ("✓ connected "+(d.user||"")) : (d.error||"failed");
+  zstatus();
+}
 
 function num(v){ return (v===""||v===null)?null:(isNaN(+v)?v:+v); }
 

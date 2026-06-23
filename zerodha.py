@@ -55,6 +55,31 @@ def kite(with_token=True):
     return kc
 
 
+def login_url() -> str:
+    from kiteconnect import KiteConnect
+    api_key, _ = _creds()
+    if not api_key:
+        raise RuntimeError("No API key — set KITE_API_KEY (Railway env) or kite_secrets.py.")
+    return KiteConnect(api_key=api_key).login_url()
+
+
+def exchange_token(request_token: str) -> str:
+    """Exchange a fresh request_token for today's access token; persist it.
+    Returns the Kite user name. Used by the web 'Connect Zerodha' flow."""
+    from kiteconnect import KiteConnect
+    api_key, api_secret = _creds()
+    if not api_key or not api_secret:
+        raise RuntimeError("Missing KITE_API_KEY / KITE_API_SECRET.")
+    kc = KiteConnect(api_key=api_key)
+    sess = kc.generate_session(request_token.strip(), api_secret=api_secret)
+    save_token(sess["access_token"])
+    return sess.get("user_name", "")
+
+
+def auth_status() -> bool:
+    return bool(load_token())
+
+
 def _ksym(sym: str) -> str:
     """'.NS' yfinance symbol -> Kite tradingsymbol; benchmark -> NIFTY 50 index."""
     if sym == config.BENCHMARK:
