@@ -134,6 +134,10 @@ async function loadRec(refresh){
   const cur = d.currency || "₹";
   const bn = d.bench_name || "Nifty";
   const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}%</span>`;
+  const secHtml = (d.sectors && d.sectors.length)
+    ? `<div style="margin-bottom:12px;padding:9px 11px;background:#101113;border:1px solid #2a2c30;border-radius:8px">
+       <b>Money flowing into:</b> ${d.sectors.map(s=>`<span style="margin-right:12px">${s.sector}
+       <span class="pos">+${s.avg_rs}%</span> <span class="muted">(${s.n} name${s.n>1?'s':''})</span></span>`).join("")}</div>` : "";
   const reasonsHtml = (top.reasons && top.reasons.length)
     ? `<div style="margin:10px 0"><b style="font-size:13px">Why this pick</b>
        <ul style="margin:4px 0 0 16px;line-height:1.7">${top.reasons.map(x=>`<li>${x}</li>`).join("")}</ul></div>` : "";
@@ -156,7 +160,7 @@ async function loadRec(refresh){
       <span class="muted"> — ${ts.n} picks · win ${ts.win_pct}% · avg ${sign(ts.avg_ret_pct)} since pick</span>
       <table style="margin-top:6px"><thead><tr><th>date</th><th>pick</th><th>entry→now</th><th>return</th></tr></thead><tbody>${tr}</tbody></table></div>`;
   }
-  el.innerHTML = `<div style="font-size:15px;margin-bottom:6px">Today's pick:
+  el.innerHTML = `${secHtml}<div style="font-size:15px;margin-bottom:6px">Today's pick:
       <b style="color:#fbbf24;font-size:18px">${top.symbol.replace('.NS','')}</b>
       <span class="muted">${cur}${top.price} · PE ${top.pe==null?'n/a':top.pe} · EPS ${top.eps==null?'n/a':top.eps} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs ${bn} · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
     ${reasonsHtml}

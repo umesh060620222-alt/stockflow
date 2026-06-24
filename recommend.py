@@ -41,6 +41,53 @@ MARKETS = {
     "US": {"universe": US_BROAD, "bench": "^GSPC", "cur": "$",      "bench_name": "S&P 500"},
 }
 
+# ticker -> sector/theme, for the "money flowing into <sector>" rollup
+SECTORS = {
+    # India
+    "RELIANCE.NS": "Energy", "ONGC.NS": "Energy", "COALINDIA.NS": "Energy", "BPCL.NS": "Energy", "GAIL.NS": "Energy",
+    "NTPC.NS": "Power", "POWERGRID.NS": "Power", "TATAPOWER.NS": "Power", "ADANIGREEN.NS": "Power",
+    "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials", "SBIN.NS": "Financials", "AXISBANK.NS": "Financials",
+    "KOTAKBANK.NS": "Financials", "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "SHRIRAMFIN.NS": "Financials",
+    "BANKBARODA.NS": "Financials", "PNB.NS": "Financials", "IRFC.NS": "Financials",
+    "INFY.NS": "IT", "TCS.NS": "IT", "WIPRO.NS": "IT", "HCLTECH.NS": "IT", "TECHM.NS": "IT", "PERSISTENT.NS": "IT",
+    "MARUTI.NS": "Auto", "M&M.NS": "Auto", "EICHERMOT.NS": "Auto", "HEROMOTOCO.NS": "Auto",
+    "TATASTEEL.NS": "Metals", "JSWSTEEL.NS": "Metals", "HINDALCO.NS": "Metals",
+    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "BRITANNIA.NS": "FMCG", "VBL.NS": "FMCG", "JUBLFOOD.NS": "FMCG",
+    "TITAN.NS": "Consumer", "TRENT.NS": "Consumer",
+    "SUNPHARMA.NS": "Pharma", "CIPLA.NS": "Pharma", "DRREDDY.NS": "Pharma", "DIVISLAB.NS": "Pharma",
+    "LT.NS": "Infra", "ADANIPORTS.NS": "Infra", "ADANIENT.NS": "Infra",
+    "SIEMENS.NS": "Capital Goods", "BEL.NS": "Defence", "HAL.NS": "Defence", "MAZDOCK.NS": "Defence",
+    "ULTRACEMCO.NS": "Cement", "GRASIM.NS": "Cement", "BHARTIARTL.NS": "Telecom", "DLF.NS": "Realty",
+    "PIDILITIND.NS": "Chemicals", "INDIGO.NS": "Aviation", "IRCTC.NS": "Travel",
+    # US
+    "AAPL": "Big Tech", "MSFT": "Big Tech", "GOOGL": "Big Tech", "META": "Big Tech", "ORCL": "Big Tech",
+    "CRM": "Big Tech", "ADBE": "Big Tech", "CSCO": "Big Tech", "IBM": "Big Tech", "INTU": "Big Tech",
+    "NVDA": "Chips", "AMD": "Chips", "AVGO": "Chips", "INTC": "Chips", "TXN": "Chips", "QCOM": "Chips",
+    "AMZN": "Consumer", "WMT": "Consumer", "HD": "Consumer", "COST": "Consumer", "PG": "Consumer", "KO": "Consumer",
+    "PEP": "Consumer", "MCD": "Consumer", "NKE": "Consumer", "SBUX": "Consumer", "LOW": "Consumer", "DIS": "Consumer",
+    "NFLX": "Consumer", "UBER": "Consumer", "PM": "Consumer",
+    "JPM": "Financials", "V": "Financials", "MA": "Financials", "BAC": "Financials", "GS": "Financials",
+    "AXP": "Financials", "C": "Financials", "SPGI": "Financials", "BRK-B": "Financials",
+    "UNH": "Healthcare", "JNJ": "Healthcare", "LLY": "Healthcare", "MRK": "Healthcare", "ABBV": "Healthcare",
+    "PFE": "Healthcare", "TMO": "Healthcare", "ABT": "Healthcare",
+    "XOM": "Energy", "CVX": "Energy", "GE": "Industrials", "CAT": "Industrials", "BA": "Industrials", "HON": "Industrials",
+    "T": "Telecom", "VZ": "Telecom", "TSLA": "Auto/EV",
+}
+
+
+def sector_rollup(df, top=4):
+    """Aggregate the uptrending leaders by sector -> where money is flowing today."""
+    d = df.copy()
+    d["sector"] = d["symbol"].map(SECTORS).fillna("Other")
+    lead = d[(d["rs_vs_nifty"] > 0) & (d["above_50dma"])]
+    if lead.empty:
+        return []
+    g = lead.groupby("sector").agg(avg_rs=("rs_vs_nifty", "mean"), total=("rs_vs_nifty", "sum"),
+                                   n=("symbol", "count")).reset_index()
+    g = g.sort_values("total", ascending=False)   # breadth x strength = where money is really flowing
+    return [{"sector": r["sector"], "avg_rs": round(float(r["avg_rs"]), 1), "n": int(r["n"])}
+            for _, r in g.head(top).iterrows()]
+
 
 def _daily_closes(symbols, days=120):
     import yfinance as yf
@@ -167,7 +214,8 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
         picks.append(d)
     result = {"date": str(dt.date.today()), "market": market, "currency": m["cur"],
-              "bench_name": m["bench_name"], "bench_1m_pct": bench_1m, "picks": picks}
+              "bench_name": m["bench_name"], "bench_1m_pct": bench_1m,
+              "sectors": sector_rollup(df), "picks": picks}
 
     # record a slim copy (no track/news bloat), then verify prior top-picks vs now
     if do_record:

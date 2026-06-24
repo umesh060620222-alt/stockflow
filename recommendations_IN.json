@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-06-24",
+    "bench_1m_pct": 0.4,
+    "picks": [
+      {
+        "symbol": "ICICIBANK.NS",
+        "price": 1375.7,
+        "rs_vs_nifty": 7.7
+      }
+    ]
+  }
+]

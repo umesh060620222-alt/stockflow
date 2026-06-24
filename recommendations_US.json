@@ -7,21 +7,6 @@
         "symbol": "GE",
         "price": 356.47,
         "rs_vs_nifty": 19.2
-      },
-      {
-        "symbol": "C",
-        "price": 144.97,
-        "rs_vs_nifty": 17.3
-      },
-      {
-        "symbol": "CAT",
-        "price": 984.24,
-        "rs_vs_nifty": 13.3
-      },
-      {
-        "symbol": "BAC",
-        "price": 57.91,
-        "rs_vs_nifty": 13.2
       }
     ]
   }
