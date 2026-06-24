@@ -1,3 +1,4 @@
 pandas
 yfinance
 kiteconnect
+requests

@@ -47,6 +47,14 @@
     <span id="zmsg" class="muted"></span>
   </div>
 
+  <div class="card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <b style="font-size:14px">Daily recommendation — relative-strength leaders (money flowing in)</b>
+      <button id="recbtn" style="width:auto;margin:0;padding:7px 12px" onclick="loadRec(true)">Refresh</button>
+    </div>
+    <div id="recbody" class="muted" style="margin-top:10px">Loading today's pick…</div>
+  </div>
+
   <div class="grid">
     <!-- controls -->
     <div class="card">
@@ -108,6 +116,37 @@ async function loadDefaults(){
   for(const f of FIELDS){ if(d[f]!==undefined && document.getElementById(f)) document.getElementById(f).value = d[f]; }
 }
 loadDefaults();
+loadRec();
+
+async function loadRec(refresh){
+  const el = document.getElementById("recbody");
+  el.textContent = "Computing today's pick (fetches ~60 stocks + news)…";
+  let d; try{ d = await (await fetch("/api/recommend"+(refresh?"?refresh=1":""))).json(); }
+  catch(e){ el.textContent = "error: "+e; return; }
+  if(d.error){ el.textContent = "error: "+d.error; return; }
+  if(!d.picks || !d.picks.length){ el.textContent = "No leader passed the trend filter today."; return; }
+  const top = d.picks[0];
+  const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}%</span>`;
+  const news = (top.news||[]).slice(0,3).map(n=>`<li>${n}</li>`).join("");
+  const rows = d.picks.map((p,i)=>`<tr><td>${i+1}</td><td><b>${p.symbol.replace('.NS','')}</b></td>
+    <td>₹${p.price}</td><td class="pos">+${p.rs_vs_nifty}%</td><td>${sign(p.ret_1m)}</td>
+    <td>${sign(p.ret_3m)}</td><td>${p.near_high?'● at highs':''}</td></tr>`).join("");
+  let track="";
+  if(d.track_summary){
+    const ts=d.track_summary;
+    const tr=(d.track||[]).slice().reverse().map(t=>`<tr><td>${t.date}</td><td>${t.symbol}</td>
+      <td>₹${t.entry}→₹${t.now}</td><td>${sign(t.ret_pct)}</td></tr>`).join("");
+    track=`<div style="margin-top:14px"><b style="font-size:13px">Track record</b>
+      <span class="muted"> — ${ts.n} picks · win ${ts.win_pct}% · avg ${sign(ts.avg_ret_pct)} since pick</span>
+      <table style="margin-top:6px"><thead><tr><th>date</th><th>pick</th><th>entry→now</th><th>return</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+  }
+  el.innerHTML = `<div style="font-size:15px;margin-bottom:6px">Today's pick:
+      <b style="color:#fbbf24;font-size:18px">${top.symbol.replace('.NS','')}</b>
+      <span class="muted">₹${top.price} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs Nifty · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
+    ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
+    <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="muted" style="margin-top:6px">Nifty 1m: ${sign(d.nifty_1m_pct)} · ${d.date}</div>${track}`;
+}
 
 async function zstatus(){
   try{
