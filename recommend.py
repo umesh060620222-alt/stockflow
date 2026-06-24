@@ -78,15 +78,17 @@ def news_headlines(symbol, n=4):
         return []
 
 
-def pe_ratio(symbol):
-    """Trailing (or forward) P/E from yfinance. None if unavailable."""
+def fundamentals(symbol):
+    """Trailing P/E and EPS from yfinance (one .info call). None if unavailable."""
     import yfinance as yf
     try:
         info = yf.Ticker(symbol).info
         pe = info.get("trailingPE") or info.get("forwardPE")
-        return round(float(pe), 1) if pe else None
+        eps = info.get("trailingEps")
+        return {"pe": round(float(pe), 1) if pe else None,
+                "eps": round(float(eps), 2) if eps is not None else None}
     except Exception:
-        return None
+        return {"pe": None, "eps": None}
 
 
 def catalyst_score(symbol, headlines):
@@ -121,10 +123,13 @@ def daily_pick(top=5, with_news=True, do_record=True):
     for _, row in cand.iterrows():
         if len(picks) >= top:
             break
-        pe = pe_ratio(row["symbol"])
+        f = fundamentals(row["symbol"])
+        pe, eps = f["pe"], f["eps"]
+        if eps is None or eps <= config.REC_MIN_EPS:
+            continue                         # loss-making / no earnings -> skip
         if pe is not None and pe > config.REC_PE_MAX:
             continue                         # too expensive -> skip (valuation guard)
-        d = row.to_dict(); d["pe"] = pe
+        d = row.to_dict(); d["pe"] = pe; d["eps"] = eps
         if with_news:
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])

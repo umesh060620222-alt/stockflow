@@ -148,7 +148,7 @@ async function loadRec(refresh){
   }
   el.innerHTML = `<div style="font-size:15px;margin-bottom:6px">Today's pick:
       <b style="color:#fbbf24;font-size:18px">${top.symbol.replace('.NS','')}</b>
-      <span class="muted">₹${top.price} · PE ${top.pe==null?'n/a':top.pe} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs Nifty · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
+      <span class="muted">₹${top.price} · PE ${top.pe==null?'n/a':top.pe} · EPS ${top.eps==null?'n/a':top.eps} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs Nifty · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
     ${catHtml}
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>

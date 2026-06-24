@@ -47,6 +47,7 @@ CAPITAL_PER_TRADE = 10000
 
 # --- daily recommendation ---
 REC_PE_MAX = 50            # screen out leaders pricier than this trailing P/E (overvaluation guard)
+REC_MIN_EPS = 0            # require trailing EPS strictly above this (drops loss-making / zero-EPS names)
 
 # --- live mode (per-second recommend + 30s self-grade) ---
 LIVE_HORIZON_S = 30        # the recommendation must pay off within this many seconds

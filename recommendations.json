@@ -1,27 +1,27 @@
 [
   {
     "date": "2026-06-24",
-    "nifty_1m_pct": -0.3,
+    "nifty_1m_pct": -0.1,
     "picks": [
       {
-        "symbol": "INDIGO.NS",
-        "price": 5003.1,
-        "rs_vs_nifty": 9.8
-      },
-      {
         "symbol": "ICICIBANK.NS",
-        "price": 1361.5,
-        "rs_vs_nifty": 7.3
+        "price": 1366.5,
+        "rs_vs_nifty": 7.5
       },
       {
         "symbol": "SBIN.NS",
-        "price": 1022.55,
-        "rs_vs_nifty": 6.0
+        "price": 1025.8,
+        "rs_vs_nifty": 6.1
       },
       {
         "symbol": "AXISBANK.NS",
-        "price": 1362.5,
+        "price": 1365.9,
         "rs_vs_nifty": 4.8
+      },
+      {
+        "symbol": "KOTAKBANK.NS",
+        "price": 404.8,
+        "rs_vs_nifty": 4.2
       }
     ]
   }
