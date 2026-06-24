@@ -6,7 +6,7 @@ POST /api/run  applies the posted params to config at runtime, runs the replay
 on the configured data source, and returns {summary, trades, sessions}.
 """
 from __future__ import annotations
-import json, os, traceback
+import json, os, traceback, threading, time, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config, data as D, strategy as S, engine as E, zerodha as Z
@@ -140,6 +140,25 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+
+def _auto_record():
+    """Hands-off: once a day after ~16:00 IST, compute + record the daily pick so the
+    track record builds even on days nobody opens the app."""
+    while True:
+        try:
+            ist = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+            today = str(ist.date())
+            if ist.hour >= 16 and _REC_CACHE.get("date") != today:
+                _REC_CACHE["data"] = REC.daily_pick()
+                _REC_CACHE["date"] = today
+                print(f"[auto-record] daily pick saved for {today}", flush=True)
+        except Exception as e:
+            print(f"[auto-record] {e}", flush=True)
+        time.sleep(1800)   # check every 30 min
+
+
+threading.Thread(target=_auto_record, daemon=True).start()
 
 
 if __name__ == "__main__":

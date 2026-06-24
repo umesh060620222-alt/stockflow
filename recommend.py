@@ -78,6 +78,31 @@ def news_headlines(symbol, n=4):
         return []
 
 
+def catalyst_score(symbol, headlines):
+    """Use Claude to read the headlines and score the next-few-days catalyst.
+    Returns {direction, conviction, catalyst} or None if no API key / no news."""
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key or not headlines:
+        return None
+    import requests, re
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    prompt = ("You are a sell-side equity analyst. From these recent news headlines for an "
+              "Indian (NSE) stock, judge the catalyst for the NEXT FEW DAYS. Reply ONLY with "
+              'JSON: {"direction":"up|down|neutral","conviction":0-100,"catalyst":"<=12 words"}.\n'
+              f"Stock: {symbol.replace('.NS','')}\nHeadlines:\n- " + "\n- ".join(headlines))
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": model, "max_tokens": 150,
+                  "messages": [{"role": "user", "content": prompt}]}, timeout=30)
+        txt = r.json()["content"][0]["text"]
+        m = re.search(r"\{.*\}", txt, re.S)
+        return json.loads(m.group(0)) if m else None
+    except Exception as e:
+        return {"error": str(e)[:80]}
+
+
 def daily_pick(top=5, with_news=True, do_record=True):
     df, nifty_1m, closes = relative_strength()
     cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0)].head(top)
@@ -86,6 +111,7 @@ def daily_pick(top=5, with_news=True, do_record=True):
         d = row.to_dict()
         if with_news:
             d["news"] = news_headlines(row["symbol"])
+            d["catalyst"] = catalyst_score(row["symbol"], d["news"])
         picks.append(d)
     result = {"date": str(dt.date.today()), "nifty_1m_pct": nifty_1m, "picks": picks}
 
