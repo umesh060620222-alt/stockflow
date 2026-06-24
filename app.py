@@ -13,7 +13,7 @@ import config, data as D, strategy as S, engine as E, zerodha as Z
 import recommend as REC
 from live import ENGINE as LIVE
 
-_REC_CACHE = {"date": None, "data": None}
+_REC_CACHE = {}   # market -> {"date": ..., "data": ...}
 
 HERE = os.path.dirname(__file__)
 
@@ -97,13 +97,19 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(LIVE.state()))
         if path == "/api/recommend":
             import datetime as _dt
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            market = q.get("market", ["IN"])[0].upper()
+            if market not in ("IN", "US"):
+                market = "IN"
             today = str(_dt.date.today())
-            if _REC_CACHE["date"] != today or "refresh" in self.path:
+            c = _REC_CACHE.get(market)
+            if not c or c["date"] != today or "refresh" in q:
                 try:
-                    _REC_CACHE["data"] = REC.daily_pick(); _REC_CACHE["date"] = today
+                    _REC_CACHE[market] = {"date": today, "data": REC.daily_pick(market=market)}
                 except Exception as e:
                     return self._send(200, dumps({"error": f"{type(e).__name__}: {e}"}))
-            return self._send(200, dumps(_REC_CACHE["data"]))
+            return self._send(200, dumps(_REC_CACHE[market]["data"]))
         if path == "/api/auth/url":
             try:
                 return self._send(200, dumps({"url": Z.login_url()}))
@@ -149,10 +155,12 @@ def _auto_record():
         try:
             ist = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
             today = str(ist.date())
-            if ist.hour >= 16 and _REC_CACHE.get("date") != today:
-                _REC_CACHE["data"] = REC.daily_pick()
-                _REC_CACHE["date"] = today
-                print(f"[auto-record] daily pick saved for {today}", flush=True)
+            if ist.hour >= 16:
+                for mk in ("IN", "US"):
+                    c = _REC_CACHE.get(mk)
+                    if not c or c["date"] != today:
+                        _REC_CACHE[mk] = {"date": today, "data": REC.daily_pick(market=mk)}
+                        print(f"[auto-record] {mk} pick saved for {today}", flush=True)
         except Exception as e:
             print(f"[auto-record] {e}", flush=True)
         time.sleep(1800)   # check every 30 min

@@ -28,6 +28,19 @@ BROAD = [
     "IRFC.NS","IRCTC.NS","TATAPOWER.NS","ADANIGREEN.NS","PERSISTENT.NS","MAZDOCK.NS",
 ]
 
+# US large-cap universe (NYSE/Nasdaq) — yfinance uses the bare ticker, no suffix.
+US_BROAD = [
+    "AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","BRK-B","JPM","V","UNH","XOM","JNJ",
+    "WMT","MA","PG","HD","CVX","ABBV","KO","PEP","COST","MRK","AVGO","LLY","BAC","PFE","TMO",
+    "CSCO","MCD","ABT","DIS","ADBE","CRM","NKE","INTC","AMD","QCOM","TXN","NFLX","ORCL","IBM",
+    "GE","CAT","BA","GS","AXP","SBUX","UBER","C","T","VZ","PM","HON","LOW","INTU","SPGI",
+]
+
+MARKETS = {
+    "IN": {"universe": BROAD,    "bench": "^NSEI", "cur": "₹", "bench_name": "Nifty"},
+    "US": {"universe": US_BROAD, "bench": "^GSPC", "cur": "$",      "bench_name": "S&P 500"},
+}
+
 
 def _daily_closes(symbols, days=120):
     import yfinance as yf
@@ -45,13 +58,13 @@ def _daily_closes(symbols, days=120):
     return out
 
 
-def relative_strength(days=120):
-    data = _daily_closes(BROAD + [config.BENCHMARK], days)
-    bench = data.get(config.BENCHMARK)
+def relative_strength(universe, bench_sym, days=120):
+    data = _daily_closes(universe + [bench_sym], days)
+    bench = data.get(bench_sym)
     bret = float(bench.iloc[-1] / bench.iloc[-21] - 1) if bench is not None and len(bench) > 21 else 0.0
     rows = []
     for s, c in data.items():
-        if s == config.BENCHMARK:
+        if s == bench_sym:
             continue
         r1m = float(c.iloc[-1] / c.iloc[-21] - 1)
         r3m = float(c.iloc[-1] / c.iloc[-min(63, len(c) - 1)] - 1)
@@ -91,9 +104,9 @@ def fundamentals(symbol):
         return {"pe": None, "eps": None}
 
 
-def build_reasons(d):
+def build_reasons(d, bench_name="Nifty"):
     """Deterministic, always-available explanation of why this stock ranked #1."""
-    r = [f"Top by relative strength: +{d['rs_vs_nifty']}% vs Nifty over 1 month — "
+    r = [f"Top by relative strength: +{d['rs_vs_nifty']}% vs {bench_name} over 1 month — "
          f"money is rotating into it while the index lags"]
     trend = "trading above its 50-day average" + (
         ", and at/near its 60-day high" if d.get("near_high") else "")
@@ -133,8 +146,9 @@ def catalyst_score(symbol, headlines):
         return {"error": str(e)[:80]}
 
 
-def daily_pick(top=5, with_news=True, do_record=True):
-    df, nifty_1m, closes = relative_strength()
+def daily_pick(market="IN", top=5, with_news=True, do_record=True):
+    m = MARKETS.get(market, MARKETS["IN"])
+    df, bench_1m, closes = relative_strength(m["universe"], m["bench"])
     cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0)].head(top * 3)  # over-select for PE filter
     picks = []
     for _, row in cand.iterrows():
@@ -147,20 +161,21 @@ def daily_pick(top=5, with_news=True, do_record=True):
         if pe is not None and pe > config.REC_PE_MAX:
             continue                         # too expensive -> skip (valuation guard)
         d = row.to_dict(); d["pe"] = pe; d["eps"] = eps
-        d["reasons"] = build_reasons(d)
+        d["reasons"] = build_reasons(d, m["bench_name"])
         if with_news:
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
         picks.append(d)
-    result = {"date": str(dt.date.today()), "nifty_1m_pct": nifty_1m, "picks": picks}
+    result = {"date": str(dt.date.today()), "market": market, "currency": m["cur"],
+              "bench_name": m["bench_name"], "bench_1m_pct": bench_1m, "picks": picks}
 
     # record a slim copy (no track/news bloat), then verify prior top-picks vs now
     if do_record:
-        record({"date": result["date"], "nifty_1m_pct": nifty_1m,
-                "picks": [{k: p[k] for k in ("symbol", "price", "rs_vs_nifty")} for p in picks]})
+        record({"date": result["date"], "bench_1m_pct": bench_1m,
+                "picks": [{k: p[k] for k in ("symbol", "price", "rs_vs_nifty")} for p in picks]}, market)
 
     track = []
-    for h in load_history():
+    for h in load_history(market):
         if h["date"] == result["date"] or not h.get("picks"):
             continue
         t = h["picks"][0]
@@ -177,14 +192,18 @@ def daily_pick(top=5, with_news=True, do_record=True):
     return result
 
 
-def record(pick: dict):
-    hist = []
-    if os.path.exists(REC_FILE):
-        hist = json.load(open(REC_FILE))
+def _rec_file(market):
+    return os.path.join(os.path.dirname(__file__), f"recommendations_{market}.json")
+
+
+def record(pick, market="IN"):
+    path = _rec_file(market)
+    hist = json.load(open(path)) if os.path.exists(path) else []
     hist = [h for h in hist if h.get("date") != pick["date"]]  # replace same-day
     hist.append(pick)
-    json.dump(hist[-120:], open(REC_FILE, "w"), indent=2)
+    json.dump(hist[-120:], open(path, "w"), indent=2)
 
 
-def load_history():
-    return json.load(open(REC_FILE)) if os.path.exists(REC_FILE) else []
+def load_history(market="IN"):
+    path = _rec_file(market)
+    return json.load(open(path)) if os.path.exists(path) else []

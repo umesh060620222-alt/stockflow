@@ -50,7 +50,11 @@
   <div class="card" style="margin-top:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
       <b style="font-size:14px">Daily recommendation — relative-strength leaders (money flowing in)</b>
-      <button id="recbtn" style="width:auto;margin:0;padding:7px 12px" onclick="loadRec(true)">Refresh</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="recmkt" onchange="loadRec(false)" style="width:auto;padding:6px">
+          <option value="IN">India (NSE)</option><option value="US">US (NYSE/Nasdaq)</option></select>
+        <button id="recbtn" style="width:auto;margin:0;padding:7px 12px" onclick="loadRec(true)">Refresh</button>
+      </div>
     </div>
     <div id="recbody" class="muted" style="margin-top:10px">Loading today's pick…</div>
   </div>
@@ -120,12 +124,15 @@ loadRec();
 
 async function loadRec(refresh){
   const el = document.getElementById("recbody");
+  const mkt = (document.getElementById("recmkt")||{}).value || "IN";
   el.textContent = "Computing today's pick (fetches ~60 stocks + news)…";
-  let d; try{ d = await (await fetch("/api/recommend"+(refresh?"?refresh=1":""))).json(); }
+  let d; try{ d = await (await fetch("/api/recommend?market="+mkt+(refresh?"&refresh=1":""))).json(); }
   catch(e){ el.textContent = "error: "+e; return; }
   if(d.error){ el.textContent = "error: "+d.error; return; }
   if(!d.picks || !d.picks.length){ el.textContent = "No leader passed the trend filter today."; return; }
   const top = d.picks[0];
+  const cur = d.currency || "₹";
+  const bn = d.bench_name || "Nifty";
   const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}%</span>`;
   const reasonsHtml = (top.reasons && top.reasons.length)
     ? `<div style="margin:10px 0"><b style="font-size:13px">Why this pick</b>
@@ -138,7 +145,7 @@ async function loadRec(refresh){
   const config_pe_flag=50;
   const pe=v=>(v==null?'–':(v>config_pe_flag?`<span class="neg">${v}</span>`:v));
   const rows = d.picks.map((p,i)=>`<tr><td>${i+1}</td><td><b>${p.symbol.replace('.NS','')}</b></td>
-    <td>₹${p.price}</td><td>${pe(p.pe)}</td><td class="pos">+${p.rs_vs_nifty}%</td><td>${sign(p.ret_1m)}</td>
+    <td>${cur}${p.price}</td><td>${pe(p.pe)}</td><td class="pos">+${p.rs_vs_nifty}%</td><td>${sign(p.ret_1m)}</td>
     <td>${sign(p.ret_3m)}</td><td>${p.near_high?'● at highs':''}</td></tr>`).join("");
   let track="";
   if(d.track_summary){
@@ -151,12 +158,12 @@ async function loadRec(refresh){
   }
   el.innerHTML = `<div style="font-size:15px;margin-bottom:6px">Today's pick:
       <b style="color:#fbbf24;font-size:18px">${top.symbol.replace('.NS','')}</b>
-      <span class="muted">₹${top.price} · PE ${top.pe==null?'n/a':top.pe} · EPS ${top.eps==null?'n/a':top.eps} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs Nifty · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
+      <span class="muted">${cur}${top.price} · PE ${top.pe==null?'n/a':top.pe} · EPS ${top.eps==null?'n/a':top.eps} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs ${bn} · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
     ${reasonsHtml}
     ${catHtml}
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="muted" style="margin-top:6px">Nifty 1m: ${sign(d.nifty_1m_pct)} · ${d.date}</div>${track}`;
+    <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
 }
 
 async function zstatus(){
