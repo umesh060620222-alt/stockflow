@@ -45,6 +45,9 @@ SLIPPAGE_PCT = 0.0003      # per side; entries/exits don't fill at the exact pri
 # --- capital (for P&L reporting only; signal quality is per-trade %) ---
 CAPITAL_PER_TRADE = 10000
 
+# --- daily recommendation ---
+REC_PE_MAX = 50            # screen out leaders pricier than this trailing P/E (overvaluation guard)
+
 # --- live mode (per-second recommend + 30s self-grade) ---
 LIVE_HORIZON_S = 30        # the recommendation must pay off within this many seconds
 LIVE_LOOKBACK_S = 5        # seconds of micro-momentum used to trigger

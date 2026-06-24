@@ -78,6 +78,17 @@ def news_headlines(symbol, n=4):
         return []
 
 
+def pe_ratio(symbol):
+    """Trailing (or forward) P/E from yfinance. None if unavailable."""
+    import yfinance as yf
+    try:
+        info = yf.Ticker(symbol).info
+        pe = info.get("trailingPE") or info.get("forwardPE")
+        return round(float(pe), 1) if pe else None
+    except Exception:
+        return None
+
+
 def catalyst_score(symbol, headlines):
     """Use Claude to read the headlines and score the next-few-days catalyst.
     Returns {direction, conviction, catalyst} or None if no API key / no news."""
@@ -105,10 +116,15 @@ def catalyst_score(symbol, headlines):
 
 def daily_pick(top=5, with_news=True, do_record=True):
     df, nifty_1m, closes = relative_strength()
-    cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0)].head(top)
+    cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0)].head(top * 3)  # over-select for PE filter
     picks = []
     for _, row in cand.iterrows():
-        d = row.to_dict()
+        if len(picks) >= top:
+            break
+        pe = pe_ratio(row["symbol"])
+        if pe is not None and pe > config.REC_PE_MAX:
+            continue                         # too expensive -> skip (valuation guard)
+        d = row.to_dict(); d["pe"] = pe
         if with_news:
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
