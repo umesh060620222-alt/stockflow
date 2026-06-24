@@ -29,7 +29,7 @@ BROAD = [
 ]
 
 
-def _daily_closes(symbols, days=70):
+def _daily_closes(symbols, days=120):
     import yfinance as yf
     raw = yf.download(symbols, period=f"{days}d", interval="1d", group_by="ticker",
                       progress=False, threads=True, auto_adjust=False)
@@ -45,7 +45,7 @@ def _daily_closes(symbols, days=70):
     return out
 
 
-def relative_strength(days=70):
+def relative_strength(days=120):
     data = _daily_closes(BROAD + [config.BENCHMARK], days)
     bench = data.get(config.BENCHMARK)
     bret = float(bench.iloc[-1] / bench.iloc[-21] - 1) if bench is not None and len(bench) > 21 else 0.0
@@ -91,23 +91,40 @@ def fundamentals(symbol):
         return {"pe": None, "eps": None}
 
 
+def build_reasons(d):
+    """Deterministic, always-available explanation of why this stock ranked #1."""
+    r = [f"Top by relative strength: +{d['rs_vs_nifty']}% vs Nifty over 1 month — "
+         f"money is rotating into it while the index lags"]
+    trend = "trading above its 50-day average" + (
+        ", and at/near its 60-day high" if d.get("near_high") else "")
+    r.append(f"Trend confirmed: {trend} (not a falling knife)")
+    r.append(f"Momentum: {d['ret_3m']:+}% over 3 months, {d['ret_1m']:+}% over 1 month")
+    if d.get("pe") is not None:
+        r.append(f"Valuation in check: P/E {d['pe']} (under the 50 cap — not priced for perfection)")
+    if d.get("eps") is not None:
+        r.append(f"Actually profitable: EPS {d['eps']} (> 0, so the move is backed by earnings)")
+    return r
+
+
 def catalyst_score(symbol, headlines):
-    """Use Claude to read the headlines and score the next-few-days catalyst.
-    Returns {direction, conviction, catalyst} or None if no API key / no news."""
+    """Use Claude to read the headlines and explain the next-few-days catalyst.
+    Returns {direction, conviction, reasoning} or None if no API key / no news."""
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key or not headlines:
         return None
     import requests, re
     model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     prompt = ("You are a sell-side equity analyst. From these recent news headlines for an "
-              "Indian (NSE) stock, judge the catalyst for the NEXT FEW DAYS. Reply ONLY with "
-              'JSON: {"direction":"up|down|neutral","conviction":0-100,"catalyst":"<=12 words"}.\n'
+              "Indian (NSE) stock, judge the catalyst for the NEXT FEW DAYS and EXPLAIN your "
+              "reasoning. Reply ONLY with JSON: "
+              '{"direction":"up|down|neutral","conviction":0-100,'
+              '"reasoning":"2 sentences citing the specific news driving your view"}.\n'
               f"Stock: {symbol.replace('.NS','')}\nHeadlines:\n- " + "\n- ".join(headlines))
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
-            json={"model": model, "max_tokens": 150,
+            json={"model": model, "max_tokens": 300,
                   "messages": [{"role": "user", "content": prompt}]}, timeout=30)
         txt = r.json()["content"][0]["text"]
         m = re.search(r"\{.*\}", txt, re.S)
@@ -130,6 +147,7 @@ def daily_pick(top=5, with_news=True, do_record=True):
         if pe is not None and pe > config.REC_PE_MAX:
             continue                         # too expensive -> skip (valuation guard)
         d = row.to_dict(); d["pe"] = pe; d["eps"] = eps
+        d["reasons"] = build_reasons(d)
         if with_news:
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])

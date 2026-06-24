@@ -127,10 +127,13 @@ async function loadRec(refresh){
   if(!d.picks || !d.picks.length){ el.textContent = "No leader passed the trend filter today."; return; }
   const top = d.picks[0];
   const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}%</span>`;
+  const reasonsHtml = (top.reasons && top.reasons.length)
+    ? `<div style="margin:10px 0"><b style="font-size:13px">Why this pick</b>
+       <ul style="margin:4px 0 0 16px;line-height:1.7">${top.reasons.map(x=>`<li>${x}</li>`).join("")}</ul></div>` : "";
   const cat = top.catalyst;
-  const catHtml = (cat && cat.direction) ? `<div style="margin-bottom:8px">Claude catalyst read:
-    <b class="${cat.direction==='up'?'pos':(cat.direction==='down'?'neg':'')}">${cat.direction} · ${cat.conviction}% conviction</b>
-    <span class="muted">— ${cat.catalyst||''}</span></div>` : "";
+  const catHtml = (cat && cat.direction) ? `<div style="margin:8px 0;padding:8px 10px;background:#101113;border-radius:8px">
+    <b>Claude news read:</b> <b class="${cat.direction==='up'?'pos':(cat.direction==='down'?'neg':'')}">${cat.direction} · ${cat.conviction}% conviction</b>
+    <div class="muted" style="margin-top:3px">${cat.reasoning||cat.catalyst||''}</div></div>` : "";
   const news = (top.news||[]).slice(0,3).map(n=>`<li>${n}</li>`).join("");
   const config_pe_flag=50;
   const pe=v=>(v==null?'–':(v>config_pe_flag?`<span class="neg">${v}</span>`:v));
@@ -149,6 +152,7 @@ async function loadRec(refresh){
   el.innerHTML = `<div style="font-size:15px;margin-bottom:6px">Today's pick:
       <b style="color:#fbbf24;font-size:18px">${top.symbol.replace('.NS','')}</b>
       <span class="muted">₹${top.price} · PE ${top.pe==null?'n/a':top.pe} · EPS ${top.eps==null?'n/a':top.eps} · RS <span class="pos">+${top.rs_vs_nifty}%</span> vs Nifty · 3m ${sign(top.ret_3m)}${top.near_high?' · at 52d highs':''}</span></div>
+    ${reasonsHtml}
     ${catHtml}
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>
