@@ -76,17 +76,23 @@ SECTORS = {
 
 
 def sector_rollup(df, top=4):
-    """Aggregate the uptrending leaders by sector -> where money is flowing today."""
+    """Aggregate the uptrending leaders by sector -> where money is flowing today,
+    with the constituent stock names per sector (strongest first)."""
     d = df.copy()
     d["sector"] = d["symbol"].map(SECTORS).fillna("Other")
-    lead = d[(d["rs_vs_nifty"] > 0) & (d["above_50dma"])]
+    lead = d[(d["rs_vs_nifty"] > 0) & (d["above_50dma"])].sort_values("rs_vs_nifty", ascending=False)
     if lead.empty:
         return []
     g = lead.groupby("sector").agg(avg_rs=("rs_vs_nifty", "mean"), total=("rs_vs_nifty", "sum"),
                                    n=("symbol", "count")).reset_index()
     g = g.sort_values("total", ascending=False)   # breadth x strength = where money is really flowing
-    return [{"sector": r["sector"], "avg_rs": round(float(r["avg_rs"]), 1), "n": int(r["n"])}
-            for _, r in g.head(top).iterrows()]
+    out = []
+    for _, r in g.head(top).iterrows():
+        names = (lead[lead["sector"] == r["sector"]]["symbol"]
+                 .str.replace(".NS", "", regex=False).tolist())
+        out.append({"sector": r["sector"], "avg_rs": round(float(r["avg_rs"]), 1),
+                    "n": int(r["n"]), "names": names})
+    return out
 
 
 def _daily_closes(symbols, days=120):

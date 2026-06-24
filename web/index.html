@@ -136,8 +136,10 @@ async function loadRec(refresh){
   const sign=x=>`<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x}%</span>`;
   const secHtml = (d.sectors && d.sectors.length)
     ? `<div style="margin-bottom:12px;padding:9px 11px;background:#101113;border:1px solid #2a2c30;border-radius:8px">
-       <b>Money flowing into:</b> ${d.sectors.map(s=>`<span style="margin-right:12px">${s.sector}
-       <span class="pos">+${s.avg_rs}%</span> <span class="muted">(${s.n} name${s.n>1?'s':''})</span></span>`).join("")}</div>` : "";
+       <b>Money flowing into:</b>
+       ${d.sectors.map(s=>`<div style="margin-top:5px">${s.sector}
+         <span class="pos">+${s.avg_rs}%</span> <span class="muted">(${s.n})</span>
+         — <span class="muted">${(s.names||[]).join(", ")}</span></div>`).join("")}</div>` : "";
   const reasonsHtml = (top.reasons && top.reasons.length)
     ? `<div style="margin:10px 0"><b style="font-size:13px">Why this pick</b>
        <ul style="margin:4px 0 0 16px;line-height:1.7">${top.reasons.map(x=>`<li>${x}</li>`).join("")}</ul></div>` : "";
