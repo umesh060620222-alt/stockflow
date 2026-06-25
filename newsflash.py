@@ -93,6 +93,33 @@ def classify(title: str) -> dict:
             "conviction": min(95, 35 + score * 15), "matched": matched}
 
 
+def aggregate_signal(headlines):
+    """Roll a stock's recent classified headlines into one signal + conviction."""
+    if not headlines:
+        return "neutral", 0
+    buy = sum(h["score"] for h in headlines if h["signal"] == "buy")
+    sell = sum(h["score"] for h in headlines if h["signal"] == "sell")
+    vol = sum(h["score"] for h in headlines if h["signal"] == "volatile")
+    net = buy - sell
+    if buy and sell and abs(net) < 2:
+        sig, sc = "volatile", buy + sell + vol      # mixed drivers -> expect a swing
+    elif net >= 2:
+        sig, sc = "buy", buy
+    elif net <= -2:
+        sig, sc = "sell", sell
+    elif vol >= 2:
+        sig, sc = "volatile", vol
+    elif net > 0:
+        sig, sc = "buy", buy
+    elif net < 0:
+        sig, sc = "sell", sell
+    elif vol:
+        sig, sc = "volatile", vol
+    else:
+        sig, sc = "neutral", 0
+    return sig, min(95, 35 + sc * 10)
+
+
 def _fetch_items(query: str, n=8):
     """Google News RSS -> [{title, guid, pub(datetime|None)}], newest first."""
     import requests, xml.etree.ElementTree as ET
@@ -103,14 +130,15 @@ def _fetch_items(query: str, n=8):
         items = []
         for it in ET.fromstring(r.content).findall(".//item")[:n]:
             title = (it.findtext("title") or "").strip()
-            guid = (it.findtext("guid") or it.findtext("link") or title).strip()
+            link = (it.findtext("link") or "").strip()
+            guid = (it.findtext("guid") or link or title).strip()
             pub = None
             try:
                 pub = parsedate_to_datetime(it.findtext("pubDate"))
             except Exception:
                 pass
             if title:
-                items.append({"title": title, "guid": guid, "pub": pub})
+                items.append({"title": title, "guid": guid, "pub": pub, "link": link})
         return items
     except Exception:
         return []
@@ -143,8 +171,9 @@ class NewsRadar:
 
     def __init__(self, market="IN"):
         self.market = market
-        self.seen = set()                                  # guids already emitted
+        self.seen = set()                                  # guids already emitted as flashes
         self.alerts = deque(maxlen=getattr(config, "NEWS_FEED_KEEP", 40))
+        self.stocks = {}                                   # symbol -> per-stock card (always populated)
         self.updated = None
         self.suffix = ".NS" if market == "IN" else ""
 
@@ -152,55 +181,68 @@ class NewsRadar:
         return dt.datetime.utcnow() + dt.timedelta(hours=5, minutes=30)
 
     def poll(self, symbols, bench_query=None):
-        """Fetch + classify fresh headlines for `symbols` (+ an index query).
-        Returns the list of NEW alerts emitted this round (also appended to feed)."""
-        max_age = getattr(config, "NEWS_MAX_AGE_MIN", 90)
+        """Fetch + classify recent headlines per watched symbol. Builds a per-stock
+        card (ALWAYS populated, so names + supporting news are visible) and emits
+        flash alerts for genuinely NEW directional / volatility headlines."""
+        max_age = getattr(config, "NEWS_MAX_AGE_MIN", 180)
+        per = getattr(config, "NEWS_HEADLINES_PER_STOCK", 6)
         use_claude = getattr(config, "NEWS_USE_CLAUDE", False)
         now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
-        fresh = []
+        fresh, cards = [], {}
         queries = [(s, s.replace(self.suffix, "") + " stock") for s in symbols]
         if bench_query:
             queries.append(("__MKT__", bench_query))
 
         for sym, q in queries:
-            for it in _fetch_items(q):
-                key = sym + "|" + it["guid"]
-                if key in self.seen:
-                    continue
-                if it["pub"] is not None:
-                    age_min = (now_utc - it["pub"]).total_seconds() / 60
-                    if age_min > max_age or age_min < -5:    # stale, or clock-skew future
-                        continue
-                self.seen.add(key)
+            name = "MARKET" if sym == "__MKT__" else sym.replace(self.suffix, "")
+            headlines = []
+            for it in _fetch_items(q, n=max(per, 8)):
                 c = classify(it["title"])
-                if c["signal"] == "neutral":
-                    continue
-                name = "MARKET" if sym == "__MKT__" else sym.replace(self.suffix, "")
-                alert = {
-                    "id": key, "symbol": name, "signal": c["signal"],
-                    "conviction": c["conviction"], "matched": c["matched"][:4],
-                    "title": it["title"],
+                age_min = None
+                if it["pub"] is not None:
+                    age_min = round((now_utc - it["pub"]).total_seconds() / 60)
+                headlines.append({
+                    "title": it["title"], "signal": c["signal"], "score": c["score"],
+                    "matched": c["matched"][:4], "conviction": c["conviction"],
+                    "link": it.get("link", ""), "age_min": age_min,
                     "ts": self._now_ist().strftime("%H:%M"),
-                    "epoch": int((it["pub"] or now_utc).timestamp()),
-                }
-                if use_claude and c["signal"] in ("buy", "sell") and c["score"] >= 3:
-                    cl = _claude_conviction(name, it["title"])
-                    if cl and cl.get("conviction") is not None:
-                        alert["conviction"] = int(cl["conviction"])
-                        alert["claude"] = cl.get("direction")
-                fresh.append(alert)
+                })
+                # flash only NEW + recent + non-neutral headlines
+                key = sym + "|" + it["guid"]
+                recent = age_min is None or (-5 <= age_min <= max_age)
+                if key not in self.seen and recent and c["signal"] != "neutral":
+                    self.seen.add(key)
+                    alert = {"id": key, "symbol": name, "signal": c["signal"],
+                             "conviction": c["conviction"], "matched": c["matched"][:4],
+                             "title": it["title"], "link": it.get("link", ""),
+                             "ts": self._now_ist().strftime("%H:%M"),
+                             "epoch": int((it["pub"] or now_utc).timestamp())}
+                    if use_claude and c["signal"] in ("buy", "sell") and c["score"] >= 3:
+                        cl = _claude_conviction(name, it["title"])
+                        if cl and cl.get("conviction") is not None:
+                            alert["conviction"] = int(cl["conviction"]); alert["claude"] = cl.get("direction")
+                    fresh.append(alert)
 
-        # keep the seen-set from growing unbounded across a long session
+            recent_hl = headlines[:per]
+            sig, conv = aggregate_signal(recent_hl)
+            cards[name] = {"symbol": name, "signal": sig, "conviction": conv,
+                           "n": len(recent_hl), "headlines": recent_hl}
+
         if len(self.seen) > 4000:
             self.seen = set(list(self.seen)[-2000:])
         fresh.sort(key=lambda a: a["epoch"])
         for a in fresh:
             self.alerts.append(a)
+        # directional names first (by conviction), then volatile, then neutral
+        rank = {"buy": 0, "sell": 0, "volatile": 1, "neutral": 2}
+        self.stocks = dict(sorted(cards.items(),
+                                  key=lambda kv: (rank.get(kv[1]["signal"], 3), -kv[1]["conviction"])))
         self.updated = self._now_ist().strftime("%H:%M:%S")
         return fresh
 
     def feed(self):
         return {"market": self.market, "updated": self.updated,
+                "stocks": list(self.stocks.values()),
                 "alerts": list(self.alerts)[::-1]}     # newest first
 
 

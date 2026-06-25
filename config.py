@@ -54,8 +54,9 @@ REC_SKIP_REVERSAL = False  # True = drop reversal-risk names from buy picks; Fal
 
 # --- intraday news radar (1-min buy/sell/volatility flashes) ---
 NEWS_POLL_SEC = 60         # how often the background radar pulls fresh headlines
-NEWS_MAX_AGE_MIN = 90      # only flash headlines published within this window (mins)
-NEWS_FEED_KEEP = 40        # alerts retained in the rolling per-market feed
+NEWS_MAX_AGE_MIN = 180     # only FLASH headlines published within this window (mins)
+NEWS_HEADLINES_PER_STOCK = 6  # supporting headlines kept per stock (the expandable list)
+NEWS_FEED_KEEP = 40        # flash alerts retained in the rolling per-market feed
 NEWS_WATCH_FALLBACK = 6    # if no daily picks cached yet, watch the top N of the universe
 NEWS_USE_CLAUDE = False    # escalate strong buy/sell hits to Claude for a conviction read
 

@@ -36,6 +36,9 @@
   .nf-buy{background:#0c2a1c;color:#34d399;border:1px solid #14532d}
   .nf-sell{background:#2a1414;color:#f87171;border:1px solid #4c1d1d}
   .nf-volatile{background:#2a230c;color:#fbbf24;border:1px solid #4c3d0a}
+  .nf-neutral{background:#1b1c1f;color:#9ca3af;border:1px solid #2a2c30}
+  #nfbody summary::-webkit-details-marker{display:none}
+  #nfbody a:hover{text-decoration:underline!important}
   .nf-time{color:#9ca3af;font-size:11px;min-width:38px}
   .nf-sym{font-weight:700;min-width:74px}
   .nf-title{color:#cbd5e1;flex:1}
@@ -256,17 +259,18 @@ function toggleNews(){
   btn.textContent="Stop radar"; NF_PRIMED=false; NF_SEEN=new Set();
   pollNews(); NF_TIMER=setInterval(pollNews, 20000);   // UI refresh; backend pulls news every ~60s
 }
+const NF_LABEL={buy:"BUY",sell:"SELL",volatile:"VOLATILE",neutral:"—"};
+function nfAge(m){ if(m==null) return ""; return `<span class="muted" style="font-size:11px;white-space:nowrap">${m<60?m+'m':Math.round(m/60)+'h'} ago</span>`; }
 async function pollNews(){
   const mkt=(document.getElementById("recmkt")||{}).value || "IN";
   let d; try{ d=await (await fetch("/api/newsflash?market="+mkt)).json(); }
   catch(e){ document.getElementById("nfmeta").textContent="error"; return; }
   const body=document.getElementById("nfbody");
-  const alerts=d.alerts||[];
+  const stocks=d.stocks||[], alerts=d.alerts||[];
   document.getElementById("nfmeta").textContent =
-    (d.updated?("last pull "+d.updated+" · "):"") + alerts.length + " in feed";
-  if(!alerts.length){ body.innerHTML='<span class="muted">No fresh headlines yet. The radar pulls every ~60s during the session.</span>'; return; }
+    (d.updated?("last pull "+d.updated+" · "):"") + stocks.length + " watched";
 
-  // figure out which alerts are NEW since the last poll (skip flashing on the first load)
+  // banner-flash any NEW directional headline since the last poll
   const fresh=alerts.filter(a=>!NF_SEEN.has(a.id));
   alerts.forEach(a=>NF_SEEN.add(a.id));
   if(NF_PRIMED){
@@ -275,16 +279,26 @@ async function pollNews(){
   }
   NF_PRIMED=true;
 
-  const label={buy:"BUY",sell:"SELL",volatile:"VOLATILE"};
-  body.innerHTML = alerts.map(a=>{
-    const flash=(NF_PRIMED&&fresh.some(f=>f.id===a.id))?(" flash-"+a.signal):"";
-    const m=(a.matched&&a.matched.length)?`<span class="nf-match">▸ ${a.matched.join(", ")}</span>`:"";
-    return `<div class="nf-row${flash}">
-      <span class="nf-time">${a.ts}</span>
-      <span class="nf-badge nf-${a.signal}">${label[a.signal]||a.signal}</span>
-      <span class="nf-sym">${a.symbol}</span>
-      <span class="nf-title">${a.title} ${m}</span>
-      <span class="muted" style="font-size:11px">${a.conviction}%</span></div>`;
+  if(!stocks.length){ body.innerHTML='<span class="muted">No watched names yet — load a daily pick first (the radar follows the picks + index).</span>'; return; }
+  const newSyms=new Set(fresh.map(f=>f.symbol));
+  body.innerHTML = stocks.map(s=>{
+    const hl=(s.headlines||[]).map(h=>{
+      const m=(h.matched&&h.matched.length)?` <span class="nf-match">▸ ${h.matched.join(", ")}</span>`:"";
+      const t=h.link?`<a href="${h.link}" target="_blank" rel="noopener" style="color:#cbd5e1;text-decoration:none">${h.title}</a>`:`<span style="color:#cbd5e1">${h.title}</span>`;
+      return `<div style="padding:6px 0;border-top:1px solid #23252a;display:flex;gap:8px;align-items:baseline">
+        <span class="nf-badge nf-${h.signal}" style="min-width:54px;font-size:10px">${NF_LABEL[h.signal]||h.signal}</span>
+        <span style="flex:1">${t}${m}</span>${nfAge(h.age_min)}</div>`;
+    }).join("");
+    const open=(s.signal!=="neutral"||newSyms.has(s.symbol))?"open":"";
+    const flash=newSyms.has(s.symbol)?(" flash-"+(s.signal==="neutral"?"volatile":s.signal)):"";
+    return `<details ${open} class="${flash}" style="margin-bottom:8px;background:#101113;border:1px solid #2a2c30;border-radius:9px;padding:9px 12px">
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px">
+        <span class="nf-badge nf-${s.signal}">${NF_LABEL[s.signal]||s.signal}</span>
+        <b class="nf-sym">${s.symbol}</b>
+        <span class="muted" style="flex:1;font-size:12px">▸ ${s.n} headline${s.n==1?'':'s'} (tap to expand)</span>
+        <span class="muted" style="font-size:11px">${s.conviction}%</span></summary>
+      <div style="margin-top:4px">${hl||'<span class="muted">no recent headlines</span>'}</div>
+    </details>`;
   }).join("");
 }
 function showBanner(a){
