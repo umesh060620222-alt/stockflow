@@ -245,7 +245,7 @@ def catalyst_score(symbol, headlines):
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
-            json={"model": model, "max_tokens": 300,
+            json={"model": model, "max_tokens": 300, "temperature": 0,
                   "messages": [{"role": "user", "content": prompt}]}, timeout=30)
         txt = r.json()["content"][0]["text"]
         m = re.search(r"\{.*\}", txt, re.S)

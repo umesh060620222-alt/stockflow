@@ -172,7 +172,7 @@ def _claude_conviction(symbol, title):
         r = requests.post("https://api.anthropic.com/v1/messages",
             headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
-            json={"model": model, "max_tokens": 60,
+            json={"model": model, "max_tokens": 60, "temperature": 0,
                   "messages": [{"role": "user", "content": prompt}]}, timeout=20)
         m = re.search(r"\{.*\}", r.json()["content"][0]["text"], re.S)
         return json.loads(m.group(0)) if m else None
