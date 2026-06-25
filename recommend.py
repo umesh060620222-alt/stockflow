@@ -138,9 +138,10 @@ def relative_strength(universe, bench_sym, days=120):
         c, v = sub["Close"], sub["Volume"]
         r1m = float(c.iloc[-1] / c.iloc[-21] - 1)
         r3m = float(c.iloc[-1] / c.iloc[-min(63, len(c) - 1)] - 1)
-        vol20 = float(v.tail(20).mean())
-        vol5 = float(v.tail(5).mean())
-        rvol = round(vol5 / vol20, 2) if vol20 > 0 else 0.0
+        vol20 = float(v.tail(20).mean())             # still used by the reversal check
+        vseq = [float(x) for x in v.tail(4)]         # 4 bars -> the last 3 daily changes
+        rising3 = len(vseq) == 4 and vseq[0] < vseq[1] < vseq[2] < vseq[3]
+        rvol = round(vseq[-1] / vseq[0], 2) if len(vseq) == 4 and vseq[0] > 0 else 0.0
         dma50 = float(c.tail(50).mean())
         ext_pct = round((float(c.iloc[-1]) / dma50 - 1) * 100, 1) if dma50 > 0 else 0.0
         above_50dma = bool(c.iloc[-1] > dma50)
@@ -152,8 +153,8 @@ def relative_strength(universe, bench_sym, days=120):
             "above_50dma": above_50dma,
             "near_high": bool(c.iloc[-1] >= c.tail(60).max() * 0.97),
             "near_low": bool(c.iloc[-1] <= c.tail(60).min() * 1.03),
-            "rvol": rvol,                                   # recent vol / 20-day avg vol
-            "vol_ok": bool(rvol >= config.REC_RVOL_MIN),    # participation confirms the move
+            "rvol": rvol,                                   # today's vol / 3 days ago
+            "vol_ok": bool(rising3),                        # volume higher EACH of the last 3 days
             "ext_pct": ext_pct,                            # % above the 50-DMA
             "rev_risk": bool(rev), "rev_flags": rev,
         })
@@ -198,9 +199,9 @@ def build_reasons(d, bench_name="Nifty"):
         r.append(f"Valuation in check: P/E {d['pe']} (under the 50 cap — not priced for perfection)")
     if d.get("eps") is not None:
         r.append(f"Actually profitable: EPS {d['eps']} (> 0, so the move is backed by earnings)")
-    if d.get("rvol"):
-        r.append(f"Volume confirms: recent volume {d['rvol']}× its 20-day average — "
-                 f"real participation behind the move, not a thin drift")
+    if d.get("vol_ok"):
+        r.append(f"Volume rising 3 days straight (today {d['rvol']}× 3 days ago) — "
+                 f"participation building into the move")
     if d.get("rev_risk") and d.get("rev_flags"):
         r.append("⚠ Reversal watch: " + "; ".join(d["rev_flags"]) +
                  " — tighten stops / size down")
@@ -221,8 +222,8 @@ def build_sell_reasons(d, bench_name="Nifty"):
                  f"little support if the slide continues")
     if d.get("eps") is not None and d["eps"] <= config.REC_MIN_EPS:
         r.append(f"Earnings don't back it: EPS {d['eps']} (≤ 0) — the weakness has a fundamental leg")
-    if d.get("rvol", 0) >= config.REC_RVOL_MIN:
-        r.append(f"Volume confirms the selling: {d['rvol']}× the 20-day average — "
+    if d.get("vol_ok"):
+        r.append(f"Volume rising into the decline 3 days straight (today {d['rvol']}× 3 days ago) — "
                  f"active distribution, not a quiet drift")
     return r
 
