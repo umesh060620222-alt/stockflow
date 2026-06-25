@@ -247,6 +247,7 @@ async function loadRec(refresh){
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th>Vol</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     ${sellHtml}
+    ${(d.conflicts&&d.conflicts.length)?`<div class="muted" style="margin-top:8px">Skipped on news conflict (picked the next clean name instead): ${d.conflicts.map(c=>`<b>${c.symbol}</b> (news ${c.direction} ${c.conviction}%)`).join(", ")}</div>`:""}
     <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
 }
 

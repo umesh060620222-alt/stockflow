@@ -259,7 +259,7 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
     df, bench_1m, closes = relative_strength(m["universe"], m["bench"])
     # buy must lead the index, be in an uptrend, AND have volume confirming the move
     cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0) & (df["vol_ok"])].head(top * 4)
-    picks = []
+    picks, conflicts = [], []
     for _, row in cand.iterrows():
         if len(picks) >= top:
             break
@@ -276,19 +276,33 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
         if with_news:
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
+            cat = d["catalyst"]
+            if (config.REC_VETO_ON_CONFLICT and cat and cat.get("direction") == "down"
+                    and (cat.get("conviction") or 0) >= config.REC_CONFLICT_CONVICTION):
+                conflicts.append({"symbol": row["symbol"].replace(".NS", ""), "side": "buy",
+                                  "direction": "down", "conviction": cat.get("conviction")})
+                continue                     # bearish news contradicts the buy -> skip to next
         picks.append(d)
     # --- top SELL / avoid picks: the mirror of the buy side ---
     # weakest relative strength in a confirmed downtrend. No EPS/PE *filter* here
     # (a short thesis doesn't need profitability) — valuation only colours the reason.
-    weak = df[(~df["above_50dma"]) & (df["rs_vs_nifty"] < 0)].sort_values("rs_vs_nifty").head(top)
+    weak = df[(~df["above_50dma"]) & (df["rs_vs_nifty"] < 0)].sort_values("rs_vs_nifty").head(top * 4)
     sell_picks = []
-    for i, (_, row) in enumerate(weak.iterrows()):
+    for _, row in weak.iterrows():
+        if len(sell_picks) >= top:
+            break
         f = fundamentals(row["symbol"])
         d = row.to_dict(); d["pe"] = f["pe"]; d["eps"] = f["eps"]
         d["reasons"] = build_sell_reasons(d, m["bench_name"])
-        if with_news and i == 0:                 # news/catalyst only for the #1 to limit calls
+        if with_news and not sell_picks:         # vet the catalyst for the would-be #1
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
+            cat = d["catalyst"]
+            if (config.REC_VETO_ON_CONFLICT and cat and cat.get("direction") == "up"
+                    and (cat.get("conviction") or 0) >= config.REC_CONFLICT_CONVICTION):
+                conflicts.append({"symbol": row["symbol"].replace(".NS", ""), "side": "sell",
+                                  "direction": "up", "conviction": cat.get("conviction")})
+                continue                         # bullish news contradicts the short -> skip to next
         sell_picks.append(d)
 
     # directional options idea for the top buy (CALL) and top sell (PUT)
@@ -301,7 +315,8 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
 
     result = {"date": str(dt.date.today()), "market": market, "currency": m["cur"],
               "bench_name": m["bench_name"], "bench_1m_pct": bench_1m,
-              "sectors": sector_rollup(df), "picks": picks, "sell_picks": sell_picks}
+              "sectors": sector_rollup(df), "picks": picks, "sell_picks": sell_picks,
+              "conflicts": conflicts}
 
     # record a slim copy (no track/news bloat), then verify prior top-picks vs now
     if do_record:
