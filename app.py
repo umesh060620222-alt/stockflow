@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config, data as D, strategy as S, engine as E, zerodha as Z
 import recommend as REC
+import newsflash as NF
 from live import ENGINE as LIVE
 
 _REC_CACHE = {}   # market -> {"date": ..., "data": ...}
@@ -110,6 +111,13 @@ class H(BaseHTTPRequestHandler):
                 except Exception as e:
                     return self._send(200, dumps({"error": f"{type(e).__name__}: {e}"}))
             return self._send(200, dumps(_REC_CACHE[market]["data"]))
+        if path == "/api/newsflash":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            market = q.get("market", ["IN"])[0].upper()
+            if market not in ("IN", "US"):
+                market = "IN"
+            return self._send(200, dumps(NF.get_radar(market).feed()))
         if path == "/api/auth/url":
             try:
                 return self._send(200, dumps({"url": Z.login_url()}))
@@ -166,7 +174,31 @@ def _auto_record():
         time.sleep(1800)   # check every 30 min
 
 
+def _news_watchlist(market):
+    """Symbols the radar watches: today's cached picks, else the top of the universe."""
+    c = _REC_CACHE.get(market)
+    picks = (c or {}).get("data", {}).get("picks") if c else None
+    if picks:
+        return [p["symbol"] for p in picks]
+    uni = REC.MARKETS.get(market, REC.MARKETS["IN"])["universe"]
+    return uni[:config.NEWS_WATCH_FALLBACK]
+
+
+def _news_radar_loop():
+    """Hands-off: every ~60s pull fresh headlines for the watched names in each
+    market and classify them into buy/sell/volatility flashes for the UI."""
+    while True:
+        try:
+            for mk in ("IN", "US"):
+                m = REC.MARKETS.get(mk, REC.MARKETS["IN"])
+                NF.get_radar(mk).poll(_news_watchlist(mk), bench_query=m["bench_name"])
+        except Exception as e:
+            print(f"[news-radar] {e}", flush=True)
+        time.sleep(max(20, config.NEWS_POLL_SEC))
+
+
 threading.Thread(target=_auto_record, daemon=True).start()
+threading.Thread(target=_news_radar_loop, daemon=True).start()
 
 
 if __name__ == "__main__":

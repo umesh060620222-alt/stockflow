@@ -49,6 +49,13 @@ CAPITAL_PER_TRADE = 10000
 REC_PE_MAX = 50            # screen out leaders pricier than this trailing P/E (overvaluation guard)
 REC_MIN_EPS = 0            # require trailing EPS strictly above this (drops loss-making / zero-EPS names)
 
+# --- intraday news radar (1-min buy/sell/volatility flashes) ---
+NEWS_POLL_SEC = 60         # how often the background radar pulls fresh headlines
+NEWS_MAX_AGE_MIN = 90      # only flash headlines published within this window (mins)
+NEWS_FEED_KEEP = 40        # alerts retained in the rolling per-market feed
+NEWS_WATCH_FALLBACK = 6    # if no daily picks cached yet, watch the top N of the universe
+NEWS_USE_CLAUDE = False    # escalate strong buy/sell hits to Claude for a conviction read
+
 # --- live mode (per-second recommend + 30s self-grade) ---
 LIVE_HORIZON_S = 30        # the recommendation must pay off within this many seconds
 LIVE_LOOKBACK_S = 5        # seconds of micro-momentum used to trigger

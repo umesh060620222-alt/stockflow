@@ -31,6 +31,22 @@
   th{color:#9ca3af;font-weight:600}
   .pill{font-size:10px;padding:1px 6px;border-radius:6px;background:#23252a}
   #status{font-size:12px;color:#9ca3af;min-height:16px}
+  .nf-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #23252a;font-size:13px}
+  .nf-badge{font-size:11px;font-weight:800;letter-spacing:.5px;padding:2px 8px;border-radius:6px;min-width:64px;text-align:center}
+  .nf-buy{background:#0c2a1c;color:#34d399;border:1px solid #14532d}
+  .nf-sell{background:#2a1414;color:#f87171;border:1px solid #4c1d1d}
+  .nf-volatile{background:#2a230c;color:#fbbf24;border:1px solid #4c3d0a}
+  .nf-time{color:#9ca3af;font-size:11px;min-width:38px}
+  .nf-sym{font-weight:700;min-width:74px}
+  .nf-title{color:#cbd5e1;flex:1}
+  .nf-match{color:#6b7280;font-size:11px}
+  @keyframes nfflash{0%{background:#3a3208}40%{background:#26210a}100%{background:transparent}}
+  @keyframes nfflashbuy{0%{background:#0c3a26}100%{background:transparent}}
+  @keyframes nfflashsell{0%{background:#3a1414}100%{background:transparent}}
+  .flash-buy{animation:nfflashbuy 1.6s ease-out 3}
+  .flash-sell{animation:nfflashsell 1.6s ease-out 3}
+  .flash-volatile{animation:nfflash 1.6s ease-out 3}
+  #nfbanner{display:none;margin-top:10px;padding:12px 14px;border-radius:10px;font-weight:800;font-size:15px}
 </style>
 </head>
 <body>
@@ -57,6 +73,18 @@
       </div>
     </div>
     <div id="recbody" class="muted" style="margin-top:10px">Loading today's pick…</div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <b style="font-size:14px">News radar — 1-min buy / sell / volatility flashes</b>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="nfmeta" class="muted"></span>
+        <button id="nfbtn" style="width:auto;margin:0;padding:7px 12px" onclick="toggleNews()">Start radar</button>
+      </div>
+    </div>
+    <div id="nfbanner"></div>
+    <div id="nfbody" class="muted" style="margin-top:10px">Watches today's picks + the index. New headlines are scored and flashed as they break.</div>
   </div>
 
   <div class="grid">
@@ -170,6 +198,54 @@ async function loadRec(refresh){
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
+}
+
+// ---- News radar: poll the per-market feed, flash new buy/sell/volatility hits ----
+let NF_TIMER=null, NF_SEEN=new Set(), NF_PRIMED=false;
+function toggleNews(){
+  const btn=document.getElementById("nfbtn");
+  if(NF_TIMER){ clearInterval(NF_TIMER); NF_TIMER=null; btn.textContent="Start radar";
+    document.getElementById("nfmeta").textContent="stopped"; return; }
+  btn.textContent="Stop radar"; NF_PRIMED=false; NF_SEEN=new Set();
+  pollNews(); NF_TIMER=setInterval(pollNews, 20000);   // UI refresh; backend pulls news every ~60s
+}
+async function pollNews(){
+  const mkt=(document.getElementById("recmkt")||{}).value || "IN";
+  let d; try{ d=await (await fetch("/api/newsflash?market="+mkt)).json(); }
+  catch(e){ document.getElementById("nfmeta").textContent="error"; return; }
+  const body=document.getElementById("nfbody");
+  const alerts=d.alerts||[];
+  document.getElementById("nfmeta").textContent =
+    (d.updated?("last pull "+d.updated+" · "):"") + alerts.length + " in feed";
+  if(!alerts.length){ body.innerHTML='<span class="muted">No fresh headlines yet. The radar pulls every ~60s during the session.</span>'; return; }
+
+  // figure out which alerts are NEW since the last poll (skip flashing on the first load)
+  const fresh=alerts.filter(a=>!NF_SEEN.has(a.id));
+  alerts.forEach(a=>NF_SEEN.add(a.id));
+  if(NF_PRIMED){
+    const strong=fresh.filter(a=>a.signal!=="volatile").sort((x,y)=>y.conviction-x.conviction)[0];
+    if(strong) showBanner(strong);
+  }
+  NF_PRIMED=true;
+
+  const label={buy:"BUY",sell:"SELL",volatile:"VOLATILE"};
+  body.innerHTML = alerts.map(a=>{
+    const flash=(NF_PRIMED&&fresh.some(f=>f.id===a.id))?(" flash-"+a.signal):"";
+    const m=(a.matched&&a.matched.length)?`<span class="nf-match">▸ ${a.matched.join(", ")}</span>`:"";
+    return `<div class="nf-row${flash}">
+      <span class="nf-time">${a.ts}</span>
+      <span class="nf-badge nf-${a.signal}">${label[a.signal]||a.signal}</span>
+      <span class="nf-sym">${a.symbol}</span>
+      <span class="nf-title">${a.title} ${m}</span>
+      <span class="muted" style="font-size:11px">${a.conviction}%</span></div>`;
+  }).join("");
+}
+function showBanner(a){
+  const b=document.getElementById("nfbanner");
+  const cls=a.signal==="buy"?"edge":"noedge";
+  b.className=cls; b.style.display="block";
+  b.textContent=`⚡ ${a.signal.toUpperCase()} signal — ${a.symbol} (${a.conviction}%): ${a.title}`;
+  clearTimeout(showBanner._t); showBanner._t=setTimeout(()=>{b.style.display="none";}, 30000);
 }
 
 async function zstatus(){
