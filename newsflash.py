@@ -120,6 +120,20 @@ def aggregate_signal(headlines):
     return sig, min(95, 35 + sc * 10)
 
 
+def _summarize(headlines, signal):
+    """One-line summary of what's driving the signal: the strongest matching
+    headline (source suffix stripped) + a count of the rest."""
+    if not headlines:
+        return ""
+    rel = [h for h in headlines if h["signal"] == signal] or headlines
+    rel = sorted(rel, key=lambda h: h["score"], reverse=True)
+    top = rel[0]["title"]
+    if " - " in top:                                   # drop Google News' " - Publisher" tail
+        top = top.rsplit(" - ", 1)[0]
+    extra = len(headlines) - 1
+    return top + (f"  (+{extra} more)" if extra > 0 else "")
+
+
 def _fetch_items(query: str, n=8):
     """Google News RSS -> [{title, guid, pub(datetime|None)}], newest first."""
     import requests, xml.etree.ElementTree as ET
@@ -226,7 +240,8 @@ class NewsRadar:
             recent_hl = headlines[:per]
             sig, conv = aggregate_signal(recent_hl)
             cards[name] = {"symbol": name, "signal": sig, "conviction": conv,
-                           "n": len(recent_hl), "headlines": recent_hl}
+                           "n": len(recent_hl), "summary": _summarize(recent_hl, sig),
+                           "headlines": recent_hl}
 
         if len(self.seen) > 4000:
             self.seen = set(list(self.seen)[-2000:])

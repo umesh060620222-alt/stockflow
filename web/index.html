@@ -87,7 +87,7 @@
       </div>
     </div>
     <div id="nfbanner"></div>
-    <div id="nfbody" class="muted" style="margin-top:10px">Watches today's picks + the index. New headlines are scored and flashed as they break.</div>
+    <div id="nfbody" class="muted" style="margin-top:10px">Buy / sell signals from breaking news on the watched names. Press Start.</div>
   </div>
 
   <div class="grid">
@@ -260,47 +260,19 @@ function toggleNews(){
   btn.textContent="Stop radar"; NF_PRIMED=false; NF_SEEN=new Set();
   pollNews(); NF_TIMER=setInterval(pollNews, 20000);   // UI refresh; backend pulls news every ~60s
 }
-const NF_LABEL={buy:"BUY",sell:"SELL",volatile:"VOLATILE",neutral:"—"};
-function nfAge(m){ if(m==null) return ""; return `<span class="muted" style="font-size:11px;white-space:nowrap">${m<60?m+'m':Math.round(m/60)+'h'} ago</span>`; }
 async function pollNews(){
   const mkt=(document.getElementById("recmkt")||{}).value || "IN";
   let d; try{ d=await (await fetch("/api/newsflash?market="+mkt)).json(); }
   catch(e){ document.getElementById("nfmeta").textContent="error"; return; }
   const body=document.getElementById("nfbody");
-  const stocks=d.stocks||[], alerts=d.alerts||[];
-  document.getElementById("nfmeta").textContent =
-    (d.updated?("last pull "+d.updated+" · "):"") + stocks.length + " watched";
-
-  // banner-flash any NEW directional headline since the last poll
-  const fresh=alerts.filter(a=>!NF_SEEN.has(a.id));
-  alerts.forEach(a=>NF_SEEN.add(a.id));
-  if(NF_PRIMED){
-    const strong=fresh.filter(a=>a.signal!=="volatile").sort((x,y)=>y.conviction-x.conviction)[0];
-    if(strong) showBanner(strong);
-  }
-  NF_PRIMED=true;
-
-  if(!stocks.length){ body.innerHTML='<span class="muted">No watched names yet — load a daily pick first (the radar follows the picks + index).</span>'; return; }
-  const newSyms=new Set(fresh.map(f=>f.symbol));
-  body.innerHTML = stocks.map(s=>{
-    const hl=(s.headlines||[]).map(h=>{
-      const m=(h.matched&&h.matched.length)?` <span class="nf-match">▸ ${h.matched.join(", ")}</span>`:"";
-      const t=h.link?`<a href="${h.link}" target="_blank" rel="noopener" style="color:#cbd5e1;text-decoration:none">${h.title}</a>`:`<span style="color:#cbd5e1">${h.title}</span>`;
-      return `<div style="padding:6px 0;border-top:1px solid #23252a;display:flex;gap:8px;align-items:baseline">
-        <span class="nf-badge nf-${h.signal}" style="min-width:54px;font-size:10px">${NF_LABEL[h.signal]||h.signal}</span>
-        <span style="flex:1">${t}${m}</span>${nfAge(h.age_min)}</div>`;
-    }).join("");
-    const open=(s.signal!=="neutral"||newSyms.has(s.symbol))?"open":"";
-    const flash=newSyms.has(s.symbol)?(" flash-"+(s.signal==="neutral"?"volatile":s.signal)):"";
-    return `<details ${open} class="${flash}" style="margin-bottom:8px;background:#101113;border:1px solid #2a2c30;border-radius:9px;padding:9px 12px">
-      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px">
-        <span class="nf-badge nf-${s.signal}">${NF_LABEL[s.signal]||s.signal}</span>
-        <b class="nf-sym">${s.symbol}</b>
-        <span class="muted" style="flex:1;font-size:12px">▸ ${s.n} headline${s.n==1?'':'s'} (tap to expand)</span>
-        <span class="muted" style="font-size:11px">${s.conviction}%</span></summary>
-      <div style="margin-top:4px">${hl||'<span class="muted">no recent headlines</span>'}</div>
-    </details>`;
-  }).join("");
+  // buy/sell recommendations only — no neutral, no volatile, no index
+  const stocks=(d.stocks||[]).filter(s=>(s.signal==="buy"||s.signal==="sell") && s.symbol!=="MARKET");
+  document.getElementById("nfmeta").textContent = d.updated?("last pull "+d.updated):"";
+  if(!stocks.length){ body.innerHTML='<span class="muted">No buy / sell signals from the news right now.</span>'; return; }
+  body.innerHTML = stocks.map(s=>`<div class="nf-row">
+      <span class="nf-badge nf-${s.signal}">${s.signal.toUpperCase()}</span>
+      <span class="nf-sym">${s.symbol}</span>
+      <span class="nf-title">${s.summary||""}</span></div>`).join("");
 }
 function showBanner(a){
   const b=document.getElementById("nfbanner");
