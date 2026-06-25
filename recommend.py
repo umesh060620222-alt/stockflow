@@ -12,6 +12,7 @@ from __future__ import annotations
 import os, json, datetime as dt
 import pandas as pd, numpy as np
 import config
+import options as OPT
 
 REC_FILE = os.path.join(os.path.dirname(__file__), "recommendations.json")
 
@@ -250,6 +251,14 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
         sell_picks.append(d)
+
+    # directional options idea for the top buy (CALL) and top sell (PUT)
+    if picks:
+        picks[0]["option"] = OPT.suggest(picks[0]["symbol"], picks[0]["price"],
+                                         closes.get(picks[0]["symbol"]), "call", market, m["cur"])
+    if sell_picks:
+        sell_picks[0]["option"] = OPT.suggest(sell_picks[0]["symbol"], sell_picks[0]["price"],
+                                             closes.get(sell_picks[0]["symbol"]), "put", market, m["cur"])
 
     result = {"date": str(dt.date.today()), "market": market, "currency": m["cur"],
               "bench_name": m["bench_name"], "bench_1m_pct": bench_1m,
