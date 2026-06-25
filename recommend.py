@@ -96,7 +96,8 @@ def sector_rollup(df, top=4):
     return out
 
 
-def _daily_closes(symbols, days=120):
+def _daily_ohlcv(symbols, days=120):
+    """Per-symbol DataFrame with Close + Volume (volume confirms the price move)."""
     import yfinance as yf
     raw = yf.download(symbols, period=f"{days}d", interval="1d", group_by="ticker",
                       progress=False, threads=True, auto_adjust=False)
@@ -104,34 +105,60 @@ def _daily_closes(symbols, days=120):
     for s in symbols:
         try:
             df = raw[s] if len(symbols) > 1 else raw
-            c = df["Close"].dropna()
-            if len(c) > 25:
-                out[s] = c
+            sub = df[["Close", "Volume"]].dropna()
+            if len(sub) > 25:
+                out[s] = sub
         except Exception:
             pass
     return out
 
 
+def _reversal_flags(c, v, above_50dma, ext_pct, vol20):
+    """Early-warning signs that an uptrend is about to roll over."""
+    rev = []
+    if above_50dma and ext_pct > config.REC_MAX_EXT_PCT:
+        rev.append(f"overextended (+{ext_pct}% above 50-DMA)")
+    if above_50dma and float(c.iloc[-1]) < float(c.tail(10).mean()):
+        rev.append("lost the 10-DMA (short-term rollover)")
+    last_ret = float(c.iloc[-1] / c.iloc[-2] - 1) * 100
+    if last_ret <= -3 and vol20 > 0 and float(v.iloc[-1]) > 1.5 * vol20:
+        rev.append("heavy down-day on high volume (distribution)")
+    return rev
+
+
 def relative_strength(universe, bench_sym, days=120):
-    data = _daily_closes(universe + [bench_sym], days)
-    bench = data.get(bench_sym)
+    data = _daily_ohlcv(universe + [bench_sym], days)
+    closes = {s: sub["Close"] for s, sub in data.items()}     # close-only view (track record / options)
+    bench = closes.get(bench_sym)
     bret = float(bench.iloc[-1] / bench.iloc[-21] - 1) if bench is not None and len(bench) > 21 else 0.0
     rows = []
-    for s, c in data.items():
+    for s, sub in data.items():
         if s == bench_sym:
             continue
+        c, v = sub["Close"], sub["Volume"]
         r1m = float(c.iloc[-1] / c.iloc[-21] - 1)
         r3m = float(c.iloc[-1] / c.iloc[-min(63, len(c) - 1)] - 1)
+        vol20 = float(v.tail(20).mean())
+        vol5 = float(v.tail(5).mean())
+        rvol = round(vol5 / vol20, 2) if vol20 > 0 else 0.0
+        dma50 = float(c.tail(50).mean())
+        ext_pct = round((float(c.iloc[-1]) / dma50 - 1) * 100, 1) if dma50 > 0 else 0.0
+        above_50dma = bool(c.iloc[-1] > dma50)
+        rev = _reversal_flags(c, v, above_50dma, ext_pct, vol20)
         rows.append({
             "symbol": s, "price": round(float(c.iloc[-1]), 2),
             "ret_1m": round(r1m * 100, 1), "ret_3m": round(r3m * 100, 1),
             "rs_vs_nifty": round((r1m - bret) * 100, 1),
-            "above_50dma": bool(c.iloc[-1] > c.tail(50).mean()),
+            "above_50dma": above_50dma,
             "near_high": bool(c.iloc[-1] >= c.tail(60).max() * 0.97),
             "near_low": bool(c.iloc[-1] <= c.tail(60).min() * 1.03),
+            "rvol": rvol,                                   # recent vol / 20-day avg vol
+            "vol_ok": bool(rvol >= config.REC_RVOL_MIN),    # participation confirms the move
+            "ext_pct": ext_pct,                            # % above the 50-DMA
+            "rev_risk": bool(rev), "rev_flags": rev,
         })
     df = pd.DataFrame(rows).sort_values("rs_vs_nifty", ascending=False).reset_index(drop=True)
-    return df, round(bret * 100, 1), data
+    return df, round(bret * 100, 1), closes
 
 
 def news_headlines(symbol, n=4):
@@ -171,6 +198,12 @@ def build_reasons(d, bench_name="Nifty"):
         r.append(f"Valuation in check: P/E {d['pe']} (under the 50 cap — not priced for perfection)")
     if d.get("eps") is not None:
         r.append(f"Actually profitable: EPS {d['eps']} (> 0, so the move is backed by earnings)")
+    if d.get("rvol"):
+        r.append(f"Volume confirms: recent volume {d['rvol']}× its 20-day average — "
+                 f"real participation behind the move, not a thin drift")
+    if d.get("rev_risk") and d.get("rev_flags"):
+        r.append("⚠ Reversal watch: " + "; ".join(d["rev_flags"]) +
+                 " — tighten stops / size down")
     return r
 
 
@@ -188,6 +221,9 @@ def build_sell_reasons(d, bench_name="Nifty"):
                  f"little support if the slide continues")
     if d.get("eps") is not None and d["eps"] <= config.REC_MIN_EPS:
         r.append(f"Earnings don't back it: EPS {d['eps']} (≤ 0) — the weakness has a fundamental leg")
+    if d.get("rvol", 0) >= config.REC_RVOL_MIN:
+        r.append(f"Volume confirms the selling: {d['rvol']}× the 20-day average — "
+                 f"active distribution, not a quiet drift")
     return r
 
 
@@ -221,11 +257,14 @@ def catalyst_score(symbol, headlines):
 def daily_pick(market="IN", top=5, with_news=True, do_record=True):
     m = MARKETS.get(market, MARKETS["IN"])
     df, bench_1m, closes = relative_strength(m["universe"], m["bench"])
-    cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0)].head(top * 3)  # over-select for PE filter
+    # buy must lead the index, be in an uptrend, AND have volume confirming the move
+    cand = df[(df["above_50dma"]) & (df["rs_vs_nifty"] > 0) & (df["vol_ok"])].head(top * 4)
     picks = []
     for _, row in cand.iterrows():
         if len(picks) >= top:
             break
+        if config.REC_SKIP_REVERSAL and row["rev_risk"]:
+            continue                         # opted-in: avoid names flashing reversal warnings
         f = fundamentals(row["symbol"])
         pe, eps = f["pe"], f["eps"]
         if eps is None or eps <= config.REC_MIN_EPS:

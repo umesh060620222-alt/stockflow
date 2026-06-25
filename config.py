@@ -48,6 +48,9 @@ CAPITAL_PER_TRADE = 10000
 # --- daily recommendation ---
 REC_PE_MAX = 50            # screen out leaders pricier than this trailing P/E (overvaluation guard)
 REC_MIN_EPS = 0            # require trailing EPS strictly above this (drops loss-making / zero-EPS names)
+REC_RVOL_MIN = 1.0         # buy MUST show recent (5d) volume >= its 20-day average — participation confirms the move
+REC_MAX_EXT_PCT = 18       # > this % above the 50-DMA = overextended -> reversal-risk flag
+REC_SKIP_REVERSAL = False  # True = drop reversal-risk names from buy picks; False = keep but warn
 
 # --- intraday news radar (1-min buy/sell/volatility flashes) ---
 NEWS_POLL_SEC = 60         # how often the background radar pulls fresh headlines
