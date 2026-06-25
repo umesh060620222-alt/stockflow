@@ -127,6 +127,7 @@ def relative_strength(universe, bench_sym, days=120):
             "rs_vs_nifty": round((r1m - bret) * 100, 1),
             "above_50dma": bool(c.iloc[-1] > c.tail(50).mean()),
             "near_high": bool(c.iloc[-1] >= c.tail(60).max() * 0.97),
+            "near_low": bool(c.iloc[-1] <= c.tail(60).min() * 1.03),
         })
     df = pd.DataFrame(rows).sort_values("rs_vs_nifty", ascending=False).reset_index(drop=True)
     return df, round(bret * 100, 1), data
@@ -169,6 +170,23 @@ def build_reasons(d, bench_name="Nifty"):
         r.append(f"Valuation in check: P/E {d['pe']} (under the 50 cap — not priced for perfection)")
     if d.get("eps") is not None:
         r.append(f"Actually profitable: EPS {d['eps']} (> 0, so the move is backed by earnings)")
+    return r
+
+
+def build_sell_reasons(d, bench_name="Nifty"):
+    """Deterministic explanation of why this stock ranked as the top SELL/avoid —
+    the mirror of build_reasons: weakest relative strength in a confirmed downtrend."""
+    r = [f"Weakest by relative strength: {d['rs_vs_nifty']:+}% vs {bench_name} over 1 month — "
+         f"money is rotating OUT while the index holds up better"]
+    trend = "trading below its 50-day average" + (
+        ", and at/near its 60-day low" if d.get("near_low") else "")
+    r.append(f"Downtrend confirmed: {trend} (not a dip in an uptrend)")
+    r.append(f"Momentum: {d['ret_3m']:+}% over 3 months, {d['ret_1m']:+}% over 1 month")
+    if d.get("pe") is not None and d["pe"] > config.REC_PE_MAX:
+        r.append(f"Rich valuation into weakness: P/E {d['pe']} (above the {config.REC_PE_MAX} cap) — "
+                 f"little support if the slide continues")
+    if d.get("eps") is not None and d["eps"] <= config.REC_MIN_EPS:
+        r.append(f"Earnings don't back it: EPS {d['eps']} (≤ 0) — the weakness has a fundamental leg")
     return r
 
 
@@ -219,9 +237,23 @@ def daily_pick(market="IN", top=5, with_news=True, do_record=True):
             d["news"] = news_headlines(row["symbol"])
             d["catalyst"] = catalyst_score(row["symbol"], d["news"])
         picks.append(d)
+    # --- top SELL / avoid picks: the mirror of the buy side ---
+    # weakest relative strength in a confirmed downtrend. No EPS/PE *filter* here
+    # (a short thesis doesn't need profitability) — valuation only colours the reason.
+    weak = df[(~df["above_50dma"]) & (df["rs_vs_nifty"] < 0)].sort_values("rs_vs_nifty").head(top)
+    sell_picks = []
+    for i, (_, row) in enumerate(weak.iterrows()):
+        f = fundamentals(row["symbol"])
+        d = row.to_dict(); d["pe"] = f["pe"]; d["eps"] = f["eps"]
+        d["reasons"] = build_sell_reasons(d, m["bench_name"])
+        if with_news and i == 0:                 # news/catalyst only for the #1 to limit calls
+            d["news"] = news_headlines(row["symbol"])
+            d["catalyst"] = catalyst_score(row["symbol"], d["news"])
+        sell_picks.append(d)
+
     result = {"date": str(dt.date.today()), "market": market, "currency": m["cur"],
               "bench_name": m["bench_name"], "bench_1m_pct": bench_1m,
-              "sectors": sector_rollup(df), "picks": picks}
+              "sectors": sector_rollup(df), "picks": picks, "sell_picks": sell_picks}
 
     # record a slim copy (no track/news bloat), then verify prior top-picks vs now
     if do_record:

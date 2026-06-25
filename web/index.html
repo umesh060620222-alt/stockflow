@@ -181,6 +181,29 @@ async function loadRec(refresh){
   const rows = d.picks.map((p,i)=>`<tr><td>${i+1}</td><td><b>${p.symbol.replace('.NS','')}</b></td>
     <td>${cur}${p.price}</td><td>${pe(p.pe)}</td><td class="pos">+${p.rs_vs_nifty}%</td><td>${sign(p.ret_1m)}</td>
     <td>${sign(p.ret_3m)}</td><td>${p.near_high?'● at highs':''}</td></tr>`).join("");
+  // --- Top SELL / avoid: mirror of the buy block, in red ---
+  let sellHtml="";
+  if(d.sell_picks && d.sell_picks.length){
+    const s=d.sell_picks[0];
+    const sReasons=(s.reasons&&s.reasons.length)
+      ? `<div style="margin:10px 0"><b style="font-size:13px">Why avoid / short</b>
+         <ul style="margin:4px 0 0 16px;line-height:1.7">${s.reasons.map(x=>`<li>${x}</li>`).join("")}</ul></div>` : "";
+    const sc=s.catalyst;
+    const sCat=(sc&&sc.direction)?`<div style="margin:8px 0;padding:8px 10px;background:#101113;border-radius:8px">
+      <b>Claude news read:</b> <b class="${sc.direction==='up'?'pos':(sc.direction==='down'?'neg':'')}">${sc.direction} · ${sc.conviction}% conviction</b>
+      <div class="muted" style="margin-top:3px">${sc.reasoning||sc.catalyst||''}</div></div>`:"";
+    const sNews=(s.news||[]).slice(0,3).map(n=>`<li>${n}</li>`).join("");
+    const sRows=d.sell_picks.map((p,i)=>`<tr><td>${i+1}</td><td><b>${p.symbol.replace('.NS','')}</b></td>
+      <td>${cur}${p.price}</td><td>${pe(p.pe)}</td><td class="neg">${p.rs_vs_nifty}%</td><td>${sign(p.ret_1m)}</td>
+      <td>${sign(p.ret_3m)}</td><td>${p.near_low?'● at lows':''}</td></tr>`).join("");
+    sellHtml=`<div style="margin-top:18px;padding-top:14px;border-top:1px solid #2a2c30">
+      <div style="font-size:15px;margin-bottom:6px">Top short / avoid:
+        <b style="color:#f87171;font-size:18px">${s.symbol.replace('.NS','')}</b>
+        <span class="muted">${cur}${s.price} · PE ${s.pe==null?'n/a':s.pe} · EPS ${s.eps==null?'n/a':s.eps} · RS <span class="neg">${s.rs_vs_nifty}%</span> vs ${bn} · 3m ${sign(s.ret_3m)}${s.near_low?' · at 52d lows':''}</span></div>
+      ${sReasons}${sCat}
+      ${sNews?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${sNews}</ul></div>`:""}
+      <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${sRows}</tbody></table></div>`;
+  }
   let track="";
   if(d.track_summary){
     const ts=d.track_summary;
@@ -197,6 +220,7 @@ async function loadRec(refresh){
     ${catHtml}
     ${news?`<div class="muted" style="margin-bottom:10px">why (recent news):<ul style="margin:4px 0 0 16px">${news}</ul></div>`:""}
     <table><thead><tr><th>#</th><th>stock</th><th>price</th><th>PE</th><th>RS</th><th>1m</th><th>3m</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    ${sellHtml}
     <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
 }
 
