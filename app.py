@@ -90,6 +90,9 @@ class H(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
+        if path in ("/premarket", "/premarket.html"):
+            with open(os.path.join(HERE, "web", "premarket.html"), "rb") as f:
+                return self._send(200, f.read(), "text/html; charset=utf-8")
         if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":
@@ -123,6 +126,12 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"url": Z.login_url()}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/auth/credentials":
+            tok = Z.load_token()
+            if not tok:
+                return self._send(200, dumps({"error": "No valid token — connect first"}))
+            api_key, _ = Z._creds()
+            return self._send(200, dumps({"api_key": api_key, "access_token": tok}))
         self._send(404, dumps({"error": "not found"}))
 
     def do_POST(self):

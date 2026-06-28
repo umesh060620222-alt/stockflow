@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pre-Market Stream — Buy/Sell Volume & EIP</title>
+  <style>
+    :root { color-scheme: dark }
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font-family: Inter, system-ui, sans-serif;
+      background: #0f1011; color: #e4e4e7;
+      min-height: 100vh; padding: 20px;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px; flex-wrap: wrap; gap: 10px;
+    }
+    h1 { font-size: 18px; font-weight: 700 }
+    .badge {
+      font-size: 12px; padding: 4px 10px; border-radius: 20px; font-weight: 600;
+    }
+    .badge.live    { background: #14532d; color: #4ade80 }
+    .badge.closed  { background: #3b0a0a; color: #f87171 }
+    .badge.waiting { background: #1c1a08; color: #fbbf24 }
+    .nav{display:flex;gap:4px;margin:0 0 16px}
+    .nav a{padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;color:#9ca3af;border:1px solid transparent}
+    .nav a:hover{color:#e4e4e7;background:#23252a}
+    .nav a.active{background:#1b1c1f;border-color:#2a2c30;color:#fbbf24}
+
+    /* ── Auth panel ── */
+    #authPanel {
+      background: #1b1c1f; border: 1px solid #2a2c30; border-radius: 14px;
+      padding: 20px 24px; margin-bottom: 20px;
+    }
+    #authPanel h2 { font-size: 14px; margin-bottom: 14px; color: #9ca3af }
+    .auth-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap }
+    .field { display: flex; flex-direction: column; gap: 4px }
+    label { font-size: 11px; color: #6b7280 }
+    input, select {
+      background: #101113; border: 1px solid #2a2c30; color: #e4e4e7;
+      border-radius: 8px; padding: 8px 12px; font-size: 13px; outline: none;
+    }
+    input:focus { border-color: #fbbf24 }
+    input[type="text"] { width: 260px }
+    .btn {
+      padding: 9px 16px; border-radius: 8px; border: 0;
+      font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+    }
+    .btn-yellow  { background: #fbbf24; color: #0f1011 }
+    .btn-danger  { background: #7f1d1d; color: #fca5a5 }
+    .btn-muted   { background: #1b1c1f; color: #e4e4e7; border: 1px solid #2a2c30 }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed }
+    #authMsg { font-size: 12px; margin-top: 10px; color: #9ca3af }
+    #authMsg .ok  { color: #4ade80 }
+    #authMsg .err { color: #f87171 }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    /* ── Summary cards ── */
+    .cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; margin-bottom: 20px;
+    }
+    .card {
+      background: #1b1c1f; border: 1px solid #2a2c30; border-radius: 14px;
+      padding: 16px 20px;
+    }
+    .card .lbl { font-size: 11px; color: #9ca3af; margin-bottom: 6px }
+    .card .val { font-size: 26px; font-weight: 700 }
+    .card.buy  .val { color: #4ade80 }
+    .card.sell .val { color: #f87171 }
+    .card.eip  .val { color: #fbbf24 }
+    .card.ratio .val { color: #a78bfa }
+    .card.ticks .val { font-size: 18px; color: #e4e4e7 }
+
+    /* ── Chart ── */
+    .chart-wrap {
+      background: #1b1c1f; border: 1px solid #2a2c30; border-radius: 14px;
+      padding: 16px; margin-bottom: 20px;
+    }
+    .chart-title { font-size: 11px; color: #6b7280; margin-bottom: 8px }
+    canvas { width: 100% !important; display: block }
+
+    /* ── Table ── */
+    .table-wrap {
+      background: #1b1c1f; border: 1px solid #2a2c30; border-radius: 14px;
+      overflow: hidden;
+    }
+    .table-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 16px; border-bottom: 1px solid #2a2c30;
+    }
+    .table-header span { font-size: 13px; font-weight: 600 }
+    .table-header .cnt { font-size: 11px; color: #6b7280 }
+    table { width: 100%; border-collapse: collapse; font-size: 12px }
+    th {
+      text-align: left; padding: 10px 16px;
+      color: #6b7280; font-weight: 600; font-size: 11px;
+      border-bottom: 1px solid #1f2023;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    td { padding: 9px 16px; border-bottom: 1px solid #1f2023 }
+    tr:last-child td { border-bottom: 0 }
+    tr:hover td { background: #23252a }
+    .buy-col  { color: #4ade80 }
+    .sell-col { color: #f87171 }
+    .eip-col  { color: #fbbf24 }
+    .time-col { color: #9ca3af; font-variant-numeric: tabular-nums }
+    .sym-col  { font-weight: 600 }
+    .empty { padding: 40px; text-align: center; color: #6b7280; font-size: 13px }
+
+    /* ── Log ── */
+    .log {
+      margin-top: 14px; padding: 10px 12px; background: #101113; border-radius: 10px;
+      font-size: 11px; color: #6b7280; max-height: 72px; overflow-y: auto;
+      font-family: monospace; line-height: 1.5;
+    }
+    .log .err  { color: #f87171 }
+    .log .ok   { color: #4ade80 }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/">Algo Lab</a>
+  <a href="/premarket.html" class="active">Pre-Market</a>
+</nav>
+<header>
+  <h1>Pre-Market Stream &nbsp;·&nbsp; <span id="clock">--:--:--</span></h1>
+  <span id="sessionBadge" class="badge waiting">Waiting</span>
+</header>
+
+<!-- Auth panel -->
+<div id="authPanel">
+  <h2>Zerodha connection</h2>
+  <div class="auth-row">
+    <button class="btn btn-muted" onclick="openLogin()">1 · Open Kite login</button>
+    <div class="field">
+      <label>request_token (paste after login)</label>
+      <input id="reqtok" type="text" placeholder="paste request_token here" />
+    </div>
+    <button class="btn btn-yellow" onclick="connectZerodha()">2 · Connect</button>
+  </div>
+  <div id="authMsg"></div>
+</div>
+
+<!-- Stream controls -->
+<div class="controls">
+  <div class="field">
+    <label>Symbols (comma-sep, NSE tradingsymbol)</label>
+    <input id="symbols" type="text" value="NIFTY 50,BANKNIFTY" style="width:280px" />
+  </div>
+  <div class="field">
+    <label>Exchange</label>
+    <select id="exchange">
+      <option value="NSE">NSE</option>
+      <option value="BSE">BSE</option>
+    </select>
+  </div>
+  <button id="streamBtn"  class="btn btn-yellow" onclick="startStream()" disabled>Start Stream</button>
+  <button id="stopBtn"    class="btn btn-danger"  onclick="stopStream()"  disabled>Stop</button>
+  <button class="btn btn-muted" onclick="clearData()">Clear</button>
+  <button class="btn btn-muted" onclick="exportCSV()">Export CSV</button>
+</div>
+
+<!-- Summary cards -->
+<div class="cards">
+  <div class="card buy">
+    <div class="lbl">Total Buy Volume</div>
+    <div class="val" id="totalBuy">—</div>
+  </div>
+  <div class="card sell">
+    <div class="lbl">Total Sell Volume</div>
+    <div class="val" id="totalSell">—</div>
+  </div>
+  <div class="card eip">
+    <div class="lbl">Latest EIP</div>
+    <div class="val" id="latestEip">—</div>
+  </div>
+  <div class="card ratio">
+    <div class="lbl">Buy / Sell Ratio</div>
+    <div class="val" id="ratio">—</div>
+  </div>
+  <div class="card ticks">
+    <div class="lbl">Ticks received</div>
+    <div class="val" id="tickCount">0</div>
+  </div>
+</div>
+
+<!-- Chart -->
+<div class="chart-wrap">
+  <div class="chart-title">Buy (green) vs Sell (red) volume per tick · last 60</div>
+  <canvas id="chart" height="140"></canvas>
+</div>
+
+<!-- Tick log table -->
+<div class="table-wrap">
+  <div class="table-header">
+    <span>Tick Log</span>
+    <span class="cnt" id="rowCount">0 rows</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Symbol</th>
+        <th>Buy Vol</th>
+        <th>Sell Vol</th>
+        <th>EIP</th>
+        <th>LTP</th>
+        <th>Total Vol</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="7" class="empty">Connect Zerodha, then Start Stream during 09:00–09:07 AM.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="log" id="log"><span>Ready.</span></div>
+
+<script>
+// ── IST clock & session badge ────────────────────────────────────────────────
+function nowIST() {
+  const now = new Date();
+  return new Date(now.getTime() + now.getTimezoneOffset() * 60000 + 5.5 * 3600000);
+}
+function pad(n) { return String(n).padStart(2,'0') }
+function fmt_t(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` }
+
+setInterval(() => {
+  const d = nowIST();
+  document.getElementById('clock').textContent = fmt_t(d);
+  const h = d.getHours(), m = d.getMinutes();
+  const badge = document.getElementById('sessionBadge');
+  if (h === 9 && m < 7) {
+    badge.className = 'badge live'; badge.textContent = 'Pre-Market LIVE';
+  } else if (h < 9) {
+    badge.className = 'badge waiting';
+    const minLeft = Math.floor(((9*60) - (h*60+m)));
+    badge.textContent = `Opens in ${minLeft}m`;
+  } else {
+    badge.className = 'badge closed'; badge.textContent = 'Session Closed';
+  }
+}, 1000);
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+function lg(msg, cls='') {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = `[${fmt_t(nowIST())}] ${msg}`;
+  el.appendChild(d); el.scrollTop = el.scrollHeight;
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+let creds = null; // { api_key, access_token }
+
+async function checkAuth() {
+  try {
+    const d = await (await fetch('/api/auth/status')).json();
+    if (d.connected) {
+      setAuthMsg('<span class="ok">✓ Connected — ready to stream</span>');
+      await loadCreds();
+    } else {
+      setAuthMsg('Not connected — complete the login flow above.');
+    }
+  } catch(e) {
+    setAuthMsg('<span class="err">Cannot reach stockflow server at localhost:8000</span>');
+  }
+}
+
+async function loadCreds() {
+  const d = await (await fetch('/api/auth/credentials')).json();
+  if (d.error) { setAuthMsg(`<span class="err">${d.error}</span>`); return; }
+  creds = d;
+  document.getElementById('streamBtn').disabled = false;
+  lg('Credentials loaded.', 'ok');
+}
+
+async function openLogin() {
+  try {
+    const d = await (await fetch('/api/auth/url')).json();
+    if (d.url) window.open(d.url, '_blank');
+    else setAuthMsg(`<span class="err">${d.error || 'Could not get login URL'}</span>`);
+  } catch(e) {
+    setAuthMsg('<span class="err">Cannot reach stockflow server</span>');
+  }
+}
+
+async function connectZerodha() {
+  const rt = document.getElementById('reqtok').value.trim();
+  if (!rt) { setAuthMsg('<span class="err">Paste the request_token first</span>'); return; }
+  setAuthMsg('Connecting…');
+  try {
+    const d = await (await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_token: rt })
+    })).json();
+    if (d.connected) {
+      setAuthMsg(`<span class="ok">✓ Connected${d.user ? ' · ' + d.user : ''}</span>`);
+      await loadCreds();
+    } else {
+      setAuthMsg(`<span class="err">${d.error || 'Failed'}</span>`);
+    }
+  } catch(e) {
+    setAuthMsg('<span class="err">Cannot reach stockflow server</span>');
+  }
+}
+
+// Auto-capture request_token if Kite redirects to this page
+(function autoCapture() {
+  const rt = new URLSearchParams(location.search).get('request_token');
+  if (!rt) return;
+  document.getElementById('reqtok').value = rt;
+  history.replaceState({}, '', location.pathname); // clean URL
+  connectZerodha();
+})();
+
+function setAuthMsg(html) {
+  document.getElementById('authMsg').innerHTML = html;
+}
+
+checkAuth();
+
+// ── Stream state ──────────────────────────────────────────────────────────────
+let ws = null;
+let tickCount = 0;
+let rows = [];
+let tokenMap = {};
+let chartBuf = { buy: [], sell: [], labels: [] };
+const MAX_CHART = 60;
+
+// ── Instrument lookup (via stockflow server to avoid CORS) ────────────────────
+async function resolveTokens(symbols, exchange) {
+  lg(`Fetching instrument list for ${exchange}…`);
+  const resp = await fetch(`https://api.kite.trade/instruments/${exchange}`, {
+    headers: {
+      'X-Kite-Version': '3',
+      'Authorization': `token ${creds.api_key}:${creds.access_token}`
+    }
+  });
+  if (!resp.ok) throw new Error(`Instruments fetch failed: ${resp.status}`);
+  const csv = await resp.text();
+  const lines = csv.trim().split('\n');
+  const hdr = lines[0].split(',');
+  const iTok = hdr.indexOf('instrument_token');
+  const iSym = hdr.indexOf('tradingsymbol');
+  const map = {};
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',');
+    map[c[iSym]] = parseInt(c[iTok]);
+  }
+  const resolved = {};
+  for (const sym of symbols) {
+    const s = sym.trim().replace(/\s+/g, ' ');
+    if (map[s]) { resolved[s] = map[s]; lg(`  ${s} → ${map[s]}`, 'ok'); }
+    else lg(`  ${s} not found in ${exchange}`, 'err');
+  }
+  return resolved;
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+async function startStream() {
+  if (!creds) { lg('Not authenticated — connect first.', 'err'); return; }
+  const symbols = document.getElementById('symbols').value.split(',').map(s => s.trim()).filter(Boolean);
+  const exchange = document.getElementById('exchange').value;
+  if (!symbols.length) { lg('Enter at least one symbol.', 'err'); return; }
+
+  try { tokenMap = await resolveTokens(symbols, exchange); }
+  catch(e) { lg('Token resolution failed: ' + e.message, 'err'); return; }
+
+  const tokens = Object.values(tokenMap);
+  if (!tokens.length) { lg('No valid tokens resolved.', 'err'); return; }
+
+  const wsUrl = `wss://ws.kite.trade?api_key=${creds.api_key}&access_token=${creds.access_token}`;
+  lg('Connecting to Kite WebSocket…');
+  ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    lg('WebSocket connected.', 'ok');
+    ws.send(JSON.stringify({ a: 'subscribe', v: tokens }));
+    ws.send(JSON.stringify({ a: 'mode', v: ['full', tokens] }));
+    lg(`Subscribed ${tokens.length} instrument(s) in FULL mode.`, 'ok');
+    document.getElementById('streamBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+  };
+  ws.onmessage = (evt) => {
+    if (typeof evt.data === 'string') return; // heartbeat / ack
+    parseBinary(evt.data);
+  };
+  ws.onerror = () => lg('WebSocket error.', 'err');
+  ws.onclose = (e) => {
+    lg(`WebSocket closed (${e.code}).`);
+    document.getElementById('streamBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  };
+}
+
+function stopStream() {
+  if (ws) { ws.close(); ws = null; }
+}
+
+// ── Binary packet parser (Kite v3) ───────────────────────────────────────────
+// https://kite.trade/docs/connect/v3/websocket/#message-structure
+function parseBinary(buf) {
+  const view = new DataView(buf);
+  if (buf.byteLength < 2) return;
+  const n = view.getInt16(0);
+  let off = 2;
+  for (let i = 0; i < n; i++) {
+    if (off + 2 > buf.byteLength) break;
+    const len = view.getInt16(off); off += 2;
+    if (len < 44) { off += len; continue; }
+
+    const token    = view.getInt32(off);
+    const ltp      = view.getInt32(off + 4)  / 100;
+    const buyVol   = view.getInt32(off + 36); // total buy qty
+    const sellVol  = view.getInt32(off + 40); // total sell qty
+
+    // EIP = ohlc.open (offset 68) in full mode during pre-market
+    let eip = null;
+    if (len >= 72) eip = view.getInt32(off + 68) / 100;
+
+    const symbol = Object.keys(tokenMap).find(k => tokenMap[k] === token) || `#${token}`;
+    onTick({ symbol, ltp, buyVol, sellVol, eip, ts: nowIST() });
+    off += len;
+  }
+}
+
+// ── Tick handler ──────────────────────────────────────────────────────────────
+function onTick({ symbol, ltp, buyVol, sellVol, eip, ts }) {
+  tickCount++;
+  rows.unshift({ time: fmt_t(ts), symbol, buy: buyVol, sell: sellVol, eip, ltp });
+  if (rows.length > 500) rows.pop();
+
+  const allBuy  = rows.reduce((s,r) => s + r.buy, 0);
+  const allSell = rows.reduce((s,r) => s + r.sell, 0);
+  const lastEip = rows.find(r => r.eip != null)?.eip;
+
+  document.getElementById('totalBuy').textContent   = fmt(allBuy);
+  document.getElementById('totalSell').textContent  = fmt(allSell);
+  document.getElementById('latestEip').textContent  = lastEip != null ? lastEip.toFixed(2) : '—';
+  document.getElementById('ratio').textContent      = allSell ? (allBuy/allSell).toFixed(2) : '—';
+  document.getElementById('tickCount').textContent  = tickCount;
+
+  chartBuf.buy.push(buyVol);
+  chartBuf.sell.push(sellVol);
+  chartBuf.labels.push(fmt_t(ts));
+  if (chartBuf.buy.length > MAX_CHART) {
+    chartBuf.buy.shift(); chartBuf.sell.shift(); chartBuf.labels.shift();
+  }
+  drawChart();
+  renderTable();
+}
+
+function fmt(n) {
+  if (n >= 1e7) return (n/1e7).toFixed(2)+'Cr';
+  if (n >= 1e5) return (n/1e5).toFixed(1)+'L';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return String(n);
+}
+
+// ── Table ────────────────────────────────────────────────────────────────────
+function renderTable() {
+  document.getElementById('tbody').innerHTML = rows.slice(0,200).map(r => `
+    <tr>
+      <td class="time-col">${r.time}</td>
+      <td class="sym-col">${r.symbol}</td>
+      <td class="buy-col">${fmt(r.buy)}</td>
+      <td class="sell-col">${fmt(r.sell)}</td>
+      <td class="eip-col">${r.eip != null ? r.eip.toFixed(2) : '—'}</td>
+      <td>${r.ltp != null ? r.ltp.toFixed(2) : '—'}</td>
+      <td>${fmt(r.buy + r.sell)}</td>
+    </tr>`).join('');
+  document.getElementById('rowCount').textContent = rows.length + ' rows';
+}
+
+// ── Canvas chart ──────────────────────────────────────────────────────────────
+function drawChart() {
+  const canvas = document.getElementById('chart');
+  canvas.width = canvas.offsetWidth; canvas.height = 140;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const { buy, sell, labels } = chartBuf;
+  const n = buy.length; if (!n) return;
+  const maxV = Math.max(...buy, ...sell, 1);
+  const W = canvas.width, H = 120;
+  const bw = Math.max(2, Math.floor(W / n) - 1);
+  for (let i = 0; i < n; i++) {
+    const x = i * (W / n);
+    ctx.fillStyle = '#16a34a88';
+    ctx.fillRect(x, H - (buy[i]/maxV)*H, bw/2, (buy[i]/maxV)*H);
+    ctx.fillStyle = '#dc262688';
+    ctx.fillRect(x + bw/2, H - (sell[i]/maxV)*H, bw/2, (sell[i]/maxV)*H);
+  }
+  ctx.fillStyle = '#6b7280'; ctx.font = '10px Inter,sans-serif';
+  if (labels[0])   ctx.fillText(labels[0], 4, 136);
+  if (labels[n-1]) ctx.fillText(labels[n-1], W-50, 136);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function clearData() {
+  rows = []; tickCount = 0; chartBuf = { buy:[], sell:[], labels:[] };
+  document.getElementById('tbody').innerHTML =
+    '<tr><td colspan="7" class="empty">Cleared.</td></tr>';
+  ['totalBuy','totalSell','latestEip','ratio'].forEach(id =>
+    document.getElementById(id).textContent = '—');
+  document.getElementById('tickCount').textContent = '0';
+  drawChart();
+}
+
+function exportCSV() {
+  if (!rows.length) { alert('No data to export.'); return; }
+  const hdr = 'Time,Symbol,BuyVolume,SellVolume,EIP,LTP,TotalVolume\n';
+  const body = rows.map(r =>
+    `${r.time},${r.symbol},${r.buy},${r.sell},${r.eip??''},${r.ltp??''},${r.buy+r.sell}`
+  ).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([hdr+body], {type:'text/csv'}));
+  a.download = `premarket_${fmt_t(nowIST()).replace(/:/g,'')}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>
