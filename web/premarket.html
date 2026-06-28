@@ -166,6 +166,11 @@
   <div class="card eip">
     <div class="lbl">Latest EIP</div>
     <div class="val" id="latestEip">—</div>
+    <div style="font-size:11px;color:#6b7280;margin-top:4px">Prev close: <span id="prevCloseDisp">—</span></div>
+  </div>
+  <div class="card" style="border-color:#2a2c30">
+    <div class="lbl">Gap vs Prev Close</div>
+    <div class="val" id="gapPct" style="font-size:24px">—</div>
   </div>
   <div class="card ratio">
     <div class="lbl">Buy / Sell Ratio</div>
@@ -306,7 +311,8 @@ checkAuth();
 loadPick();
 
 // ── Today's pick ──────────────────────────────────────────────────────────────
-let pickSymbol = null; // NSE tradingsymbol e.g. "RELIANCE"
+let pickSymbol = null;
+let prevClose  = null;
 
 async function loadPick() {
   try {
@@ -317,6 +323,8 @@ async function loadPick() {
     }
     const p = d.picks[0];
     pickSymbol = p.symbol.replace('.NS', '');
+    prevClose  = p.price;
+    document.getElementById('prevCloseDisp').textContent = '₹' + p.price;
     const sign = x => `<span style="color:${x>=0?'#4ade80':'#f87171'}">${x>=0?'+':''}${x}%</span>`;
     document.getElementById('pickBody').innerHTML =
       `<span style="font-size:22px;font-weight:700;color:#fbbf24">${pickSymbol}</span>
@@ -465,8 +473,14 @@ function onTick({ symbol, ltp, buyVol, sellVol, eip, ts }) {
 
   document.getElementById('totalBuy').textContent   = fmt(allBuy);
   document.getElementById('totalSell').textContent  = fmt(allSell);
-  document.getElementById('latestEip').textContent  = lastEip != null ? lastEip.toFixed(2) : '—';
+  document.getElementById('latestEip').textContent  = lastEip != null ? '₹' + lastEip.toFixed(2) : '—';
   document.getElementById('ratio').textContent      = allSell ? (allBuy/allSell).toFixed(2) : '—';
+  const gapEl = document.getElementById('gapPct');
+  if (lastEip != null && prevClose) {
+    const gap = ((lastEip - prevClose) / prevClose * 100);
+    gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2) + '%';
+    gapEl.style.color = gap >= 0 ? '#4ade80' : '#f87171';
+  }
   document.getElementById('tickCount').textContent  = tickCount;
 
   chartBuf.buy.push(buyVol);
@@ -529,8 +543,9 @@ function clearData() {
   rows = []; tickCount = 0; chartBuf = { buy:[], sell:[], labels:[] };
   document.getElementById('tbody').innerHTML =
     '<tr><td colspan="7" class="empty">Cleared.</td></tr>';
-  ['totalBuy','totalSell','latestEip','ratio'].forEach(id =>
+  ['totalBuy','totalSell','latestEip','ratio','gapPct'].forEach(id =>
     document.getElementById(id).textContent = '—');
+  document.getElementById('gapPct').style.color = '';
   document.getElementById('tickCount').textContent = '0';
   drawChart();
 }
