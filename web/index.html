@@ -99,6 +99,7 @@
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
     <button onclick="showTab('global')"    id="tab-global">Global News</button>
+    <button onclick="showTab('predict')"   id="tab-predict">Next Day</button>
   </nav>
 
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -255,6 +256,23 @@
       <div id="snSummary" style="display:none;margin-top:14px"></div>
       <div id="snBody" style="margin-top:10px"></div>
     </div>
+  </div>
+
+  <!-- ── Next Day Impact ── -->
+  <div id="predict" class="tab-panel" style="margin-top:14px">
+    <div style="margin-bottom:16px">
+      <b style="font-size:16px">Next Day India Impact</b>
+      <div class="muted" style="margin-top:2px">Overnight US news + market moves → how it hits your Indian stock at tomorrow's open</div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
+      <input id="pdSymbol" placeholder="Indian stock e.g. RELIANCE, TCS, HDFC" style="width:280px;padding:8px 10px"
+        onkeydown="if(event.key==='Enter')pdLoad()">
+      <button class="btn btn-yellow" onclick="pdLoad()" id="pdBtn">Predict Tomorrow</button>
+      <span id="pdMeta" class="muted"></span>
+    </div>
+
+    <div id="pdResult"></div>
   </div>
 
 </div>
@@ -738,6 +756,65 @@ async function gnLoad(mode){
         <div style="flex-shrink:0;padding-top:1px">${gnBadge(h.impact)}</div>
       </div>
     </div>`).join('');
+}
+
+// ── Next Day Impact ───────────────────────────────────────────────────────────
+async function pdLoad(){
+  const sym=(document.getElementById('pdSymbol').value||'').trim().toUpperCase();
+  if(!sym) return;
+  const btn=document.getElementById('pdBtn'), meta=document.getElementById('pdMeta');
+  btn.disabled=true; btn.textContent='Analyzing…'; meta.textContent='';
+  document.getElementById('pdResult').innerHTML='<span class="muted">Fetching overnight US news + market data, asking Claude…</span>';
+  let d;
+  try{ d=await (await fetch(`/api/predictnext?symbol=${encodeURIComponent(sym)}`)).json(); }
+  catch(e){ document.getElementById('pdResult').innerHTML=`<span class="neg">Error: ${e}</span>`;
+    btn.disabled=false; btn.textContent='Predict Tomorrow'; return; }
+  btn.disabled=false; btn.textContent='Predict Tomorrow';
+  meta.textContent=d.updated||'';
+
+  if(d.error||d.claude_error){
+    document.getElementById('pdResult').innerHTML=
+      `<div style="color:#f87171;font-size:13px">${d.error||d.claude_error}</div>`; return;
+  }
+
+  const dir=d.direction||'flat';
+  const col={up:'#0c2a1c',down:'#2a1414',flat:'#101113'}[dir]||'#101113';
+  const bd ={up:'#14532d',down:'#4c1d1d',flat:'#2a2c30'}[dir]||'#2a2c30';
+  const tc ={up:'#4ade80',down:'#f87171',flat:'#9ca3af'}[dir]||'#9ca3af';
+  const arrow={up:'▲',down:'▼',flat:'→'}[dir]||'→';
+
+  const usPerf=Object.entries(d.us_perf||{}).map(([k,v])=>
+    `<span style="margin-right:14px">${k} <b style="color:${v>=0?'#4ade80':'#f87171'}">${v>=0?'+':''}${v}%</b></span>`).join('');
+
+  const drivers=(d.key_drivers||[]).map(x=>`<li>${x}</li>`).join('');
+  const risks=(d.risks||[]).map(x=>`<li>${x}</li>`).join('');
+
+  const usNews=(d.us_news||[]).slice(0,8).map((h,i)=>`
+    <div style="padding:7px 0;border-bottom:1px solid #1f2023;font-size:12px;color:#9ca3af">
+      ${i+1}. ${h.link?`<a href="${h.link}" target="_blank" style="color:#9ca3af;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#9ca3af'">${h.title}</a>`:h.title}
+      ${h.age_label?`<span style="color:#4b5563;margin-left:6px">${h.age_label}</span>`:''}
+    </div>`).join('');
+
+  document.getElementById('pdResult').innerHTML=`
+    <div style="padding:18px;background:${col};border:1px solid ${bd};border-radius:14px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+        <span style="font-size:22px;font-weight:800;color:#fbbf24">${d.symbol}</span>
+        <span style="color:#9ca3af;font-size:13px">${d.company||''}${d.sector?' · '+d.sector:''}</span>
+        <span style="font-size:20px;font-weight:800;color:${tc}">${arrow} ${dir.toUpperCase()} ${d.magnitude?'('+d.magnitude+')':''}</span>
+        <span class="muted">· ${d.confidence}% confidence</span>
+      </div>
+      <div style="font-size:14px;line-height:1.7;color:#e4e4e7;margin-bottom:12px">${d.summary}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">
+        ${drivers?`<div><div style="font-size:11px;color:${tc};font-weight:700;margin-bottom:5px">KEY DRIVERS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#e4e4e7;line-height:1.8">${drivers}</ul></div>`:''}
+        ${risks?`<div><div style="font-size:11px;color:#f87171;font-weight:700;margin-bottom:5px">RISKS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#fca5a5;line-height:1.8">${risks}</ul></div>`:''}
+      </div>
+      ${d.watch_at_open?`<div style="padding:9px 12px;background:#101113;border-radius:8px;font-size:12px"><span style="color:#fbbf24;font-weight:700">Watch at 9:15 AM:</span> <span style="color:#e4e4e7">${d.watch_at_open}</span></div>`:''}
+    </div>
+
+    ${usPerf?`<div style="margin-bottom:14px;font-size:13px"><span style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">US Market Today</span><div style="margin-top:6px">${usPerf}</div></div>`:''}
+
+    ${usNews?`<div><div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Overnight US Headlines Used</div>${usNews}</div>`:''}
+  `;
 }
 
 // ── Stock News ────────────────────────────────────────────────────────────────

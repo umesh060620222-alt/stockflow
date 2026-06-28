@@ -151,6 +151,16 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_global_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/predictnext":
+            from urllib.parse import urlparse, parse_qs
+            sym = parse_qs(urlparse(self.path).query).get("symbol", [""])[0].strip()
+            if not sym:
+                return self._send(200, dumps({"error": "?symbol= required"}))
+            import globalnews as GN
+            try:
+                return self._send(200, dumps(GN.predict_next_day(sym)))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/stocknews":
             from urllib.parse import urlparse, parse_qs
             sym = parse_qs(urlparse(self.path).query).get("symbol", [""])[0].strip()

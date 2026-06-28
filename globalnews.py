@@ -190,6 +190,126 @@ def fetch_india_news() -> dict:
     return _build_result(raw, _claude_call(prompt))
 
 
+def predict_next_day(symbol: str) -> dict:
+    """Predict next-day impact on an Indian stock based on overnight US market moves + news.
+
+    Pipeline:
+    1. Fetch actual US index performance today (SPY/QQQ/DJI/VIX) from yfinance
+    2. Fetch overnight US financial news (last 12h) from Reuters/CNBC/MarketWatch
+    3. Fetch the Indian stock's sector + business profile from yfinance
+    4. Claude reasons: which news matters for this stock, direction + magnitude estimate,
+       key drivers, risks, and what to watch at open
+    """
+    import requests as req
+
+    symbol = symbol.strip().upper()
+    now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+    now_ist = now_utc + dt.timedelta(hours=5, minutes=30)
+
+    # ── 1. US market performance ──────────────────────────────────────────────
+    us_perf = {}
+    try:
+        import yfinance as yf
+        for ticker, label in [("SPY","S&P 500"),("QQQ","Nasdaq"),("^DJI","Dow"),("^VIX","VIX")]:
+            try:
+                h = yf.Ticker(ticker).history(period="2d")
+                if len(h) >= 2:
+                    prev, last = h["Close"].iloc[-2], h["Close"].iloc[-1]
+                    us_perf[label] = round((last - prev) / prev * 100, 2)
+                elif len(h) == 1:
+                    us_perf[label] = 0.0
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ── 2. Overnight US news (last 12 hours) ─────────────────────────────────
+    cutoff_min = 12 * 60
+    us_news = []
+    seen = set()
+    for url in _FEEDS_GLOBAL:
+        for item in _fetch_feed(url, n=8):
+            if item["age_min"] is not None and item["age_min"] > cutoff_min:
+                continue
+            key = item["title"][:70]
+            if key in seen:
+                continue
+            seen.add(key)
+            us_news.append(item)
+            if len(us_news) >= 15:
+                break
+        if len(us_news) >= 15:
+            break
+
+    # ── 3. Indian stock profile ───────────────────────────────────────────────
+    company_name = symbol
+    sector = ""
+    industry = ""
+    description = ""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol + ".NS").info
+        company_name = info.get("longName") or symbol
+        sector       = info.get("sector", "")
+        industry     = info.get("industry", "")
+        description  = (info.get("longBusinessSummary") or "")[:400]
+    except Exception:
+        pass
+
+    # ── 4. Claude prediction ──────────────────────────────────────────────────
+    perf_lines = "\n".join(f"  {k}: {'+' if v>=0 else ''}{v}%" for k, v in us_perf.items()) if us_perf else "  (unavailable)"
+    news_lines = "\n".join(f"  {i+1}. {h['title']} ({h['age_label']})" for i, h in enumerate(us_news)) if us_news else "  (no recent headlines)"
+    stock_ctx  = f"{company_name} ({symbol}.NS)\n  Sector: {sector} | Industry: {industry}\n  {description}"
+
+    prompt = (
+        "You are a macro-to-micro analyst specializing in how overnight US market developments "
+        "flow into Indian equity markets the next morning.\n\n"
+
+        "== US MARKET PERFORMANCE (today) ==\n" + perf_lines + "\n\n"
+
+        "== OVERNIGHT US NEWS (last 12 hours) ==\n" + news_lines + "\n\n"
+
+        "== INDIAN STOCK TO ANALYZE ==\n" + stock_ctx + "\n\n"
+
+        "== INDIA SENSITIVITY RULES ==\n" + _INDIA_CONTEXT + "\n"
+
+        "Analyze step by step:\n"
+        "1. Which of the US news items are DIRECTLY relevant to this specific stock? Why?\n"
+        "2. How does the US index move (SPY/QQQ/DJI) translate to this stock's sector in India?\n"
+        "3. Are there any India-specific amplifiers or dampeners (rupee, oil, FII flows)?\n"
+        "4. What is your prediction for this stock at tomorrow's Indian market open?\n\n"
+
+        "Reply ONLY with valid JSON:\n"
+        '{"direction":"up|down|flat","magnitude":"X-Y%",'
+        '"confidence":0-100,'
+        '"summary":"3-4 sentence plain English prediction",'
+        '"key_drivers":["...","...","..."],'
+        '"risks":["...","..."],'
+        '"watch_at_open":"one specific thing to monitor at 9:15 AM IST"}'
+    )
+
+    key = os.getenv("ANTHROPIC_API_KEY")
+    prediction = _claude_call(prompt, max_tokens=600) if key else {"error": "ANTHROPIC_API_KEY not set"}
+
+    return {
+        "updated":      now_ist.strftime("%Y-%m-%d %H:%M IST"),
+        "symbol":       symbol,
+        "company":      company_name,
+        "sector":       sector,
+        "us_perf":      us_perf,
+        "us_news":      [{"title": h["title"], "link": h["link"], "age_label": h["age_label"]}
+                         for h in us_news],
+        "direction":    prediction.get("direction", "flat"),
+        "magnitude":    prediction.get("magnitude", ""),
+        "confidence":   prediction.get("confidence", 0),
+        "summary":      prediction.get("summary", ""),
+        "key_drivers":  prediction.get("key_drivers", []),
+        "risks":        prediction.get("risks", []),
+        "watch_at_open":prediction.get("watch_at_open", ""),
+        "claude_error": prediction.get("error", ""),
+    }
+
+
 def fetch_stock_news(symbol: str) -> dict:
     """Fetch news for a specific stock (Indian or US) + Claude price-impact analysis.
 
