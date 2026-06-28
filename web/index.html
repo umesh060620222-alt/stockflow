@@ -233,14 +233,15 @@
         <b style="font-size:16px">Global Macro News</b>
         <div class="muted" style="margin-top:2px">Geopolitical · Fed · Economy · Oil · Trade — impact on US indices</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span id="gnMeta" class="muted"></span>
-        <button class="btn btn-yellow" onclick="gnLoad()" id="gnBtn">Show News</button>
+        <button class="btn btn-yellow" onclick="gnLoad('global')" id="gnBtn">Global News</button>
+        <button class="btn btn-muted"  onclick="gnLoad('india')"  id="inBtn">India Impact</button>
       </div>
     </div>
 
     <div id="gnSummary" style="display:none;margin-bottom:16px"></div>
-    <div id="gnBody" class="muted">Press Show News to fetch the latest global macro headlines.</div>
+    <div id="gnBody" class="muted">Press a button to fetch macro headlines.</div>
   </div>
 
 </div>
@@ -672,16 +673,18 @@ function gnBadge(impact){
   return `<span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:${m[0]};border:1px solid ${m[1]};color:${m[2]};white-space:nowrap">${m[3]}</span>`;
 }
 
-async function gnLoad(){
-  const btn=document.getElementById('gnBtn'), meta=document.getElementById('gnMeta');
+async function gnLoad(mode){
+  const isIndia=mode==='india';
+  const btn=document.getElementById(isIndia?'inBtn':'gnBtn');
+  const meta=document.getElementById('gnMeta');
   btn.disabled=true; btn.textContent='Loading…'; meta.textContent='';
   document.getElementById('gnSummary').style.display='none';
   document.getElementById('gnBody').innerHTML='<span class="muted">Fetching headlines + asking Claude…</span>';
   let d;
-  try{ d=await (await fetch('/api/globalnews')).json(); }
+  try{ d=await (await fetch(isIndia?'/api/indianews':'/api/globalnews')).json(); }
   catch(e){ document.getElementById('gnBody').innerHTML=`<span class="neg">Error: ${e}</span>`;
-    btn.disabled=false; btn.textContent='Show News'; return; }
-  btn.disabled=false; btn.textContent='Refresh';
+    btn.disabled=false; btn.textContent=isIndia?'India Impact':'Global News'; return; }
+  btn.disabled=false; btn.textContent=isIndia?'India Impact':'Global News';
   meta.textContent=d.updated||'';
 
   // Overall summary banner
@@ -696,7 +699,7 @@ async function gnLoad(){
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <span style="font-size:15px;font-weight:800;color:${tc};text-transform:uppercase;letter-spacing:.04em">${ov}</span>
         ${conv?`<span class="muted">· Claude conviction ${conv}%</span>`:''}
-        <span class="muted" style="margin-left:auto;font-size:11px">Claude summary</span>
+        <span class="muted" style="margin-left:auto;font-size:11px">${isIndia?'Nifty / Sensex outlook':'US markets outlook'} · Claude</span>
       </div>
       <div style="font-size:13px;line-height:1.7;color:#e4e4e7">${d.summary}</div>
     </div>`;

@@ -151,6 +151,12 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_global_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/indianews":
+            import globalnews as GN
+            try:
+                return self._send(200, dumps(GN.fetch_india_news()))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/premarket/dummy":
             return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))
