@@ -663,11 +663,20 @@ function pmClear(){
 }
 
 // ── Global News ───────────────────────────────────────────────────────────────
+function gnBadge(impact){
+  const m={
+    bullish:['#0c2a1c','#14532d','#4ade80','▲ Bullish'],
+    bearish:['#2a1414','#4c1d1d','#f87171','▼ Bearish'],
+    neutral:['#1b1c1f','#2a2c30','#9ca3af','Neutral'],
+  }[impact]||['#1b1c1f','#2a2c30','#9ca3af','Neutral'];
+  return `<span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:${m[0]};border:1px solid ${m[1]};color:${m[2]};white-space:nowrap">${m[3]}</span>`;
+}
+
 async function gnLoad(){
   const btn=document.getElementById('gnBtn'), meta=document.getElementById('gnMeta');
   btn.disabled=true; btn.textContent='Loading…'; meta.textContent='';
-  document.getElementById('gnBody').innerHTML='<span class="muted">Fetching global macro headlines…</span>';
   document.getElementById('gnSummary').style.display='none';
+  document.getElementById('gnBody').innerHTML='<span class="muted">Fetching headlines + asking Claude…</span>';
   let d;
   try{ d=await (await fetch('/api/globalnews')).json(); }
   catch(e){ document.getElementById('gnBody').innerHTML=`<span class="neg">Error: ${e}</span>`;
@@ -675,50 +684,40 @@ async function gnLoad(){
   btn.disabled=false; btn.textContent='Refresh';
   meta.textContent=d.updated||'';
 
-  // Claude summary banner
+  // Overall summary banner
+  const ov=d.overall||'neutral', conv=d.conviction||0;
+  const col={bullish:'#0c2a1c',bearish:'#2a1414',mixed:'#2a230c',neutral:'#101113'}[ov]||'#101113';
+  const bd ={bullish:'#14532d',bearish:'#4c1d1d',mixed:'#4c3d0a',neutral:'#2a2c30'}[ov]||'#2a2c30';
+  const tc ={bullish:'#4ade80',bearish:'#f87171',mixed:'#fbbf24',neutral:'#9ca3af'}[ov]||'#9ca3af';
   const summEl=document.getElementById('gnSummary');
-  if(d.claude){
-    const cl=d.claude, ov=cl.overall||'neutral';
-    const col={bullish:'#0c2a1c',bearish:'#2a1414',mixed:'#2a230c',neutral:'#1b1c1f'}[ov]||'#1b1c1f';
-    const bd={bullish:'#14532d',bearish:'#4c1d1d',mixed:'#4c3d0a',neutral:'#2a2c30'}[ov]||'#2a2c30';
-    const tc={bullish:'#4ade80',bearish:'#f87171',mixed:'#fbbf24',neutral:'#9ca3af'}[ov]||'#9ca3af';
-    const risks=(cl.top_risks||[]).map(r=>`<li>${r}</li>`).join('');
-    const tails=(cl.top_tailwinds||[]).map(t=>`<li>${t}</li>`).join('');
+  if(d.summary){
     summEl.style.display='block';
-    summEl.innerHTML=`<div style="padding:14px 16px;background:${col};border:1px solid ${bd};border-radius:12px">
+    summEl.innerHTML=`<div style="padding:14px 18px;background:${col};border:1px solid ${bd};border-radius:12px;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <span style="font-size:14px;font-weight:700;color:${tc};text-transform:uppercase">${ov}</span>
-        <span class="muted">· Claude conviction ${cl.conviction||'—'}%</span>
+        <span style="font-size:15px;font-weight:800;color:${tc};text-transform:uppercase;letter-spacing:.04em">${ov}</span>
+        ${conv?`<span class="muted">· Claude conviction ${conv}%</span>`:''}
+        <span class="muted" style="margin-left:auto;font-size:11px">Claude summary</span>
       </div>
-      <div style="font-size:13px;line-height:1.6;color:#e4e4e7">${cl.summary||''}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
-        ${risks?`<div><div style="font-size:11px;color:#f87171;font-weight:600;margin-bottom:4px">RISKS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#fca5a5;line-height:1.6">${risks}</ul></div>`:''}
-        ${tails?`<div><div style="font-size:11px;color:#4ade80;font-weight:600;margin-bottom:4px">TAILWINDS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#86efac;line-height:1.6">${tails}</ul></div>`:''}
-      </div>
+      <div style="font-size:13px;line-height:1.7;color:#e4e4e7">${d.summary}</div>
     </div>`;
   }
 
-  // News groups
-  const groups=d.groups||[];
-  if(!groups.length){ document.getElementById('gnBody').innerHTML='<span class="muted">No macro headlines found.</span>'; return; }
-  const sigBadge=s=>{
-    const m={bullish:['#0c2a1c','#14532d','#4ade80','▲ BULLISH'],
-              bearish:['#2a1414','#4c1d1d','#f87171','▼ BEARISH'],
-              mixed:['#2a230c','#4c3d0a','#fbbf24','~ MIXED'],
-              neutral:['#1b1c1f','#2a2c30','#9ca3af','NEUTRAL']}[s]||['#1b1c1f','#2a2c30','#9ca3af','NEUTRAL'];
-    return `<span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:${m[0]};border:1px solid ${m[1]};color:${m[2]};letter-spacing:.03em">${m[3]}</span>`;
-  };
-  document.getElementById('gnBody').innerHTML=groups.map(g=>`
-    <div style="margin-bottom:18px">
-      <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">${g.category}</div>
-      ${g.items.map(it=>`
-        <div style="padding:9px 0;border-bottom:1px solid #1f2023;display:flex;gap:10px;align-items:flex-start">
-          <div style="flex:1;font-size:13px;line-height:1.5;color:#e4e4e7">
-            ${it.link?`<a href="${it.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${it.title}</a>`:it.title}
-            <span style="margin-left:6px;font-size:11px;color:#4b5563">${it.age_label||''}</span>
+  // Headlines list
+  const hl=d.headlines||[];
+  if(!hl.length){ document.getElementById('gnBody').innerHTML='<span class="muted">No headlines found.</span>'; return; }
+  document.getElementById('gnBody').innerHTML=hl.map((h,i)=>`
+    <div style="padding:11px 0;border-bottom:1px solid #1f2023">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:1px">${i+1}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.5;color:#e4e4e7">
+            ${h.link?`<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#e4e4e7'">${h.title}</a>`:h.title}
+            ${h.age_label?`<span style="margin-left:6px;font-size:11px;color:#4b5563">${h.age_label}</span>`:''}
           </div>
-          <div style="flex-shrink:0">${sigBadge(it.signal)}</div>
-        </div>`).join('')}
+          ${h.reason?`<div style="margin-top:4px;font-size:12px;color:#6b7280">${h.reason}</div>`:''}
+        </div>
+        <div style="flex-shrink:0;padding-top:1px">${gnBadge(h.impact)}</div>
+      </div>
     </div>`).join('');
 }
 
