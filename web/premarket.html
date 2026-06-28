@@ -153,6 +153,7 @@
   </div>
   <button id="streamBtn"  class="btn btn-yellow" onclick="startStream()" disabled>Start Stream</button>
   <button id="stopBtn"    class="btn btn-danger"  onclick="stopStream()"  disabled>Stop</button>
+  <button class="btn btn-muted" onclick="startDemo()">Demo</button>
   <button class="btn btn-muted" onclick="clearData()">Clear</button>
   <button class="btn btn-muted" onclick="exportCSV()">Export CSV</button>
 </div>
@@ -309,7 +310,7 @@ async function exchangeToken(rt) {
 checkAuth();
 
 // ── Stream state ──────────────────────────────────────────────────────────────
-let ws = null;
+let ws = null, _sse = null;
 let tickCount = 0;
 let rows = [];
 let tokenMap = {};
@@ -385,6 +386,25 @@ async function startStream() {
 
 function stopStream() {
   if (ws) { ws.close(); ws = null; }
+  if (_sse) { _sse.close(); _sse = null; }
+  document.getElementById('streamBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+}
+
+// ── Demo mode (SSE dummy ticks — no auth needed) ──────────────────────────────
+let _sse = null;
+function startDemo() {
+  stopStream();
+  clearData();
+  lg('Demo mode — simulated pre-market ticks', 'ok');
+  _sse = new EventSource('/api/premarket/dummy');
+  _sse.onmessage = (e) => {
+    const t = JSON.parse(e.data);
+    onTick({ symbol: t.symbol, ltp: t.ltp, buyVol: t.buy, sellVol: t.sell, eip: t.eip, ts: nowIST() });
+  };
+  _sse.onerror = () => { lg('Demo stream ended.'); stopStream(); };
+  document.getElementById('streamBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
 }
 
 // ── Binary packet parser (Kite v3) ───────────────────────────────────────────

@@ -132,6 +132,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"error": "No valid token — connect first"}))
             api_key, _ = Z._creds()
             return self._send(200, dumps({"api_key": api_key, "access_token": tok}))
+        if path == "/api/premarket/dummy":
+            return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))
 
     def do_POST(self):
@@ -160,6 +162,31 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             traceback.print_exc()
             self._send(500, dumps({"error": f"{type(e).__name__}: {e}"}))
+
+    def _dummy_stream(self):
+        import random, time as _time
+        symbols = ["NIFTY 50", "BANKNIFTY", "RELIANCE", "HDFCBANK"]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        base = {s: random.uniform(18000, 45000) for s in symbols}
+        try:
+            for _ in range(420):  # ~7 min at 1 tick/sec
+                sym = random.choice(symbols)
+                ltp = base[sym] * random.uniform(0.9995, 1.0005)
+                base[sym] = ltp
+                buy  = random.randint(10000, 500000)
+                sell = random.randint(10000, 500000)
+                eip  = round(ltp * random.uniform(0.998, 1.002), 2)
+                tick = dumps({"symbol": sym, "ltp": round(ltp, 2),
+                              "buy": buy, "sell": sell, "eip": eip})
+                self.wfile.write(f"data: {tick}\n\n".encode())
+                self.wfile.flush()
+                _time.sleep(1)
+        except Exception:
+            pass
 
     def log_message(self, *a):
         pass
