@@ -194,10 +194,12 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             for _ in range(420):  # ~7 min at 1 tick/sec
-                ltp *= random.uniform(0.9995, 1.0005)
                 buy  = random.randint(10000, 800000)
                 sell = random.randint(10000, 800000)
-                eip  = round(ltp * random.uniform(0.998, 1.002), 2)
+                # price moves in direction of buy/sell imbalance
+                imbalance = (buy - sell) / (buy + sell)   # -1..+1
+                ltp *= (1 + imbalance * 0.0006)
+                eip  = round(ltp, 2)
                 tick = dumps({"symbol": sym, "ltp": round(ltp, 2),
                               "buy": buy, "sell": sell, "eip": eip})
                 self.wfile.write(f"data: {tick}\n\n".encode())
