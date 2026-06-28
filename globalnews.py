@@ -190,18 +190,68 @@ def fetch_india_news() -> dict:
     return _build_result(raw, _claude_call(prompt))
 
 
+def _safe_age(item: dict) -> int | None:
+    return item.get("age_min")
+
+
+def _news_for_stock(symbol: str, company_name: str, limit: int = 10) -> list[dict]:
+    """India-specific news for a stock: yfinance + ET/Moneycontrol Google News search."""
+    import requests as req, xml.etree.ElementTree as ET
+    now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+    seen, out = set(), []
+
+    def _add(title, link, age_min):
+        key = title[:70]
+        if key in seen or not title:
+            return
+        seen.add(key)
+        if age_min is None or age_min < 1440:
+            out.append({"title": title, "link": link, "age_min": age_min})
+
+    # yfinance ticker news
+    try:
+        import yfinance as yf
+        for item in (yf.Ticker(symbol + ".NS").news or [])[:10]:
+            pub = item.get("providerPublishTime")
+            age_min = round((now_utc.timestamp() - pub) / 60) if pub else None
+            _add(item.get("title", ""), item.get("link", ""), age_min)
+    except Exception:
+        pass
+
+    # India financial news search
+    for q in [f'"{company_name}" NSE', f'"{symbol}" India stock']:
+        gn_url = ("https://news.google.com/rss/search?q=" +
+                  req.utils.quote(q) + "&hl=en-IN&gl=IN&ceid=IN:en")
+        try:
+            r = req.get(gn_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            for it in ET.fromstring(r.content).findall(".//item")[:6]:
+                title = (it.findtext("title") or "").strip()
+                link  = (it.findtext("link")  or "").strip()
+                pub   = None
+                try:
+                    pub = parsedate_to_datetime(it.findtext("pubDate") or "")
+                except Exception:
+                    pass
+                age_min = round((now_utc - pub).total_seconds() / 60) if pub else None
+                _add(title, link, age_min)
+        except Exception:
+            pass
+        if len(out) >= limit:
+            break
+
+    return out[:limit]
+
+
 def predict_next_day(symbol: str) -> dict:
-    """Predict next-day impact on an Indian stock based on overnight US market moves + news.
+    """Predict next-day impact on an Indian stock.
 
     Pipeline:
-    1. Fetch actual US index performance today (SPY/QQQ/DJI/VIX) from yfinance
-    2. Fetch overnight US financial news (last 12h) from Reuters/CNBC/MarketWatch
-    3. Fetch the Indian stock's sector + business profile from yfinance
-    4. Claude reasons: which news matters for this stock, direction + magnitude estimate,
-       key drivers, risks, and what to watch at open
+    1. US index performance today (SPY/QQQ/DJI/VIX) — real data from yfinance
+    2. Overnight US macro news (last 12h) from Reuters/CNBC/MarketWatch
+    3. India-specific news for this stock (ET Markets, Moneycontrol, yfinance)
+    4. Stock sector + business profile from yfinance
+    5. Claude reasons across all four inputs → direction, magnitude, drivers, risks
     """
-    import requests as req
-
     symbol = symbol.strip().upper()
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
     now_ist = now_utc + dt.timedelta(hours=5, minutes=30)
@@ -216,20 +266,17 @@ def predict_next_day(symbol: str) -> dict:
                 if len(h) >= 2:
                     prev, last = h["Close"].iloc[-2], h["Close"].iloc[-1]
                     us_perf[label] = round((last - prev) / prev * 100, 2)
-                elif len(h) == 1:
-                    us_perf[label] = 0.0
             except Exception:
                 pass
     except Exception:
         pass
 
-    # ── 2. Overnight US news (last 12 hours) ─────────────────────────────────
-    cutoff_min = 12 * 60
-    us_news = []
-    seen = set()
+    # ── 2. Overnight US news (last 12 h) ─────────────────────────────────────
+    us_news, seen = [], set()
     for url in _FEEDS_GLOBAL:
         for item in _fetch_feed(url, n=8):
-            if item["age_min"] is not None and item["age_min"] > cutoff_min:
+            am = item.get("age_min")
+            if am is not None and am > 720:   # older than 12h, skip
                 continue
             key = item["title"][:70]
             if key in seen:
@@ -241,11 +288,9 @@ def predict_next_day(symbol: str) -> dict:
         if len(us_news) >= 15:
             break
 
-    # ── 3. Indian stock profile ───────────────────────────────────────────────
+    # ── 3. Stock profile ──────────────────────────────────────────────────────
     company_name = symbol
-    sector = ""
-    industry = ""
-    description = ""
+    sector = industry = description = ""
     try:
         import yfinance as yf
         info = yf.Ticker(symbol + ".NS").info
@@ -256,58 +301,65 @@ def predict_next_day(symbol: str) -> dict:
     except Exception:
         pass
 
-    # ── 4. Claude prediction ──────────────────────────────────────────────────
-    perf_lines = "\n".join(f"  {k}: {'+' if v>=0 else ''}{v}%" for k, v in us_perf.items()) if us_perf else "  (unavailable)"
-    news_lines = "\n".join(f"  {i+1}. {h['title']} ({_age_label(h['age_min'])})" for i, h in enumerate(us_news)) if us_news else "  (no recent headlines)"
-    stock_ctx  = f"{company_name} ({symbol}.NS)\n  Sector: {sector} | Industry: {industry}\n  {description}"
+    # ── 4. India-specific stock news ──────────────────────────────────────────
+    india_news = _news_for_stock(symbol, company_name)
+
+    # ── 5. Claude prediction ──────────────────────────────────────────────────
+    def _fmt(items):
+        return "\n".join(
+            f"  {i+1}. {h['title']} ({_age_label(h.get('age_min'))})"
+            for i, h in enumerate(items)
+        ) or "  (none)"
+
+    perf_lines = "\n".join(
+        f"  {k}: {'+' if v>=0 else ''}{v}%" for k, v in us_perf.items()
+    ) or "  (unavailable)"
 
     prompt = (
-        "You are a macro-to-micro analyst specializing in how overnight US market developments "
-        "flow into Indian equity markets the next morning.\n\n"
-
-        "== US MARKET PERFORMANCE (today) ==\n" + perf_lines + "\n\n"
-
-        "== OVERNIGHT US NEWS (last 12 hours) ==\n" + news_lines + "\n\n"
-
-        "== INDIAN STOCK TO ANALYZE ==\n" + stock_ctx + "\n\n"
-
+        "You are a macro-to-micro analyst. Your job: given overnight US developments AND "
+        "India-specific news, predict what happens to this Indian stock at tomorrow's open.\n\n"
+        "== US MARKET TODAY ==\n" + perf_lines + "\n\n"
+        "== OVERNIGHT US NEWS (last 12h) ==\n" + _fmt(us_news) + "\n\n"
+        "== INDIA NEWS FOR THIS STOCK ==\n" + _fmt(india_news) + "\n\n"
+        "== STOCK ==\n"
+        f"  {company_name} ({symbol}.NS) | Sector: {sector} | Industry: {industry}\n"
+        f"  {description}\n\n"
         "== INDIA SENSITIVITY RULES ==\n" + _INDIA_CONTEXT + "\n"
-
-        "Analyze step by step:\n"
-        "1. Which of the US news items are DIRECTLY relevant to this specific stock? Why?\n"
-        "2. How does the US index move (SPY/QQQ/DJI) translate to this stock's sector in India?\n"
-        "3. Are there any India-specific amplifiers or dampeners (rupee, oil, FII flows)?\n"
-        "4. What is your prediction for this stock at tomorrow's Indian market open?\n\n"
-
+        "Reason across ALL inputs:\n"
+        "- Which US news directly hits this stock's sector?\n"
+        "- What does the India-specific news add?\n"
+        "- FII behavior, rupee, oil amplifiers?\n"
+        "- Net verdict for tomorrow's open\n\n"
         "Reply ONLY with valid JSON:\n"
-        '{"direction":"up|down|flat","magnitude":"X-Y%",'
-        '"confidence":0-100,'
-        '"summary":"3-4 sentence plain English prediction",'
+        '{"direction":"up|down|flat","magnitude":"X-Y%","confidence":0-100,'
+        '"summary":"3-4 sentence prediction",'
         '"key_drivers":["...","...","..."],'
         '"risks":["...","..."],'
-        '"watch_at_open":"one specific thing to monitor at 9:15 AM IST"}'
+        '"watch_at_open":"one thing to monitor at 9:15 AM IST"}'
     )
 
-    key = os.getenv("ANTHROPIC_API_KEY")
-    prediction = _claude_call(prompt, max_tokens=600) if key else {"error": "ANTHROPIC_API_KEY not set"}
+    prediction = _claude_call(prompt, max_tokens=700)
+
+    def _ser(items):
+        return [{"title": h["title"], "link": h.get("link", ""),
+                 "age_label": _age_label(h.get("age_min"))} for h in items]
 
     return {
-        "updated":      now_ist.strftime("%Y-%m-%d %H:%M IST"),
-        "symbol":       symbol,
-        "company":      company_name,
-        "sector":       sector,
-        "us_perf":      us_perf,
-        "us_news":      [{"title": h["title"], "link": h["link"],
-                          "age_label": _age_label(h["age_min"])}
-                         for h in us_news],
-        "direction":    prediction.get("direction", "flat"),
-        "magnitude":    prediction.get("magnitude", ""),
-        "confidence":   prediction.get("confidence", 0),
-        "summary":      prediction.get("summary", ""),
-        "key_drivers":  prediction.get("key_drivers", []),
-        "risks":        prediction.get("risks", []),
-        "watch_at_open":prediction.get("watch_at_open", ""),
-        "claude_error": prediction.get("error", ""),
+        "updated":       now_ist.strftime("%Y-%m-%d %H:%M IST"),
+        "symbol":        symbol,
+        "company":       company_name,
+        "sector":        sector,
+        "us_perf":       us_perf,
+        "us_news":       _ser(us_news),
+        "india_news":    _ser(india_news),
+        "direction":     prediction.get("direction", "flat"),
+        "magnitude":     prediction.get("magnitude", ""),
+        "confidence":    prediction.get("confidence", 0),
+        "summary":       prediction.get("summary", ""),
+        "key_drivers":   prediction.get("key_drivers", []),
+        "risks":         prediction.get("risks", []),
+        "watch_at_open": prediction.get("watch_at_open", ""),
+        "claude_error":  prediction.get("error", ""),
     }
 
 
