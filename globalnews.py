@@ -258,7 +258,7 @@ def predict_next_day(symbol: str) -> dict:
 
     # ── 4. Claude prediction ──────────────────────────────────────────────────
     perf_lines = "\n".join(f"  {k}: {'+' if v>=0 else ''}{v}%" for k, v in us_perf.items()) if us_perf else "  (unavailable)"
-    news_lines = "\n".join(f"  {i+1}. {h['title']} ({h['age_label']})" for i, h in enumerate(us_news)) if us_news else "  (no recent headlines)"
+    news_lines = "\n".join(f"  {i+1}. {h['title']} ({_age_label(h['age_min'])})" for i, h in enumerate(us_news)) if us_news else "  (no recent headlines)"
     stock_ctx  = f"{company_name} ({symbol}.NS)\n  Sector: {sector} | Industry: {industry}\n  {description}"
 
     prompt = (
