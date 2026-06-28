@@ -98,6 +98,7 @@
     <button onclick="showTab('live')"      id="tab-live">Live</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
+    <button onclick="showTab('global')"    id="tab-global">Global News</button>
   </nav>
 
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -223,6 +224,23 @@
       </table>
     </div>
     <div class="pm-log" id="pmLog"><span>Ready.</span></div>
+  </div>
+
+  <!-- ── Global News ── -->
+  <div id="global" class="tab-panel" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div>
+        <b style="font-size:16px">Global Macro News</b>
+        <div class="muted" style="margin-top:2px">Geopolitical · Fed · Economy · Oil · Trade — impact on US indices</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="gnMeta" class="muted"></span>
+        <button class="btn btn-yellow" onclick="gnLoad()" id="gnBtn">Show News</button>
+      </div>
+    </div>
+
+    <div id="gnSummary" style="display:none;margin-bottom:16px"></div>
+    <div id="gnBody" class="muted">Press Show News to fetch the latest global macro headlines.</div>
   </div>
 
 </div>
@@ -642,6 +660,66 @@ function pmClear(){
     el.textContent='—'; el.style.color=''; });
   document.getElementById('pmTicks').textContent='0';
   pmDrawChart();
+}
+
+// ── Global News ───────────────────────────────────────────────────────────────
+async function gnLoad(){
+  const btn=document.getElementById('gnBtn'), meta=document.getElementById('gnMeta');
+  btn.disabled=true; btn.textContent='Loading…'; meta.textContent='';
+  document.getElementById('gnBody').innerHTML='<span class="muted">Fetching global macro headlines…</span>';
+  document.getElementById('gnSummary').style.display='none';
+  let d;
+  try{ d=await (await fetch('/api/globalnews')).json(); }
+  catch(e){ document.getElementById('gnBody').innerHTML=`<span class="neg">Error: ${e}</span>`;
+    btn.disabled=false; btn.textContent='Show News'; return; }
+  btn.disabled=false; btn.textContent='Refresh';
+  meta.textContent=d.updated||'';
+
+  // Claude summary banner
+  const summEl=document.getElementById('gnSummary');
+  if(d.claude){
+    const cl=d.claude, ov=cl.overall||'neutral';
+    const col={bullish:'#0c2a1c',bearish:'#2a1414',mixed:'#2a230c',neutral:'#1b1c1f'}[ov]||'#1b1c1f';
+    const bd={bullish:'#14532d',bearish:'#4c1d1d',mixed:'#4c3d0a',neutral:'#2a2c30'}[ov]||'#2a2c30';
+    const tc={bullish:'#4ade80',bearish:'#f87171',mixed:'#fbbf24',neutral:'#9ca3af'}[ov]||'#9ca3af';
+    const risks=(cl.top_risks||[]).map(r=>`<li>${r}</li>`).join('');
+    const tails=(cl.top_tailwinds||[]).map(t=>`<li>${t}</li>`).join('');
+    summEl.style.display='block';
+    summEl.innerHTML=`<div style="padding:14px 16px;background:${col};border:1px solid ${bd};border-radius:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:14px;font-weight:700;color:${tc};text-transform:uppercase">${ov}</span>
+        <span class="muted">· Claude conviction ${cl.conviction||'—'}%</span>
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:#e4e4e7">${cl.summary||''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+        ${risks?`<div><div style="font-size:11px;color:#f87171;font-weight:600;margin-bottom:4px">RISKS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#fca5a5;line-height:1.6">${risks}</ul></div>`:''}
+        ${tails?`<div><div style="font-size:11px;color:#4ade80;font-weight:600;margin-bottom:4px">TAILWINDS</div><ul style="margin:0 0 0 14px;font-size:12px;color:#86efac;line-height:1.6">${tails}</ul></div>`:''}
+      </div>
+    </div>`;
+  }
+
+  // News groups
+  const groups=d.groups||[];
+  if(!groups.length){ document.getElementById('gnBody').innerHTML='<span class="muted">No macro headlines found.</span>'; return; }
+  const sigBadge=s=>{
+    const m={bullish:['#0c2a1c','#14532d','#4ade80','▲ BULLISH'],
+              bearish:['#2a1414','#4c1d1d','#f87171','▼ BEARISH'],
+              mixed:['#2a230c','#4c3d0a','#fbbf24','~ MIXED'],
+              neutral:['#1b1c1f','#2a2c30','#9ca3af','NEUTRAL']}[s]||['#1b1c1f','#2a2c30','#9ca3af','NEUTRAL'];
+    return `<span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:${m[0]};border:1px solid ${m[1]};color:${m[2]};letter-spacing:.03em">${m[3]}</span>`;
+  };
+  document.getElementById('gnBody').innerHTML=groups.map(g=>`
+    <div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">${g.category}</div>
+      ${g.items.map(it=>`
+        <div style="padding:9px 0;border-bottom:1px solid #1f2023;display:flex;gap:10px;align-items:flex-start">
+          <div style="flex:1;font-size:13px;line-height:1.5;color:#e4e4e7">
+            ${it.link?`<a href="${it.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${it.title}</a>`:it.title}
+            <span style="margin-left:6px;font-size:11px;color:#4b5563">${it.age_label||''}</span>
+          </div>
+          <div style="flex-shrink:0">${sigBadge(it.signal)}</div>
+        </div>`).join('')}
+    </div>`).join('');
 }
 
 function pmExport(){
