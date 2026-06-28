@@ -51,6 +51,17 @@ _JSON_SHAPE = (
 )
 
 
+def _clean(html: str) -> str:
+    """Strip HTML tags and collapse whitespace from an RSS description snippet."""
+    text = re.sub(r"<[^>]+>", " ", html or "")
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&lt;",  "<", text)
+    text = re.sub(r"&gt;",  ">", text)
+    text = re.sub(r"&nbsp;"," ", text)
+    text = re.sub(r"\s+",   " ", text).strip()
+    return text[:400]
+
+
 def _fetch_feed(url: str, n: int = 8) -> list[dict]:
     import requests, xml.etree.ElementTree as ET
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
@@ -60,6 +71,7 @@ def _fetch_feed(url: str, n: int = 8) -> list[dict]:
         for it in ET.fromstring(r.content).findall(".//item")[:n]:
             title = (it.findtext("title") or "").strip()
             link  = (it.findtext("link")  or "").strip()
+            desc  = _clean(it.findtext("description") or "")
             pub   = None
             try:
                 pub = parsedate_to_datetime(it.findtext("pubDate") or "")
@@ -67,7 +79,7 @@ def _fetch_feed(url: str, n: int = 8) -> list[dict]:
                 pass
             age_min = round((now_utc - pub).total_seconds() / 60) if pub else None
             if title and (age_min is None or age_min < 1440):
-                out.append({"title": title, "link": link, "age_min": age_min})
+                out.append({"title": title, "link": link, "desc": desc, "age_min": age_min})
         return out
     except Exception:
         return []
@@ -138,8 +150,9 @@ def _build_result(raw: list, annotation: dict) -> dict:
         ann = lkp.get(i, {})
         headlines.append({
             "title":     item["title"],
-            "link":      item["link"],
-            "age_label": _age_label(item["age_min"]),
+            "link":      item.get("link", ""),
+            "desc":      item.get("desc", ""),
+            "age_label": _age_label(item.get("age_min")),
             "impact":    ann.get("impact", "neutral"),
             "reason":    ann.get("reason", ""),
         })
@@ -200,13 +213,13 @@ def _news_for_stock(symbol: str, company_name: str, limit: int = 10) -> list[dic
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
     seen, out = set(), []
 
-    def _add(title, link, age_min):
+    def _add(title, link, age_min, desc=""):
         key = title[:70]
         if key in seen or not title:
             return
         seen.add(key)
         if age_min is None or age_min < 1440:
-            out.append({"title": title, "link": link, "age_min": age_min})
+            out.append({"title": title, "link": link, "desc": desc, "age_min": age_min})
 
     # yfinance ticker news
     try:
@@ -214,11 +227,12 @@ def _news_for_stock(symbol: str, company_name: str, limit: int = 10) -> list[dic
         for item in (yf.Ticker(symbol + ".NS").news or [])[:10]:
             pub = item.get("providerPublishTime")
             age_min = round((now_utc.timestamp() - pub) / 60) if pub else None
-            _add(item.get("title", ""), item.get("link", ""), age_min)
+            _add(item.get("title", ""), item.get("link", ""), age_min,
+                 item.get("summary", "") or item.get("content", ""))
     except Exception:
         pass
 
-    # India financial news search
+    # India financial news search (Google News RSS — has description snippets)
     for q in [f'"{company_name}" NSE', f'"{symbol}" India stock']:
         gn_url = ("https://news.google.com/rss/search?q=" +
                   req.utils.quote(q) + "&hl=en-IN&gl=IN&ceid=IN:en")
@@ -227,13 +241,14 @@ def _news_for_stock(symbol: str, company_name: str, limit: int = 10) -> list[dic
             for it in ET.fromstring(r.content).findall(".//item")[:6]:
                 title = (it.findtext("title") or "").strip()
                 link  = (it.findtext("link")  or "").strip()
+                desc  = _clean(it.findtext("description") or "")
                 pub   = None
                 try:
                     pub = parsedate_to_datetime(it.findtext("pubDate") or "")
                 except Exception:
                     pass
                 age_min = round((now_utc - pub).total_seconds() / 60) if pub else None
-                _add(title, link, age_min)
+                _add(title, link, age_min, desc)
         except Exception:
             pass
         if len(out) >= limit:
@@ -256,16 +271,31 @@ def predict_next_day(symbol: str) -> dict:
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
     now_ist = now_utc + dt.timedelta(hours=5, minutes=30)
 
-    # ── 1. US market performance ──────────────────────────────────────────────
+    # ── 1. US market + macro indicators ──────────────────────────────────────
     us_perf = {}
+    macro = {}   # Brent crude, USD/INR, Gold, US 10Y yield
     try:
         import yfinance as yf
+        # US indices
         for ticker, label in [("SPY","S&P 500"),("QQQ","Nasdaq"),("^DJI","Dow"),("^VIX","VIX")]:
             try:
                 h = yf.Ticker(ticker).history(period="2d")
                 if len(h) >= 2:
                     prev, last = h["Close"].iloc[-2], h["Close"].iloc[-1]
                     us_perf[label] = round((last - prev) / prev * 100, 2)
+            except Exception:
+                pass
+        # Macro indicators — Claude uses these to reason about India impact
+        for ticker, label in [("BZ=F","Brent Crude"),("USDINR=X","USD/INR"),
+                               ("GC=F","Gold"),("^TNX","US 10Y Yield")]:
+            try:
+                h = yf.Ticker(ticker).history(period="2d")
+                if len(h) >= 2:
+                    prev, last = h["Close"].iloc[-2], h["Close"].iloc[-1]
+                    pct = round((last - prev) / prev * 100, 2)
+                    macro[label] = {"price": round(float(last), 2), "chg_pct": pct}
+                elif len(h) == 1:
+                    macro[label] = {"price": round(float(h["Close"].iloc[-1]), 2), "chg_pct": 0.0}
             except Exception:
                 pass
     except Exception:
@@ -315,10 +345,18 @@ def predict_next_day(symbol: str) -> dict:
         f"  {k}: {'+' if v>=0 else ''}{v}%" for k, v in us_perf.items()
     ) or "  (unavailable)"
 
+    macro_lines = "\n".join(
+        f"  {k}: {v['price']} ({'+' if v['chg_pct']>=0 else ''}{v['chg_pct']}%)"
+        for k, v in macro.items()
+    ) or "  (unavailable)"
+
     prompt = (
-        "You are a macro-to-micro analyst. Your job: given overnight US developments AND "
-        "India-specific news, predict what happens to this Indian stock at tomorrow's open.\n\n"
+        "You are a macro-to-micro analyst. Your job: given overnight US developments, "
+        "live macro indicators, and India-specific news, predict what happens to this "
+        "Indian stock at tomorrow's open. Do NOT hardcode rules — reason from the actual "
+        "numbers and news provided.\n\n"
         "== US MARKET TODAY ==\n" + perf_lines + "\n\n"
+        "== LIVE MACRO INDICATORS ==\n" + macro_lines + "\n\n"
         "== OVERNIGHT US NEWS (last 12h) ==\n" + _fmt(us_news) + "\n\n"
         "== INDIA NEWS FOR THIS STOCK ==\n" + _fmt(india_news) + "\n\n"
         "== STOCK ==\n"
@@ -342,6 +380,7 @@ def predict_next_day(symbol: str) -> dict:
 
     def _ser(items):
         return [{"title": h["title"], "link": h.get("link", ""),
+                 "desc": h.get("desc", ""),
                  "age_label": _age_label(h.get("age_min"))} for h in items]
 
     return {
@@ -350,6 +389,7 @@ def predict_next_day(symbol: str) -> dict:
         "company":       company_name,
         "sector":        sector,
         "us_perf":       us_perf,
+        "macro":         macro,
         "us_news":       _ser(us_news),
         "india_news":    _ser(india_news),
         "direction":     prediction.get("direction", "flat"),

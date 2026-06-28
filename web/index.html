@@ -695,6 +695,26 @@ function pmClear(){
 }
 
 // ── Global News ───────────────────────────────────────────────────────────────
+function newsRow(h, i, showBadge){
+  const badge = showBadge ? gnBadge(h.impact) : '';
+  const desc  = (h.desc||'').trim();
+  const age   = h.age_label ? `<span style="font-size:11px;color:#4b5563;margin-left:6px">${h.age_label}</span>` : '';
+  const title = h.link
+    ? `<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='inherit'">${h.title}</a>`
+    : h.title;
+  return `<details style="border-bottom:1px solid #1f2023;padding:2px 0">
+    <summary style="list-style:none;cursor:pointer;padding:9px 0;display:flex;gap:10px;align-items:flex-start">
+      <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:2px;flex-shrink:0">${i+1}</span>
+      <span style="flex:1;font-size:13px;line-height:1.5;color:#e4e4e7">${title}${age}</span>
+      <span style="flex-shrink:0;padding-top:2px">${badge}</span>
+    </summary>
+    ${desc
+      ? `<div style="padding:6px 0 10px 28px;font-size:12px;color:#9ca3af;line-height:1.6">${desc}</div>`
+      : `<div style="padding:4px 0 8px 28px;font-size:12px;color:#4b5563;font-style:italic">No preview available — <a href="${h.link||'#'}" target="_blank" style="color:#6b7280">open article</a></div>`}
+    ${h.reason ? `<div style="padding:0 0 10px 28px;font-size:12px;color:#a78bfa">${h.reason}</div>` : ''}
+  </details>`;
+}
+
 function gnBadge(impact){
   const m={
     bullish:['#0c2a1c','#14532d','#4ade80','▲ Bullish'],
@@ -742,20 +762,7 @@ async function gnLoad(mode){
   // Headlines list
   const hl=d.headlines||[];
   if(!hl.length){ document.getElementById('gnBody').innerHTML='<span class="muted">No headlines found.</span>'; return; }
-  document.getElementById('gnBody').innerHTML=hl.map((h,i)=>`
-    <div style="padding:11px 0;border-bottom:1px solid #1f2023">
-      <div style="display:flex;gap:10px;align-items:flex-start">
-        <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:1px">${i+1}</span>
-        <div style="flex:1">
-          <div style="font-size:13px;line-height:1.5;color:#e4e4e7">
-            ${h.link?`<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#e4e4e7'">${h.title}</a>`:h.title}
-            ${h.age_label?`<span style="margin-left:6px;font-size:11px;color:#4b5563">${h.age_label}</span>`:''}
-          </div>
-          ${h.reason?`<div style="margin-top:4px;font-size:12px;color:#6b7280">${h.reason}</div>`:''}
-        </div>
-        <div style="flex-shrink:0;padding-top:1px">${gnBadge(h.impact)}</div>
-      </div>
-    </div>`).join('');
+  document.getElementById('gnBody').innerHTML=hl.map((h,i)=>newsRow(h,i,true)).join('');
 }
 
 // ── Next Day Impact ───────────────────────────────────────────────────────────
@@ -789,11 +796,7 @@ async function pdLoad(){
   const drivers=(d.key_drivers||[]).map(x=>`<li>${x}</li>`).join('');
   const risks=(d.risks||[]).map(x=>`<li>${x}</li>`).join('');
 
-  const usNews=(d.us_news||[]).slice(0,8).map((h,i)=>`
-    <div style="padding:7px 0;border-bottom:1px solid #1f2023;font-size:12px;color:#9ca3af">
-      ${i+1}. ${h.link?`<a href="${h.link}" target="_blank" style="color:#9ca3af;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#9ca3af'">${h.title}</a>`:h.title}
-      ${h.age_label?`<span style="color:#4b5563;margin-left:6px">${h.age_label}</span>`:''}
-    </div>`).join('');
+  const usNews=(d.us_news||[]).map((h,i)=>newsRow(h,i,false)).join('');
 
   document.getElementById('pdResult').innerHTML=`
     <div style="padding:18px;background:${col};border:1px solid ${bd};border-radius:14px;margin-bottom:16px">
@@ -811,17 +814,13 @@ async function pdLoad(){
       ${d.watch_at_open?`<div style="padding:9px 12px;background:#101113;border-radius:8px;font-size:12px"><span style="color:#fbbf24;font-weight:700">Watch at 9:15 AM:</span> <span style="color:#e4e4e7">${d.watch_at_open}</span></div>`:''}
     </div>
 
-    ${usPerf?`<div style="margin-bottom:14px;font-size:13px"><span style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">US Market Today</span><div style="margin-top:6px">${usPerf}</div></div>`:''}
+    ${usPerf?`<div style="margin-bottom:10px;font-size:13px"><span style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">US Market Today</span><div style="margin-top:6px">${usPerf}</div></div>`:''}
+
+    ${Object.keys(d.macro||{}).length?`<div style="margin-bottom:14px;font-size:13px"><span style="color:#6b7280;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Macro Indicators</span><div style="margin-top:6px">${Object.entries(d.macro).map(([k,v])=>`<span style="margin-right:16px">${k} <b style="color:${v.chg_pct>=0?'#4ade80':'#f87171'}">${v.price} (${v.chg_pct>=0?'+':''}${v.chg_pct}%)</b></span>`).join('')}</div></div>`:''}
 
     ${usNews?`<div style="margin-top:14px"><div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Overnight US Headlines</div>${usNews}</div>`:''}
 
-    ${(d.india_news&&d.india_news.length)?`<div style="margin-top:14px"><div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">India News for ${d.symbol}</div>
-    ${d.india_news.map((h,i)=>`
-      <div style="padding:7px 0;border-bottom:1px solid #1f2023;font-size:12px;color:#9ca3af">
-        ${i+1}. ${h.link?`<a href="${h.link}" target="_blank" style="color:#9ca3af;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#9ca3af'">${h.title}</a>`:h.title}
-        ${h.age_label?`<span style="color:#4b5563;margin-left:6px">${h.age_label}</span>`:''}
-      </div>`).join('')}
-    </div>`:''}
+    ${(d.india_news&&d.india_news.length)?`<div style="margin-top:14px"><div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">India News for ${d.symbol}</div>${d.india_news.map((h,i)=>newsRow(h,i,false)).join('')}</div>`:''}
   `;
 }
 
@@ -863,20 +862,7 @@ async function snLoad(){
 
   const hl=d.headlines||[];
   if(!hl.length){ document.getElementById('snBody').innerHTML='<span class="muted">No headlines found.</span>'; return; }
-  document.getElementById('snBody').innerHTML=hl.map((h,i)=>`
-    <div style="padding:11px 0;border-bottom:1px solid #1f2023">
-      <div style="display:flex;gap:10px;align-items:flex-start">
-        <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:1px">${i+1}</span>
-        <div style="flex:1">
-          <div style="font-size:13px;line-height:1.5;color:#e4e4e7">
-            ${h.link?`<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#e4e4e7'">${h.title}</a>`:h.title}
-            ${h.age_label?`<span style="margin-left:6px;font-size:11px;color:#4b5563">${h.age_label}</span>`:''}
-          </div>
-          ${h.reason?`<div style="margin-top:4px;font-size:12px;color:#6b7280">${h.reason}</div>`:''}
-        </div>
-        <div style="flex-shrink:0;padding-top:1px">${gnBadge(h.impact)}</div>
-      </div>
-    </div>`).join('');
+  document.getElementById('snBody').innerHTML=hl.map((h,i)=>newsRow(h,i,true)).join('');
 }
 
 function pmExport(){
