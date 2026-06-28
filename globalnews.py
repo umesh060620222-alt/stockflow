@@ -297,7 +297,8 @@ def predict_next_day(symbol: str) -> dict:
         "company":      company_name,
         "sector":       sector,
         "us_perf":      us_perf,
-        "us_news":      [{"title": h["title"], "link": h["link"], "age_label": h["age_label"]}
+        "us_news":      [{"title": h["title"], "link": h["link"],
+                          "age_label": _age_label(h["age_min"])}
                          for h in us_news],
         "direction":    prediction.get("direction", "flat"),
         "magnitude":    prediction.get("magnitude", ""),
