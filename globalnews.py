@@ -47,7 +47,7 @@ _INDIA_CONTEXT = (
 _JSON_SHAPE = (
     '{"overall":"bullish|bearish|mixed|neutral","conviction":0-100,'
     '"summary":"3-4 sentence impact summary",'
-    '"headlines":[{"idx":1,"impact":"bullish|bearish|neutral","reason":"one line"}]}'
+    '"headlines":[{"idx":1,"impact":"bullish|bearish|neutral","analysis":"2-3 sentences explaining market impact of this specific headline"}]}'
 )
 
 
@@ -144,17 +144,17 @@ def _build_result(raw: list, annotation: dict) -> dict:
             idx = int(h.get("idx", 0)) - 1
             if 0 <= idx < len(raw):
                 lkp[idx] = {"impact": h.get("impact", "neutral"),
-                             "reason": h.get("reason", "")}
+                             "analysis": h.get("analysis") or h.get("reason", "")}
     headlines = []
     for i, item in enumerate(raw):
         ann = lkp.get(i, {})
         headlines.append({
-            "title":     item["title"],
-            "link":      item.get("link", ""),
-            "desc":      item.get("desc", ""),
-            "age_label": _age_label(item.get("age_min")),
-            "impact":    ann.get("impact", "neutral"),
-            "reason":    ann.get("reason", ""),
+            "title":    item["title"],
+            "link":     item.get("link", ""),
+            "desc":     item.get("desc", ""),
+            "age_label":_age_label(item.get("age_min")),
+            "impact":   ann.get("impact", "neutral"),
+            "analysis": ann.get("analysis", ""),
         })
     return {
         "updated":      now_ist.strftime("%Y-%m-%d %H:%M IST"),
@@ -301,38 +301,58 @@ def predict_next_day(symbol: str) -> dict:
     except Exception:
         pass
 
-    # ── 2. Overnight US news (last 12 h) ─────────────────────────────────────
+    # ── 2. Stock profile + yfinance news (already filtered to this ticker) ───
+    company_name = symbol
+    sector = industry = description = ""
+    stock_news = []   # yfinance news for this stock
+    try:
+        import yfinance as yf
+        t = yf.Ticker(symbol + ".NS")
+        info = t.info
+        company_name = info.get("longName") or symbol
+        sector       = info.get("sector", "")
+        industry     = info.get("industry", "")
+        description  = (info.get("longBusinessSummary") or "")[:400]
+        for item in (t.news or [])[:15]:
+            pub = item.get("providerPublishTime")
+            age_min = round((now_utc.timestamp() - pub) / 60) if pub else None
+            if age_min is not None and age_min > 1440:
+                continue
+            stock_news.append({
+                "title":   item.get("title", ""),
+                "link":    item.get("link", ""),
+                "desc":    item.get("summary", "") or item.get("content", ""),
+                "age_min": age_min,
+            })
+    except Exception:
+        pass
+
+    # ── 3. Overnight global MACRO news (last 12h, macro terms only) ──────────
+    _MACRO_RE = re.compile(
+        r"fed|rate|inflation|gdp|recession|war|attack|iran|russia|china|"
+        r"oil|crude|opec|dollar|rupee|treasury|yield|tariff|sanction|"
+        r"geopolit|economy|jobs|employ|fii|emerging|global|central bank",
+        re.I)
     us_news, seen = [], set()
     for url in _FEEDS_GLOBAL:
-        for item in _fetch_feed(url, n=8):
+        for item in _fetch_feed(url, n=10):
             am = item.get("age_min")
-            if am is not None and am > 720:   # older than 12h, skip
+            if am is not None and am > 720:
+                continue
+            if not _MACRO_RE.search(item["title"]):
                 continue
             key = item["title"][:70]
             if key in seen:
                 continue
             seen.add(key)
             us_news.append(item)
-            if len(us_news) >= 15:
+            if len(us_news) >= 10:
                 break
-        if len(us_news) >= 15:
+        if len(us_news) >= 10:
             break
 
-    # ── 3. Stock profile ──────────────────────────────────────────────────────
-    company_name = symbol
-    sector = industry = description = ""
-    try:
-        import yfinance as yf
-        info = yf.Ticker(symbol + ".NS").info
-        company_name = info.get("longName") or symbol
-        sector       = info.get("sector", "")
-        industry     = info.get("industry", "")
-        description  = (info.get("longBusinessSummary") or "")[:400]
-    except Exception:
-        pass
-
-    # ── 4. India-specific stock news ──────────────────────────────────────────
-    india_news = _news_for_stock(symbol, company_name)
+    # india_news alias for backward compat with _ser below
+    india_news = stock_news
 
     # ── 5. Claude prediction ──────────────────────────────────────────────────
     def _fmt(items):
@@ -351,10 +371,13 @@ def predict_next_day(symbol: str) -> dict:
     ) or "  (unavailable)"
 
     prompt = (
-        "You are a macro-to-micro analyst. Your job: given overnight US developments, "
-        "live macro indicators, and India-specific news, predict what happens to this "
-        "Indian stock at tomorrow's open. Do NOT hardcode rules — reason from the actual "
-        "numbers and news provided.\n\n"
+        "You are a macro-to-micro analyst. Your job: predict what happens to this specific "
+        "Indian stock at tomorrow's open, based on overnight US developments and live macro data.\n\n"
+        "IMPORTANT: Many US headlines below are company-specific (SpaceX, Kraft Heinz, Xcel etc.) "
+        "and are NOT relevant to an Indian stock. IGNORE those. Only reason from:\n"
+        "  - Macro events: Fed, rates, inflation, recession, war, oil, dollar, geopolitics\n"
+        "  - Sector events that directly affect this stock's industry\n"
+        "  - Anything that drives FII flows, rupee, or crude oil\n\n"
         "== US MARKET TODAY ==\n" + perf_lines + "\n\n"
         "== LIVE MACRO INDICATORS ==\n" + macro_lines + "\n\n"
         "== OVERNIGHT US NEWS (last 12h) ==\n" + _fmt(us_news) + "\n\n"
@@ -380,7 +403,8 @@ def predict_next_day(symbol: str) -> dict:
 
     def _ser(items):
         return [{"title": h["title"], "link": h.get("link", ""),
-                 "desc": h.get("desc", ""),
+                 "desc": h.get("desc", ""), "analysis": h.get("analysis", ""),
+                 "impact": h.get("impact", "neutral"),
                  "age_label": _age_label(h.get("age_min"))} for h in items]
 
     return {

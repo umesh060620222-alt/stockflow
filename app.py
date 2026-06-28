@@ -89,7 +89,11 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]          # ignore query string when routing
         if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
-                return self._send(200, f.read(), "text/html; charset=utf-8")
+                html = f.read().decode("utf-8")
+            mock_ws = os.getenv("MOCK_WS_URL", "ws://localhost:8765")
+            inject = f'<script>window._MOCK_WS_URL={json.dumps(mock_ws)};</script>'
+            html = html.replace("</head>", inject + "\n</head>", 1)
+            return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         if path in ("/premarket", "/premarket.html"):
             with open(os.path.join(HERE, "web", "premarket.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
@@ -143,6 +147,25 @@ class H(BaseHTTPRequestHandler):
                     w = _csv.DictWriter(out, fieldnames=rows[0].keys())
                     w.writeheader(); w.writerows(rows)
                 return self._send(200, out.getvalue().encode(), "text/csv")
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/article":
+            from urllib.parse import urlparse, parse_qs
+            url = parse_qs(urlparse(self.path).query).get("url", [""])[0].strip()
+            if not url:
+                return self._send(200, dumps({"error": "?url= required"}))
+            try:
+                import requests as req, re as _re
+                r = req.get(url, timeout=12, headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"}, allow_redirects=True)
+                raw = r.text
+                # strip scripts/styles then tags
+                raw = _re.sub(r"(?s)<(script|style)[^>]*>.*?</\1>", " ", raw)
+                raw = _re.sub(r"<[^>]+>", " ", raw)
+                raw = _re.sub(r"&amp;","&",raw); raw = _re.sub(r"&lt;","<",raw)
+                raw = _re.sub(r"&gt;",">",raw);  raw = _re.sub(r"&nbsp;"," ",raw)
+                text = _re.sub(r"\s+", " ", raw).strip()[:2000]
+                return self._send(200, dumps({"text": text}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/globalnews":

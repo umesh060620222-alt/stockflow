@@ -196,6 +196,7 @@
       <button id="streamBtn" class="btn btn-yellow" onclick="pmStartStream()" disabled>Start Stream</button>
       <button id="stopBtn"   class="btn btn-danger"  onclick="pmStop()" disabled>Stop</button>
       <button class="btn btn-muted" onclick="pmDemo()">Demo</button>
+      <button class="btn btn-muted" onclick="pmMockWs()" title="Connect to local mock_kite_ws.py on port 8765">Mock WS</button>
       <button class="btn btn-muted" onclick="pmClear()">Clear</button>
       <button class="btn btn-muted" onclick="pmExport()">Export CSV</button>
     </div>
@@ -615,16 +616,36 @@ function pmDemo(){
   document.getElementById('stopBtn').disabled=false;
 }
 
+function pmMockWs(){
+  pmStop(); pmClear();
+  const url = window._MOCK_WS_URL || 'ws://localhost:8765';
+  pmLog(`Mock WS → ${url}`,'ok');
+  pmWs=new WebSocket(url); pmWs.binaryType='arraybuffer';
+  pmWs.onopen=()=>{ pmLog('Mock connected — binary packets flowing.','ok');
+    document.getElementById('streamBtn').disabled=true;
+    document.getElementById('stopBtn').disabled=false; };
+  pmWs.onmessage=e=>{ if(typeof e.data!=='string') pmParseBinary(e.data); };
+  pmWs.onerror=()=>pmLog('Mock WS error.','err');
+  pmWs.onclose=e=>{ pmLog(`Mock closed (${e.code}).`);
+    document.getElementById('streamBtn').disabled=false;
+    document.getElementById('stopBtn').disabled=true; };
+}
+
 function pmParseBinary(buf){
   const view=new DataView(buf); if(buf.byteLength<2) return;
   const n=view.getInt16(0); let off=2;
   for(let i=0;i<n;i++){
     if(off+2>buf.byteLength) break;
     const len=view.getInt16(off); off+=2;
-    if(len<44){ off+=len; continue; }
+    if(len<8){ off+=len; continue; }
     const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
-    const buyVol=view.getInt32(off+36), sellVol=view.getInt32(off+40);
-    let eip=null; if(len>=72) eip=view.getInt32(off+68)/100;
+    const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
+    // ohlc.open at offset 28 = EIP during pre-market call auction (0 outside auction window)
+    let eip=null;
+    if(len>=32){ const v=view.getInt32(off+28)/100; if(v>0) eip=v; }
+    // seed prevClose from ohlc.close if not already set (e.g. in Mock WS mode)
+    if(!pmPrevClose&&len>=44){ pmPrevClose=view.getInt32(off+40)/100;
+      document.getElementById('pmPrevClose').textContent='₹'+pmPrevClose; }
     const symbol=Object.keys(pmTokenMap).find(k=>pmTokenMap[k]===token)||`#${token}`;
     pmOnTick({symbol,ltp,buyVol,sellVol,eip,ts:nowIST()}); off+=len;
   }
@@ -695,23 +716,48 @@ function pmClear(){
 }
 
 // ── Global News ───────────────────────────────────────────────────────────────
+let _articleCache = {};
+async function _loadArticle(url, el){
+  if(_articleCache[url]===undefined){
+    el.textContent = 'Fetching article…';
+    try{
+      const d = await (await fetch('/api/article?url='+encodeURIComponent(url))).json();
+      _articleCache[url] = d.text || d.error || 'Could not load.';
+    }catch(e){ _articleCache[url]='Fetch error: '+e; }
+  }
+  el.textContent = _articleCache[url];
+}
+
 function newsRow(h, i, showBadge){
-  const badge = showBadge ? gnBadge(h.impact) : '';
-  const desc  = (h.desc||'').trim();
-  const age   = h.age_label ? `<span style="font-size:11px;color:#4b5563;margin-left:6px">${h.age_label}</span>` : '';
-  const title = h.link
-    ? `<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='inherit'">${h.title}</a>`
-    : h.title;
-  return `<details style="border-bottom:1px solid #1f2023;padding:2px 0">
-    <summary style="list-style:none;cursor:pointer;padding:9px 0;display:flex;gap:10px;align-items:flex-start">
-      <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:2px;flex-shrink:0">${i+1}</span>
-      <span style="flex:1;font-size:13px;line-height:1.5;color:#e4e4e7">${title}${age}</span>
+  const badge    = showBadge ? gnBadge(h.impact) : '';
+  const age      = h.age_label ? `<span style="font-size:11px;color:#4b5563;margin-left:8px">${h.age_label}</span>` : '';
+  const uid      = 'art_'+Math.random().toString(36).slice(2);
+
+  const onToggle = h.link
+    ? `ontoggle="if(this.open){_loadArticle('${h.link.replace(/'/g,"\\'")}',document.getElementById('${uid}'))}"`
+    : '';
+
+  return `<details style="border-bottom:1px solid #1f2023" ${onToggle}>
+    <summary style="list-style:none;cursor:pointer;padding:10px 0;display:flex;gap:10px;align-items:flex-start">
+      <span style="font-size:11px;color:#4b5563;min-width:22px;padding-top:2px;flex-shrink:0">${i+1}</span>
+      <span style="flex:1;font-size:13px;font-weight:500;line-height:1.5;color:#e4e4e7">${h.title}${age}</span>
       <span style="flex-shrink:0;padding-top:2px">${badge}</span>
     </summary>
-    ${desc
-      ? `<div style="padding:6px 0 10px 28px;font-size:12px;color:#9ca3af;line-height:1.6">${desc}</div>`
-      : `<div style="padding:4px 0 8px 28px;font-size:12px;color:#4b5563;font-style:italic">No preview available — <a href="${h.link||'#'}" target="_blank" style="color:#6b7280">open article</a></div>`}
-    ${h.reason ? `<div style="padding:0 0 10px 28px;font-size:12px;color:#a78bfa">${h.reason}</div>` : ''}
+    <div style="padding:0 0 14px 30px">
+      ${h.analysis
+        ? `<div style="padding:8px 12px;background:#1a1530;border-left:3px solid #7c3aed;border-radius:0 8px 8px 0;font-size:12px;color:#c4b5fd;line-height:1.7;margin-bottom:10px">
+             <span style="font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.06em">Claude analysis</span><br>${h.analysis}
+           </div>`
+        : ''}
+      ${h.desc
+        ? `<div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:10px">${h.desc}</div>`
+        : ''}
+      ${h.link
+        ? `<div style="font-size:12px;color:#4b5563;margin-bottom:8px;font-family:monospace;word-break:break-all">${h.link}</div>
+           <div id="${uid}" style="font-size:11px;color:#6b7280;line-height:1.6;margin-bottom:10px;white-space:pre-wrap;max-height:200px;overflow-y:auto">Click ▸ above to load article text…</div>
+           <a href="${h.link}" target="_blank" style="display:inline-block;padding:5px 12px;background:#1b1c1f;border:1px solid #2a2c30;border-radius:6px;font-size:12px;color:#fbbf24;text-decoration:none">Read full article →</a>`
+        : '<span style="font-size:12px;color:#4b5563;font-style:italic">No link available</span>'}
+    </div>
   </details>`;
 }
 
