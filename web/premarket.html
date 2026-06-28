@@ -138,19 +138,14 @@
   <span id="authMsg" style="margin-left:12px;font-size:13px;color:#9ca3af"></span>
 </div>
 
+<!-- Today's pick card -->
+<div id="pickCard" style="background:#1b1c1f;border:1px solid #2a2c30;border-radius:14px;padding:16px 20px;margin-bottom:16px">
+  <div style="font-size:11px;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Today's Buy Pick — Pre-Market Watch</div>
+  <div id="pickBody" style="color:#9ca3af;font-size:13px">Loading today's pick…</div>
+</div>
+
 <!-- Stream controls -->
 <div class="controls">
-  <div class="field">
-    <label>Symbols (comma-sep, NSE tradingsymbol)</label>
-    <input id="symbols" type="text" value="NIFTY 50,BANKNIFTY" style="width:280px" />
-  </div>
-  <div class="field">
-    <label>Exchange</label>
-    <select id="exchange">
-      <option value="NSE">NSE</option>
-      <option value="BSE">BSE</option>
-    </select>
-  </div>
   <button id="streamBtn"  class="btn btn-yellow" onclick="startStream()" disabled>Start Stream</button>
   <button id="stopBtn"    class="btn btn-danger"  onclick="stopStream()"  disabled>Stop</button>
   <button class="btn btn-muted" onclick="startDemo()">Demo</button>
@@ -260,7 +255,7 @@ async function loadCreds() {
   if (d.error) { setAuthMsg(d.error); return; }
   creds = d;
   document.getElementById('authPanel').style.display = 'none';
-  document.getElementById('streamBtn').disabled = false;
+  if (pickSymbol) document.getElementById('streamBtn').disabled = false;
   lg('Ready to stream.', 'ok');
 }
 
@@ -308,6 +303,34 @@ async function exchangeToken(rt) {
 }
 
 checkAuth();
+loadPick();
+
+// ── Today's pick ──────────────────────────────────────────────────────────────
+let pickSymbol = null; // NSE tradingsymbol e.g. "RELIANCE"
+
+async function loadPick() {
+  try {
+    const d = await (await fetch('/api/recommend?market=IN')).json();
+    if (d.error || !d.picks || !d.picks.length) {
+      document.getElementById('pickBody').textContent = d.error || 'No pick today.';
+      return;
+    }
+    const p = d.picks[0];
+    pickSymbol = p.symbol.replace('.NS', '');
+    const sign = x => `<span style="color:${x>=0?'#4ade80':'#f87171'}">${x>=0?'+':''}${x}%</span>`;
+    document.getElementById('pickBody').innerHTML =
+      `<span style="font-size:22px;font-weight:700;color:#fbbf24">${pickSymbol}</span>
+       <span style="color:#9ca3af;margin-left:10px">₹${p.price}</span>
+       &nbsp;·&nbsp; RS vs Nifty <span style="color:#4ade80">+${p.rs_vs_nifty}%</span>
+       &nbsp;·&nbsp; 3m ${sign(p.ret_3m)}
+       ${p.near_high ? '&nbsp;·&nbsp;<span style="color:#fbbf24">at 52w highs</span>' : ''}
+       <div style="margin-top:6px;font-size:12px;color:#6b7280">${(p.reasons||[]).slice(0,2).join(' · ')}</div>`;
+    // Enable stream once pick is loaded (if already authenticated)
+    if (creds) document.getElementById('streamBtn').disabled = false;
+  } catch(e) {
+    document.getElementById('pickBody').textContent = 'Could not load pick.';
+  }
+}
 
 // ── Stream state ──────────────────────────────────────────────────────────────
 let ws = null, _sse = null;
@@ -344,9 +367,10 @@ async function resolveTokens(symbols, exchange) {
 // ── WebSocket ────────────────────────────────────────────────────────────────
 async function startStream() {
   if (!creds) { lg('Not authenticated — connect first.', 'err'); return; }
-  const symbols = document.getElementById('symbols').value.split(',').map(s => s.trim()).filter(Boolean);
-  const exchange = document.getElementById('exchange').value;
-  if (!symbols.length) { lg('Enter at least one symbol.', 'err'); return; }
+  if (!pickSymbol) { lg('Pick not loaded yet — wait a moment.', 'err'); return; }
+  const symbols = [pickSymbol];
+  const exchange = 'NSE';
+  lg(`Streaming pre-market for today's pick: ${pickSymbol}`);
 
   try { tokenMap = await resolveTokens(symbols, exchange); }
   catch(e) { lg('Token resolution failed: ' + e.message, 'err'); return; }
@@ -391,7 +415,8 @@ function startDemo() {
   stopStream();
   clearData();
   lg('Demo mode — simulated pre-market ticks', 'ok');
-  _sse = new EventSource('/api/premarket/dummy');
+  const sym = pickSymbol || 'RELIANCE';
+  _sse = new EventSource(`/api/premarket/dummy?symbol=${encodeURIComponent(sym)}`);
   _sse.onmessage = (e) => {
     const t = JSON.parse(e.data);
     onTick({ symbol: t.symbol, ltp: t.ltp, buyVol: t.buy, sellVol: t.sell, eip: t.eip, ts: nowIST() });

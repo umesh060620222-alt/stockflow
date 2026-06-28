@@ -178,20 +178,20 @@ class H(BaseHTTPRequestHandler):
 
     def _dummy_stream(self):
         import random, time as _time
-        symbols = ["NIFTY 50", "BANKNIFTY", "RELIANCE", "HDFCBANK"]
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        sym = qs.get("symbol", ["RELIANCE"])[0]
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        base = {s: random.uniform(18000, 45000) for s in symbols}
+        ltp = random.uniform(500, 3000)
         try:
             for _ in range(420):  # ~7 min at 1 tick/sec
-                sym = random.choice(symbols)
-                ltp = base[sym] * random.uniform(0.9995, 1.0005)
-                base[sym] = ltp
-                buy  = random.randint(10000, 500000)
-                sell = random.randint(10000, 500000)
+                ltp *= random.uniform(0.9995, 1.0005)
+                buy  = random.randint(10000, 800000)
+                sell = random.randint(10000, 800000)
                 eip  = round(ltp * random.uniform(0.998, 1.002), 2)
                 tick = dumps({"symbol": sym, "ltp": round(ltp, 2),
                               "buy": buy, "sell": sell, "eip": eip})
