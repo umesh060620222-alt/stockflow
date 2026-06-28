@@ -1,60 +1,58 @@
-"""Global macro + India macro news — events that move US and Indian equity markets.
+"""Global macro + India market news from real financial news RSS channels.
 
-fetch_global_news() — top 20 global headlines → Claude annotates each + overall summary
-fetch_india_news()  — top 20 India-focused headlines → Claude explains Nifty/Sensex impact
-                       using built-in India sensitivity context (oil, FII, rupee, RBI…)
+fetch_global_news() — pulls from Reuters, CNBC, Yahoo Finance, MarketWatch, Investing.com
+fetch_india_news()  — pulls from ET Markets, Moneycontrol, Business Standard, LiveMint
 
-Both functions return the same shape:
-  {updated, overall, conviction, summary, headlines: [{title, link, age_label, impact, reason}]}
+Both send headlines to Claude, which annotates each one with market impact and writes
+an overall summary. Returns {updated, overall, conviction, summary, claude_error, headlines}.
 """
 from __future__ import annotations
 import re, json, os, datetime as dt
 from email.utils import parsedate_to_datetime
 
-_QUERIES_GLOBAL = [
-    "Iran Israel war attack strike",
-    "Russia Ukraine war conflict",
-    "China Taiwan US tensions",
-    "North Korea nuclear missile",
-    "Middle East conflict oil",
-    "Federal Reserve interest rates inflation",
-    "US economy recession GDP jobs",
-    "US China trade tariffs sanctions",
-    "oil price OPEC crude supply",
-    "global markets stocks bonds dollar",
+# Real financial news RSS channels — market-curated, no keyword hacks
+_FEEDS_GLOBAL = [
+    "https://feeds.reuters.com/reuters/businessNews",
+    "https://feeds.reuters.com/reuters/topNews",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+    "https://finance.yahoo.com/rss/topfinstories",
+    "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "https://www.investing.com/rss/news.rss",
 ]
 
-_QUERIES_INDIA = [
-    "India Nifty Sensex stock market",
-    "RBI Reserve Bank India rates inflation",
-    "India rupee dollar exchange rate",
-    "India FII DII foreign institutional investors",
-    "India crude oil import OPEC",
-    "India Iran oil trade",
-    "India China border economy",
-    "India US trade exports",
-    "India GDP growth employment",
-    "India budget fiscal deficit bonds",
+_FEEDS_INDIA = [
+    "https://economictimes.indiatimes.com/markets/rss.cms",
+    "https://economictimes.indiatimes.com/news/economy/rss.cms",
+    "https://www.moneycontrol.com/rss/marketreports.xml",
+    "https://www.moneycontrol.com/rss/business.xml",
+    "https://www.business-standard.com/rss/markets-106.rss",
+    "https://www.business-standard.com/rss/economy-policy-102.rss",
+    "https://www.livemint.com/rss/markets",
 ]
 
 _INDIA_CONTEXT = (
     "Key India market sensitivities you must use when reasoning:\n"
     "- India imports ~85% of crude → oil spike = rupee falls + inflation + trade deficit = Nifty bearish\n"
-    "- Iran is a top crude supplier to India → Iran war/sanctions = direct import cost shock\n"
+    "- Iran is a top crude supplier → Iran war/sanctions = direct import cost shock for India\n"
     "- Fed rate hikes → FII outflows from Indian equities to US bonds → Nifty falls\n"
-    "- Strong USD → weak rupee → imported inflation → RBI forced to hike → bearish for rate-sensitive sectors\n"
-    "- IT sector (20%+ of Nifty) earns USD revenue → strong dollar = bullish for IT\n"
-    "- FMCG / auto / paints / aviation are crude-linked → oil spike hurts margins\n"
+    "- Strong USD → weak rupee → imported inflation → RBI tightening pressure → bearish\n"
+    "- IT sector (20%+ of Nifty) earns USD → strong dollar = bullish for IT stocks\n"
+    "- FMCG / auto / paints / aviation are crude-linked → oil spike hurts their margins\n"
     "- China border tension → supply chain risk for Indian manufacturing\n"
     "- FII flows are the single biggest short-term driver of Nifty direction\n"
-    "- Gold rises on global uncertainty → MCX gold rally, jewellery stocks move\n"
+    "- Gold uncertainty spike → MCX gold rally, jewellery stocks move\n"
+)
+
+_JSON_SHAPE = (
+    '{"overall":"bullish|bearish|mixed|neutral","conviction":0-100,'
+    '"summary":"3-4 sentence impact summary",'
+    '"headlines":[{"idx":1,"impact":"bullish|bearish|neutral","reason":"one line"}]}'
 )
 
 
-def _fetch_rss(query: str, n: int = 5):
+def _fetch_feed(url: str, n: int = 8) -> list[dict]:
     import requests, xml.etree.ElementTree as ET
-    url = ("https://news.google.com/rss/search?q=" +
-           requests.utils.quote(query) + "&hl=en-IN&gl=IN&ceid=IN:en")
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
     try:
         r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
@@ -83,10 +81,10 @@ def _age_label(age_min):
     return f"{age_min // 60}h ago"
 
 
-def _collect(queries, limit=20):
+def _collect_from_feeds(feeds: list[str], limit: int = 20) -> list[dict]:
     seen, raw = set(), []
-    for q in queries:
-        for item in _fetch_rss(q, n=4):
+    for url in feeds:
+        for item in _fetch_feed(url, n=6):
             key = item["title"][:70]
             if key in seen:
                 continue
@@ -97,10 +95,10 @@ def _collect(queries, limit=20):
     return raw
 
 
-def _claude_call(prompt: str, max_tokens: int = 1400) -> dict | None:
+def _claude_call(prompt: str, max_tokens: int = 1400) -> dict:
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        return None
+        return {"error": "ANTHROPIC_API_KEY not set"}
     import requests
     model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
     try:
@@ -112,17 +110,24 @@ def _claude_call(prompt: str, max_tokens: int = 1400) -> dict | None:
                   "messages": [{"role": "user", "content": prompt}]},
             timeout=45,
         )
-        text = r.json()["content"][0]["text"]
-        m = re.search(r"\{.*\}", text, re.S)
-        return json.loads(m.group(0)) if m else None
-    except Exception:
-        return None
+        resp = r.json()
+        if "error" in resp:
+            return {"error": resp["error"].get("message", str(resp["error"]))}
+        text = resp["content"][0]["text"]
+        m = re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            return {"error": f"No JSON in response: {text[:200]}"}
+        return json.loads(m.group(0))
+    except json.JSONDecodeError as e:
+        return {"error": f"JSON parse: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
-def _build_result(raw: list, annotation: dict | None) -> dict:
+def _build_result(raw: list, annotation: dict) -> dict:
     now_ist = dt.datetime.utcnow() + dt.timedelta(hours=5, minutes=30)
     lkp = {}
-    if annotation and annotation.get("headlines"):
+    if annotation.get("headlines"):
         for h in annotation["headlines"]:
             idx = int(h.get("idx", 0)) - 1
             if 0 <= idx < len(raw):
@@ -139,29 +144,24 @@ def _build_result(raw: list, annotation: dict | None) -> dict:
             "reason":    ann.get("reason", ""),
         })
     return {
-        "updated":    now_ist.strftime("%Y-%m-%d %H:%M IST"),
-        "overall":    (annotation or {}).get("overall", "neutral"),
-        "conviction": (annotation or {}).get("conviction", 0),
-        "summary":    (annotation or {}).get("summary", ""),
-        "headlines":  headlines,
+        "updated":      now_ist.strftime("%Y-%m-%d %H:%M IST"),
+        "overall":      annotation.get("overall", "neutral"),
+        "conviction":   annotation.get("conviction", 0),
+        "summary":      annotation.get("summary", ""),
+        "claude_error": annotation.get("error", ""),
+        "headlines":    headlines,
     }
 
 
-_JSON_SHAPE = (
-    '{"overall":"bullish|bearish|mixed|neutral","conviction":0-100,'
-    '"summary":"3-4 sentence impact summary",'
-    '"headlines":[{"idx":1,"impact":"bullish|bearish|neutral","reason":"one line"}]}'
-)
-
-
 def fetch_global_news() -> dict:
-    raw = _collect(_QUERIES_GLOBAL)
+    raw = _collect_from_feeds(_FEEDS_GLOBAL)
     if not raw:
         return {"updated": "", "overall": "neutral", "conviction": 0,
-                "summary": "No headlines found.", "headlines": []}
+                "summary": "", "claude_error": "No headlines fetched.", "headlines": []}
     numbered = "\n".join(f"{i+1}. {h['title']}" for i, h in enumerate(raw))
     prompt = (
-        "You are a senior macro strategist. These are today's top global news headlines.\n\n"
+        "You are a senior macro strategist. These are the latest headlines from major "
+        "financial news channels (Reuters, CNBC, Yahoo Finance, MarketWatch).\n\n"
         + numbered +
         "\n\nFor EACH headline, give a one-line reason how it affects US equity markets "
         "(S&P 500, Nasdaq, Dow). Then write an overall 3-4 sentence market impact summary.\n\n"
@@ -171,19 +171,20 @@ def fetch_global_news() -> dict:
 
 
 def fetch_india_news() -> dict:
-    raw = _collect(_QUERIES_INDIA)
+    raw = _collect_from_feeds(_FEEDS_INDIA)
     if not raw:
         return {"updated": "", "overall": "neutral", "conviction": 0,
-                "summary": "No headlines found.", "headlines": []}
+                "summary": "", "claude_error": "No headlines fetched.", "headlines": []}
     numbered = "\n".join(f"{i+1}. {h['title']}" for i, h in enumerate(raw))
     prompt = (
         "You are an expert on Indian equity markets (Nifty 50, Sensex, NSE).\n\n"
         + _INDIA_CONTEXT + "\n"
-        "These are today's India-focused macro news headlines:\n\n"
+        "These are the latest headlines from Indian financial news channels "
+        "(ET Markets, Moneycontrol, Business Standard, LiveMint):\n\n"
         + numbered +
         "\n\nFor EACH headline, give a one-line reason how it specifically affects "
         "Nifty/Sensex or key Indian sectors (IT, FMCG, auto, banks, oil & gas). "
-        "Then write an overall 3-4 sentence outlook for Indian equities today.\n\n"
+        "Then write an overall 3-4 sentence outlook for Indian equities.\n\n"
         "Reply ONLY with valid JSON:\n" + _JSON_SHAPE
     )
     return _build_result(raw, _claude_call(prompt))
