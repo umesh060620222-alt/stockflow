@@ -181,12 +181,17 @@ class H(BaseHTTPRequestHandler):
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         sym = qs.get("symbol", ["RELIANCE"])[0]
+        try:
+            ltp = float(qs.get("price", [0])[0])
+        except (ValueError, IndexError):
+            ltp = 0
+        if not ltp:
+            ltp = random.uniform(500, 3000)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        ltp = random.uniform(500, 3000)
         try:
             for _ in range(420):  # ~7 min at 1 tick/sec
                 ltp *= random.uniform(0.9995, 1.0005)
