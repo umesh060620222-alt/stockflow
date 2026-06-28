@@ -321,6 +321,7 @@ zstatus();
 (async function(){
   const rt = new URLSearchParams(location.search).get("request_token");
   if(!rt) return;
+  document.getElementById("reqtok").value = rt;
   document.getElementById("zmsg").textContent = "connecting…";
   const d = await (await fetch("/api/auth/token",{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify({request_token:rt})})).json();

@@ -283,11 +283,25 @@ async function loadCreds() {
   lg('Credentials loaded.', 'ok');
 }
 
+let _authPoll = null;
 async function openLogin() {
   try {
     const d = await (await fetch('/api/auth/url')).json();
-    if (d.url) window.open(d.url, '_blank');
-    else setAuthMsg(`<span class="err">${d.error || 'Could not get login URL'}</span>`);
+    if (d.url) {
+      window.open(d.url, '_blank');
+      setAuthMsg('Waiting for login in the new tab…');
+      // Poll until the new tab completes auth and the server has a token
+      _authPoll = setInterval(async () => {
+        const s = await (await fetch('/api/auth/status')).json();
+        if (s.connected) {
+          clearInterval(_authPoll); _authPoll = null;
+          document.getElementById('authPanel').style.display = 'none';
+          await loadCreds();
+        }
+      }, 2000);
+    } else {
+      setAuthMsg(`<span class="err">${d.error || 'Could not get login URL'}</span>`);
+    }
   } catch(e) {
     setAuthMsg('<span class="err">Cannot reach stockflow server</span>');
   }
