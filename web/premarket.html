@@ -320,12 +320,7 @@ const MAX_CHART = 60;
 // ── Instrument lookup (via stockflow server to avoid CORS) ────────────────────
 async function resolveTokens(symbols, exchange) {
   lg(`Fetching instrument list for ${exchange}…`);
-  const resp = await fetch(`https://api.kite.trade/instruments/${exchange}`, {
-    headers: {
-      'X-Kite-Version': '3',
-      'Authorization': `token ${creds.api_key}:${creds.access_token}`
-    }
-  });
+  const resp = await fetch(`/api/instruments/${exchange}`);
   if (!resp.ok) throw new Error(`Instruments fetch failed: ${resp.status}`);
   const csv = await resp.text();
   const lines = csv.trim().split('\n');

@@ -132,6 +132,19 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"error": "No valid token — connect first"}))
             api_key, _ = Z._creds()
             return self._send(200, dumps({"api_key": api_key, "access_token": tok}))
+        if path.startswith("/api/instruments/"):
+            exchange = path.split("/")[-1].upper()
+            try:
+                kc = Z.kite()
+                import io, csv as _csv
+                rows = kc.instruments(exchange)
+                out = io.StringIO()
+                if rows:
+                    w = _csv.DictWriter(out, fieldnames=rows[0].keys())
+                    w.writeheader(); w.writerows(rows)
+                return self._send(200, out.getvalue().encode(), "text/csv")
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/premarket/dummy":
             return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))
