@@ -265,7 +265,7 @@ async function checkAuth() {
   try {
     const d = await (await fetch('/api/auth/status')).json();
     if (d.connected) {
-      setAuthMsg('<span class="ok">✓ Connected — ready to stream</span>');
+      document.getElementById('authPanel').style.display = 'none';
       await loadCreds();
     } else {
       setAuthMsg('Not connected — complete the login flow above.');
@@ -304,7 +304,7 @@ async function connectZerodha() {
       body: JSON.stringify({ request_token: rt })
     })).json();
     if (d.connected) {
-      setAuthMsg(`<span class="ok">✓ Connected${d.user ? ' · ' + d.user : ''}</span>`);
+      document.getElementById('authPanel').style.display = 'none';
       await loadCreds();
     } else {
       setAuthMsg(`<span class="err">${d.error || 'Failed'}</span>`);

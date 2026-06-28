@@ -60,10 +60,11 @@
 <div class="wrap">
   <h1>stockflow <span class="muted">— intraday algo lab</span></h1>
   <nav class="nav">
-    <a href="/" class="active">Algo Lab</a>
+    <a href="#" class="active" onclick="return showTab('backtest',this)">Backtest</a>
+    <a href="#" onclick="return showTab('recommend',this)">Recommend</a>
+    <a href="#" onclick="return showTab('live',this)">Live</a>
     <a href="/premarket.html">Pre-Market</a>
   </nav>
-  <div class="muted" style="margin-top:8px">Tune params → Run → read the net-of-cost verdict on real data. Paper only.</div>
 
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <b style="font-size:13px">Zerodha:</b>
@@ -74,6 +75,7 @@
     <span id="zmsg" class="muted"></span>
   </div>
 
+  <div id="tab-recommend" style="display:none">
   <div class="card" style="margin-top:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
       <b style="font-size:14px">Daily recommendation — relative-strength leaders (money flowing in)</b>
@@ -97,7 +99,9 @@
     <div id="nfbanner"></div>
     <div id="nfbody" class="muted" style="margin-top:10px">Buy / sell signals from breaking news on the watched names. Press Start.</div>
   </div>
+  </div><!-- /tab-recommend -->
 
+  <div id="tab-backtest">
   <div class="grid">
     <!-- controls -->
     <div class="card">
@@ -137,7 +141,9 @@
       <div id="results" class="muted">Set params and hit Run. First Zerodha pull takes a few seconds.</div>
     </div>
   </div>
+  </div><!-- /tab-backtest -->
 
+  <div id="tab-live" style="display:none">
   <div class="card" style="margin-top:18px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <b style="font-size:14px">Live recommendations · 30s self-grade</b>
@@ -148,9 +154,18 @@
     <table id="livetbl" style="display:none"><thead><tr><th>time</th><th>symbol</th><th>side</th><th>best move</th><th>net (after cost)</th><th>verdict</th></tr></thead><tbody id="livebody"></tbody></table>
     <div id="livenote" class="muted" style="margin-top:8px">Recommends every second, then grades each call 30s later (best exit, after costs). Needs Zerodha connected + market open.</div>
   </div>
+  </div><!-- /tab-live -->
 </div>
 
 <script>
+function showTab(id, el) {
+  ['backtest','recommend','live'].forEach(t =>
+    document.getElementById('tab-'+t).style.display = t===id ? '' : 'none');
+  document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+  el.classList.add('active');
+  return false;
+}
+
 const FIELDS = ["source","interval","period","mode","vol_mult","mom_lookback","deviation_pct",
   "time_stop_min","target_pct","stop_pct","max_positions","cost_pct"];
 
