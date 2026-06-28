@@ -242,6 +242,19 @@
 
     <div id="gnSummary" style="display:none;margin-bottom:16px"></div>
     <div id="gnBody" class="muted">Press a button to fetch macro headlines.</div>
+
+    <!-- Stock-specific news -->
+    <div style="margin-top:22px;padding-top:18px;border-top:1px solid #2a2c30">
+      <b style="font-size:14px">Stock News</b>
+      <div class="muted" style="margin-top:2px;margin-bottom:12px">Any Indian (RELIANCE, TCS) or US (AAPL, NVDA) stock — news + Claude impact</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="snSymbol" placeholder="e.g. RELIANCE or AAPL" style="width:200px;padding:8px 10px"
+          onkeydown="if(event.key==='Enter')snLoad()">
+        <button class="btn btn-yellow" onclick="snLoad()" id="snBtn">Get News</button>
+      </div>
+      <div id="snSummary" style="display:none;margin-top:14px"></div>
+      <div id="snBody" style="margin-top:10px"></div>
+    </div>
   </div>
 
 </div>
@@ -712,6 +725,60 @@ async function gnLoad(mode){
   const hl=d.headlines||[];
   if(!hl.length){ document.getElementById('gnBody').innerHTML='<span class="muted">No headlines found.</span>'; return; }
   document.getElementById('gnBody').innerHTML=hl.map((h,i)=>`
+    <div style="padding:11px 0;border-bottom:1px solid #1f2023">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:1px">${i+1}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.5;color:#e4e4e7">
+            ${h.link?`<a href="${h.link}" target="_blank" style="color:inherit;text-decoration:none" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#e4e4e7'">${h.title}</a>`:h.title}
+            ${h.age_label?`<span style="margin-left:6px;font-size:11px;color:#4b5563">${h.age_label}</span>`:''}
+          </div>
+          ${h.reason?`<div style="margin-top:4px;font-size:12px;color:#6b7280">${h.reason}</div>`:''}
+        </div>
+        <div style="flex-shrink:0;padding-top:1px">${gnBadge(h.impact)}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ── Stock News ────────────────────────────────────────────────────────────────
+async function snLoad(){
+  const sym=(document.getElementById('snSymbol').value||'').trim().toUpperCase();
+  if(!sym) return;
+  const btn=document.getElementById('snBtn');
+  btn.disabled=true; btn.textContent='Loading…';
+  document.getElementById('snSummary').style.display='none';
+  document.getElementById('snBody').innerHTML='<span class="muted">Fetching news + asking Claude…</span>';
+  let d;
+  try{ d=await (await fetch(`/api/stocknews?symbol=${encodeURIComponent(sym)}`)).json(); }
+  catch(e){ document.getElementById('snBody').innerHTML=`<span class="neg">Error: ${e}</span>`;
+    btn.disabled=false; btn.textContent='Get News'; return; }
+  btn.disabled=false; btn.textContent='Get News';
+
+  const summEl=document.getElementById('snSummary');
+  if(d.claude_error){
+    summEl.style.display='block';
+    summEl.innerHTML=`<div style="padding:10px 14px;background:#1c1208;border:1px solid #4c3d0a;border-radius:10px;font-size:12px;color:#fbbf24">Claude unavailable: ${d.claude_error}</div>`;
+  } else if(d.summary){
+    const ov=d.overall||'neutral', conv=d.conviction||0;
+    const col={bullish:'#0c2a1c',bearish:'#2a1414',mixed:'#2a230c',neutral:'#101113'}[ov]||'#101113';
+    const bd ={bullish:'#14532d',bearish:'#4c1d1d',mixed:'#4c3d0a',neutral:'#2a2c30'}[ov]||'#2a2c30';
+    const tc ={bullish:'#4ade80',bearish:'#f87171',mixed:'#fbbf24',neutral:'#9ca3af'}[ov]||'#9ca3af';
+    summEl.style.display='block';
+    summEl.innerHTML=`<div style="padding:14px 18px;background:${col};border:1px solid ${bd};border-radius:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:18px;font-weight:800;color:#fbbf24">${d.symbol}</span>
+        <span style="font-size:13px;color:#9ca3af">${d.company||''}</span>
+        <span style="font-size:12px;padding:2px 8px;border-radius:6px;background:${col};border:1px solid ${bd};color:${tc};font-weight:700;text-transform:uppercase">${ov}</span>
+        ${conv?`<span class="muted">· ${conv}% conviction</span>`:''}
+        <span style="margin-left:auto;font-size:11px;color:#4b5563">${d.is_indian?'NSE':'US'} · Claude</span>
+      </div>
+      <div style="font-size:13px;line-height:1.7;color:#e4e4e7">${d.summary}</div>
+    </div>`;
+  }
+
+  const hl=d.headlines||[];
+  if(!hl.length){ document.getElementById('snBody').innerHTML='<span class="muted">No headlines found.</span>'; return; }
+  document.getElementById('snBody').innerHTML=hl.map((h,i)=>`
     <div style="padding:11px 0;border-bottom:1px solid #1f2023">
       <div style="display:flex;gap:10px;align-items:flex-start">
         <span style="font-size:11px;color:#4b5563;min-width:20px;padding-top:1px">${i+1}</span>

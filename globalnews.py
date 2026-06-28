@@ -188,3 +188,107 @@ def fetch_india_news() -> dict:
         "Reply ONLY with valid JSON:\n" + _JSON_SHAPE
     )
     return _build_result(raw, _claude_call(prompt))
+
+
+def fetch_stock_news(symbol: str) -> dict:
+    """Fetch news for a specific stock (Indian or US) + Claude price-impact analysis.
+
+    Indian: RELIANCE, TCS, INFY, HDFC, WIPRO …
+    US:     AAPL, MSFT, NVDA, TSLA …
+    """
+    import requests as req, xml.etree.ElementTree as ET
+
+    symbol = symbol.strip().upper()
+    now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+    now_ist = now_utc + dt.timedelta(hours=5, minutes=30)
+
+    # Detect Indian vs US — try yfinance .NS suffix
+    is_indian = False
+    yf_sym = symbol
+    company_name = symbol
+    try:
+        import yfinance as yf
+        t = yf.Ticker(symbol + ".NS")
+        if getattr(t.fast_info, "last_price", None):
+            is_indian = True
+            yf_sym = symbol + ".NS"
+            try:
+                company_name = t.info.get("longName") or symbol
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not is_indian:
+        try:
+            import yfinance as yf
+            company_name = yf.Ticker(symbol).info.get("longName") or symbol
+        except Exception:
+            pass
+
+    raw, seen = [], set()
+
+    def _add(title, link, age_min):
+        key = title[:70]
+        if key in seen or not title:
+            return
+        seen.add(key)
+        if age_min is None or age_min < 1440:
+            raw.append({"title": title, "link": link, "age_min": age_min})
+
+    # 1. yfinance news — pre-filtered to this ticker by Yahoo Finance
+    try:
+        import yfinance as yf
+        for item in (yf.Ticker(yf_sym).news or [])[:15]:
+            pub = item.get("providerPublishTime")
+            age_min = round((now_utc.timestamp() - pub) / 60) if pub else None
+            _add(item.get("title", ""), item.get("link", ""), age_min)
+    except Exception:
+        pass
+
+    # 2. Google News RSS for company name — fills gaps
+    for q in [f'"{company_name}" stock', f'"{symbol}" shares results earnings']:
+        gn_url = ("https://news.google.com/rss/search?q=" +
+                  req.utils.quote(q) + "&hl=en-US&gl=US&ceid=US:en")
+        try:
+            r = req.get(gn_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            for it in ET.fromstring(r.content).findall(".//item")[:8]:
+                title = (it.findtext("title") or "").strip()
+                link  = (it.findtext("link")  or "").strip()
+                pub   = None
+                try:
+                    pub = parsedate_to_datetime(it.findtext("pubDate") or "")
+                except Exception:
+                    pass
+                age_min = round((now_utc - pub).total_seconds() / 60) if pub else None
+                _add(title, link, age_min)
+        except Exception:
+            pass
+        if len(raw) >= 20:
+            break
+
+    raw = raw[:20]
+    if not raw:
+        return {"updated": now_ist.strftime("%Y-%m-%d %H:%M IST"),
+                "symbol": symbol, "company": company_name,
+                "overall": "neutral", "conviction": 0, "summary": "",
+                "claude_error": "No news found for this symbol.", "headlines": []}
+
+    numbered = "\n".join(f"{i+1}. {h['title']}" for i, h in enumerate(raw))
+    mkt = "Indian (NSE/BSE)" if is_indian else "US"
+    prompt = (
+        f"You are a senior equity analyst covering {mkt} markets.\n"
+        f"Company: {company_name} ({symbol}{'  — NSE-listed' if is_indian else ''})\n\n"
+        "These are the latest news headlines about this stock:\n\n"
+        + numbered +
+        "\n\nFor EACH headline:\n"
+        "- State whether it is bullish, bearish, or neutral for the stock price\n"
+        "- Give one specific reason why (e.g. 'margin expansion drives EPS upgrade' or "
+        "'contract loss reduces revenue visibility')\n\n"
+        "Then write a 3-4 sentence overall outlook: net impact on the stock price "
+        f"of {symbol} and what investors should watch next.\n\n"
+        "Reply ONLY with valid JSON:\n" + _JSON_SHAPE
+    )
+    result = _build_result(raw, _claude_call(prompt))
+    result.update({"symbol": symbol, "company": company_name, "is_indian": is_indian})
+    return result
