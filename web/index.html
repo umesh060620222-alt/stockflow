@@ -69,9 +69,7 @@
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <b style="font-size:13px">Zerodha:</b>
     <span id="zstatus" class="muted">checking…</span>
-    <button style="width:auto;margin:0;padding:7px 12px" onclick="zopen()">1 · Open Kite login</button>
-    <input id="reqtok" placeholder="paste request_token" style="width:240px">
-    <button style="width:auto;margin:0;padding:7px 12px" onclick="zconnect()">2 · Connect</button>
+    <button id="zloginbtn" style="width:auto;margin:0;padding:7px 12px" onclick="zLogin()">Login with Zerodha</button>
     <span id="zmsg" class="muted"></span>
   </div>
 
@@ -316,38 +314,48 @@ async function zstatus(){
 }
 zstatus();
 
-// Auto-capture: when Kite redirects back here with ?request_token=..., connect
-// automatically (no copy-paste) and clean the URL.
-(async function(){
+// If this page loaded inside a popup (Kite redirect), send the token to the opener and close.
+(function(){
   const rt = new URLSearchParams(location.search).get("request_token");
-  if(!rt) return;
-  document.getElementById("reqtok").value = rt;
+  if(!rt || !window.opener) return;
+  window.opener.postMessage({ request_token: rt }, location.origin);
+  window.close();
+})();
+
+async function _exchangeToken(rt) {
   document.getElementById("zmsg").textContent = "connecting…";
+  document.getElementById("zloginbtn").disabled = true;
   const d = await (await fetch("/api/auth/token",{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify({request_token:rt})})).json();
   document.getElementById("zmsg").textContent = d.connected ? ("✓ connected "+(d.user||"")) : (d.error||"failed");
-  history.replaceState({}, "", location.pathname);
+  document.getElementById("zloginbtn").disabled = false;
   zstatus();
-})();
-
-async function zopen(){
-  const msg = document.getElementById("zmsg");
-  msg.textContent = "";
-  let d;
-  try { d = await (await fetch("/api/auth/url")).json(); }
-  catch(e){ msg.textContent = "could not reach /api/auth/url"; return; }
-  if(d && d.url) window.open(d.url, "_blank");   // new tab; Kite redirects it back here with the token
-  else msg.textContent = "login URL unavailable — " + ((d && d.error) || "set KITE_API_KEY on Railway");
 }
 
-async function zconnect(){
-  const rt = document.getElementById("reqtok").value.trim();
-  if(!rt){ document.getElementById("zmsg").textContent="paste the request_token first"; return; }
-  document.getElementById("zmsg").textContent="connecting…";
-  const d = await (await fetch("/api/auth/token",{method:"POST",headers:{"Content-Type":"application/json"},
-                  body:JSON.stringify({request_token:rt})})).json();
-  document.getElementById("zmsg").textContent = d.connected ? ("✓ connected "+(d.user||"")) : (d.error||"failed");
-  zstatus();
+async function zLogin(){
+  let d;
+  try { d = await (await fetch("/api/auth/url")).json(); }
+  catch(e){ document.getElementById("zmsg").textContent = "could not reach server"; return; }
+  if(!d || !d.url){ document.getElementById("zmsg").textContent = d.error||"no login URL"; return; }
+
+  const popup = window.open(d.url, "kite_login", "width=480,height=700,left=200,top=80");
+  document.getElementById("zmsg").textContent = "Waiting for Kite login…";
+
+  function onMsg(e) {
+    if(e.origin !== location.origin || !e.data.request_token) return;
+    window.removeEventListener("message", onMsg);
+    clearInterval(closedCheck);
+    _exchangeToken(e.data.request_token);
+  }
+  window.addEventListener("message", onMsg);
+
+  const closedCheck = setInterval(() => {
+    if(popup.closed){
+      clearInterval(closedCheck);
+      window.removeEventListener("message", onMsg);
+      document.getElementById("zmsg").textContent = "Login cancelled.";
+    }
+  }, 800);
 }
 
 function num(v){ return (v===""||v===null)?null:(isNaN(+v)?v:+v); }

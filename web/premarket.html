@@ -33,8 +33,6 @@
       background: #1b1c1f; border: 1px solid #2a2c30; border-radius: 14px;
       padding: 20px 24px; margin-bottom: 20px;
     }
-    #authPanel h2 { font-size: 14px; margin-bottom: 14px; color: #9ca3af }
-    .auth-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap }
     .field { display: flex; flex-direction: column; gap: 4px }
     label { font-size: 11px; color: #6b7280 }
     input, select {
@@ -42,7 +40,6 @@
       border-radius: 8px; padding: 8px 12px; font-size: 13px; outline: none;
     }
     input:focus { border-color: #fbbf24 }
-    input[type="text"] { width: 260px }
     .btn {
       padding: 9px 16px; border-radius: 8px; border: 0;
       font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
@@ -137,16 +134,8 @@
 
 <!-- Auth panel -->
 <div id="authPanel">
-  <h2>Zerodha connection</h2>
-  <div class="auth-row">
-    <button class="btn btn-muted" onclick="openLogin()">1 · Open Kite login</button>
-    <div class="field">
-      <label>request_token (paste after login)</label>
-      <input id="reqtok" type="text" placeholder="paste request_token here" />
-    </div>
-    <button class="btn btn-yellow" onclick="connectZerodha()">2 · Connect</button>
-  </div>
-  <div id="authMsg"></div>
+  <button class="btn btn-yellow" onclick="zLogin()">Login with Zerodha</button>
+  <span id="authMsg" style="margin-left:12px;font-size:13px;color:#9ca3af"></span>
 </div>
 
 <!-- Stream controls -->
@@ -245,7 +234,7 @@ setInterval(() => {
     const minLeft = Math.floor(((9*60) - (h*60+m)));
     badge.textContent = `Opens in ${minLeft}m`;
   } else {
-    badge.className = 'badge closed'; badge.textContent = 'Session Closed';
+    badge.className = 'badge closed'; badge.textContent = 'Pre-Market Ended';
   }
 }, 1000);
 
@@ -259,86 +248,62 @@ function lg(msg, cls='') {
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-let creds = null; // { api_key, access_token }
+let creds = null;
 
-async function checkAuth() {
-  try {
-    const d = await (await fetch('/api/auth/status')).json();
-    if (d.connected) {
-      document.getElementById('authPanel').style.display = 'none';
-      await loadCreds();
-    } else {
-      setAuthMsg('Not connected — complete the login flow above.');
-    }
-  } catch(e) {
-    setAuthMsg('<span class="err">Cannot reach stockflow server at localhost:8000</span>');
-  }
+function setAuthMsg(text) {
+  document.getElementById('authMsg').textContent = text;
 }
 
 async function loadCreds() {
   const d = await (await fetch('/api/auth/credentials')).json();
-  if (d.error) { setAuthMsg(`<span class="err">${d.error}</span>`); return; }
+  if (d.error) { setAuthMsg(d.error); return; }
   creds = d;
+  document.getElementById('authPanel').style.display = 'none';
   document.getElementById('streamBtn').disabled = false;
-  lg('Credentials loaded.', 'ok');
+  lg('Ready to stream.', 'ok');
 }
 
-let _authPoll = null;
-async function openLogin() {
+async function checkAuth() {
   try {
-    const d = await (await fetch('/api/auth/url')).json();
-    if (d.url) {
-      window.open(d.url, '_blank');
-      setAuthMsg('Waiting for login in the new tab…');
-      // Poll until the new tab completes auth and the server has a token
-      _authPoll = setInterval(async () => {
-        const s = await (await fetch('/api/auth/status')).json();
-        if (s.connected) {
-          clearInterval(_authPoll); _authPoll = null;
-          document.getElementById('authPanel').style.display = 'none';
-          await loadCreds();
-        }
-      }, 2000);
-    } else {
-      setAuthMsg(`<span class="err">${d.error || 'Could not get login URL'}</span>`);
-    }
-  } catch(e) {
-    setAuthMsg('<span class="err">Cannot reach stockflow server</span>');
-  }
+    const d = await (await fetch('/api/auth/status')).json();
+    if (d.connected) await loadCreds();
+  } catch(e) {}
 }
 
-async function connectZerodha() {
-  const rt = document.getElementById('reqtok').value.trim();
-  if (!rt) { setAuthMsg('<span class="err">Paste the request_token first</span>'); return; }
+async function zLogin() {
+  let d;
+  try { d = await (await fetch('/api/auth/url')).json(); }
+  catch(e) { setAuthMsg('Cannot reach server'); return; }
+  if (!d || !d.url) { setAuthMsg(d.error || 'No login URL'); return; }
+
+  const popup = window.open(d.url, 'kite_login', 'width=480,height=700,left=200,top=80');
+  setAuthMsg('Waiting for Kite login…');
+
+  function onMsg(e) {
+    if (e.origin !== location.origin || !e.data.request_token) return;
+    window.removeEventListener('message', onMsg);
+    clearInterval(closedCheck);
+    exchangeToken(e.data.request_token);
+  }
+  window.addEventListener('message', onMsg);
+
+  const closedCheck = setInterval(() => {
+    if (popup.closed) {
+      clearInterval(closedCheck);
+      window.removeEventListener('message', onMsg);
+      setAuthMsg('Login cancelled.');
+    }
+  }, 800);
+}
+
+async function exchangeToken(rt) {
   setAuthMsg('Connecting…');
-  try {
-    const d = await (await fetch('/api/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request_token: rt })
-    })).json();
-    if (d.connected) {
-      document.getElementById('authPanel').style.display = 'none';
-      await loadCreds();
-    } else {
-      setAuthMsg(`<span class="err">${d.error || 'Failed'}</span>`);
-    }
-  } catch(e) {
-    setAuthMsg('<span class="err">Cannot reach stockflow server</span>');
-  }
-}
-
-// Auto-capture request_token if Kite redirects to this page
-(function autoCapture() {
-  const rt = new URLSearchParams(location.search).get('request_token');
-  if (!rt) return;
-  document.getElementById('reqtok').value = rt;
-  history.replaceState({}, '', location.pathname); // clean URL
-  connectZerodha();
-})();
-
-function setAuthMsg(html) {
-  document.getElementById('authMsg').innerHTML = html;
+  const d = await (await fetch('/api/auth/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_token: rt })
+  })).json();
+  if (d.connected) await loadCreds();
+  else setAuthMsg(d.error || 'Failed');
 }
 
 checkAuth();
