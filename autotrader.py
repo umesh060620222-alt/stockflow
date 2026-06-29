@@ -7,13 +7,12 @@ Timeline:
   on fill     Place SL-M at 5% below avg fill price
 """
 from __future__ import annotations
-import datetime, threading, time, json, logging
+import datetime, threading, time, json, logging, os
 
 log = logging.getLogger("autotrader")
 
-SL_PCT      = 0.05   # 5% stop loss below fill price
-MIN_SCORE   = 5      # minimum 7-point score to qualify
-MIN_RATIO   = 1.2    # minimum buy/sell ratio
+SL_PCT    = 0.05
+PAPER     = os.getenv("AT_PAPER", "0") == "1"   # set AT_PAPER=1 to log instead of place real orders
 
 class AutoTrader:
     def __init__(self):
@@ -105,9 +104,12 @@ class AutoTrader:
             self.state = "done"
             self._log("No qualifying pick found (score<5 or ratio<1.2 or price not up). No trade.")
 
-    def _wait_for_open(self):
-        """Wait until 9:15:00."""
-        self._log(f"Pick locked: {self.pick['symbol']} — waiting for 9:15:00 market open…")
+    def _wait_for_open(self, delay=None):
+        if delay is not None:
+            self._log(f"[TEST] Firing in {delay}s…")
+            time.sleep(delay)
+            return
+        self._log(f"Pick locked: {self.pick['symbol']} — waiting for 9:15:00…")
         while not self._stop:
             ist = self._ist()
             if ist.hour == 9 and ist.minute >= 15:
@@ -117,15 +119,30 @@ class AutoTrader:
             time.sleep(1)
 
     def _place_order(self):
-        import zerodha as Z
-        kc = Z.kite()
         sym  = self.pick["symbol"]
         qty  = self.pick.get("quantity", 1)
         side = self.pick.get("side", "BUY").upper()
         is_buy = side == "BUY"
-        tx      = kc.TRANSACTION_TYPE_BUY  if is_buy else kc.TRANSACTION_TYPE_SELL
-        sl_tx   = kc.TRANSACTION_TYPE_SELL if is_buy else kc.TRANSACTION_TYPE_BUY
-        self._log(f"Placing MARKET {side} for {qty} share(s) of {sym}…")
+
+        if PAPER:
+            self._log(f"[PAPER] MARKET {side} {qty}×{sym}")
+            self.order_id = "PAPER-001"
+            self.state = "ordered"
+            time.sleep(2)
+            import random
+            self.fill_price = round(self.pick.get("ltp", 1000) * (1 + random.uniform(-0.001, 0.001)), 2)
+            self._log(f"[PAPER] FILLED at ₹{self.fill_price} (simulated)")
+            sl_trigger = round(self.fill_price * (1 - SL_PCT if is_buy else 1 + SL_PCT), 2)
+            self.sl_order_id = "PAPER-002"
+            self.state = "done"
+            self._log(f"[PAPER] SL-M at ₹{sl_trigger} (simulated)")
+            return
+
+        import zerodha as Z
+        kc = Z.kite()
+        tx    = kc.TRANSACTION_TYPE_BUY  if is_buy else kc.TRANSACTION_TYPE_SELL
+        sl_tx = kc.TRANSACTION_TYPE_SELL if is_buy else kc.TRANSACTION_TYPE_BUY
+        self._log(f"Placing MARKET {side} for {qty}×{sym}…")
         try:
             oid = kc.place_order(
                 variety          = kc.VARIETY_REGULAR,
@@ -188,10 +205,9 @@ class AutoTrader:
             self.state = "error"
             self._log(f"SL order failed: {e} — EXIT MANUALLY!")
 
-    def _wait_and_order(self):
-        """Called after pick is locked from UI — wait for 9:15 then place order."""
+    def _wait_and_order(self, delay=None):
         try:
-            self._wait_for_open()
+            self._wait_for_open(delay=delay)
             if not self._stop:
                 self._place_order()
         except Exception as e:

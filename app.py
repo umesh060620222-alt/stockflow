@@ -272,13 +272,17 @@ class H(BaseHTTPRequestHandler):
             chg  = float(body.get("chgPct", 0))
             qty  = max(1, int(body.get("quantity", 1)))
             side = body.get("side", "BUY").upper()
+            ltp  = float(body.get("ltp", 0))
+            test = bool(body.get("test", False))
             if not sym:
                 return self._send(200, dumps({"error": "symbol required"}))
             trader = AT.SELLER if side == "SELL" else AT.BUYER
-            trader.pick  = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg, "quantity": qty, "side": side}
+            trader.pick  = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg,
+                            "quantity": qty, "side": side, "ltp": ltp}
             trader.state = "locked"
-            trader._log(f"PICK [{side}] from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}% qty={qty}")
-            t = threading.Thread(target=trader._wait_and_order, daemon=True)
+            trader._log(f"{'[TEST] ' if test else ''}PICK [{side}]: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}% qty={qty}")
+            delay = 10 if test else None
+            t = threading.Thread(target=trader._wait_and_order, kwargs={"delay": delay}, daemon=True)
             t.start()
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path != "/api/run":

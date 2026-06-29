@@ -238,6 +238,10 @@
         </label>
         <span id="atSellState" style="font-size:11px;color:#6b7280"></span>
       </div>
+      <div style="margin-bottom:6px">
+        <button class="btn btn-yellow" style="padding:3px 10px;font-size:11px" onclick="atTestFire()">Test Fire Now</button>
+        <span style="font-size:11px;color:#6b7280;margin-left:8px">fires immediately with 10s delay (use with AT_PAPER=1)</span>
+      </div>
       <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;max-height:90px;overflow-y:auto;white-space:pre-wrap"></div>
     </div>
     <div id="scTop5" style="display:none;margin-bottom:14px"></div>
@@ -869,6 +873,24 @@ async function atTick(){
   }catch(e){}
 }
 
+async function atTestFire(){
+  atLog('TEST FIRE triggered');
+  const sends=[];
+  if(scTopPick){
+    const p=scTopPick, last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtyBuy').value)||1;
+    atLog(`TEST BUY: ${p.sym} ltp=₹${last.ltp} qty=${qty}`);
+    sends.push(fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({symbol:p.sym,score:p._total||0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'BUY',test:true})}));
+  } else atLog('TEST BUY: no top pick available');
+  if(scTopLoser){
+    const p=scTopLoser, last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtySell').value)||1;
+    atLog(`TEST SELL: ${p.sym} ltp=₹${last.ltp} qty=${qty}`);
+    sends.push(fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({symbol:p.sym,score:0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'SELL',test:true})}));
+  } else atLog('TEST SELL: no top loser available');
+  await Promise.all(sends);
+  if(!atPollTimer) atPollTimer=setInterval(atTick,5000);
+}
 // ── end Scanner ────────────────────────────────────────────────────────
 
 // ── Volume Watch (live tab) ────────────────────────────────────────────
