@@ -875,19 +875,25 @@ async function atTick(){
 
 async function atTestFire(){
   atLog('TEST FIRE triggered');
+  // fall back to any stock with ticks if top pick/loser not available
+  const anyStock=()=>{
+    const all=Object.values(scData).filter(r=>r.ticks&&r.ticks.length>0);
+    return all[0]||null;
+  };
   const sends=[];
-  if(scTopPick){
-    const p=scTopPick, last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtyBuy').value)||1;
-    atLog(`TEST BUY: ${p.sym} ltp=₹${last.ltp} qty=${qty}`);
+  const bp=scTopPick||anyStock(), sp=scTopLoser||anyStock();
+  if(bp){
+    const last=bp.ticks[bp.ticks.length-1], qty=parseInt(document.getElementById('atQtyBuy').value)||1;
+    atLog(`TEST BUY: ${bp.sym} ltp=₹${last.ltp} qty=${qty}`);
     sends.push(fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({symbol:p.sym,score:p._total||0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'BUY',test:true})}));
-  } else atLog('TEST BUY: no top pick available');
-  if(scTopLoser){
-    const p=scTopLoser, last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtySell').value)||1;
-    atLog(`TEST SELL: ${p.sym} ltp=₹${last.ltp} qty=${qty}`);
+      body:JSON.stringify({symbol:bp.sym,score:bp._total||0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'BUY',test:true})}));
+  } else atLog('TEST BUY: scanner not connected or no ticks yet');
+  if(sp){
+    const last=sp.ticks[sp.ticks.length-1], qty=parseInt(document.getElementById('atQtySell').value)||1;
+    atLog(`TEST SELL: ${sp.sym} ltp=₹${last.ltp} qty=${qty}`);
     sends.push(fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({symbol:p.sym,score:0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'SELL',test:true})}));
-  } else atLog('TEST SELL: no top loser available');
+      body:JSON.stringify({symbol:sp.sym,score:0,ratio:last.ratio,chgPct:last.chgPct,ltp:last.ltp,quantity:qty,side:'SELL',test:true})}));
+  } else atLog('TEST SELL: scanner not connected or no ticks yet');
   await Promise.all(sends);
   if(!atPollTimer) atPollTimer=setInterval(atTick,5000);
 }
