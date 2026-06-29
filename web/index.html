@@ -206,6 +206,15 @@
       <button class="btn btn-danger" id="scStopBtn" onclick="scDisconnect()" disabled>Disconnect</button>
       <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
+    <div id="atPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <b style="font-size:13px">Auto Trader</b>
+        <button class="btn btn-yellow" style="padding:4px 10px;font-size:12px" onclick="atArm()">Arm (picks at 9:08, buys at 9:15)</button>
+        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="atStop()">Stop</button>
+        <span id="atState" style="font-size:12px;color:#6b7280"></span>
+      </div>
+      <div id="atLog" style="font-size:11px;color:#6b7280;margin-top:8px;max-height:80px;overflow-y:auto"></div>
+    </div>
     <div id="scTop5" style="display:none;margin-bottom:14px"></div>
     <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
       <table id="scTbl" style="display:none;font-size:13px">
@@ -567,12 +576,16 @@ async function scConnect(){
     document.getElementById('scStatus').textContent=`Live · ${tokens.length} stocks`;
     document.getElementById('scStopBtn').disabled=false;
     document.getElementById('scTbl').style.display='';
+    document.getElementById('atPanel').style.display='';
     scRenderTimer=setInterval(scRender,2000);
   };
   scWs.onmessage=e=>{ if(typeof e.data!=='string') scParseBinary(e.data); };
   scWs.onerror=()=>{ document.getElementById('scStatus').textContent='WS error.'; };
   scWs.onclose=()=>{ document.getElementById('scStatus').textContent='Disconnected.';
     document.getElementById('scStopBtn').disabled=true;
+    document.getElementById('atPanel').style.display='none';
+    atArmed=false;
+    if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
     if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; } };
 }
 
@@ -722,6 +735,71 @@ function scRender(){
     tb.appendChild(tr);
   });
 }
+// ── Auto Trader ───────────────────────────────────────────────────────
+let atArmed=false, atPickSent=false, atPollTimer=null;
+
+function atArm(){
+  atArmed=true; atPickSent=false;
+  document.getElementById('atPanel').style.display='';
+  document.getElementById('atState').textContent='Armed — will pick at 9:08, buy at 9:15';
+  document.getElementById('atLog').textContent='';
+  if(atPollTimer) clearInterval(atPollTimer);
+  atPollTimer=setInterval(atTick,5000);
+  atLog('Armed. Scanner must be connected.');
+}
+
+function atStop(){
+  atArmed=false;
+  fetch('/api/autotrader/stop');
+  if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
+  document.getElementById('atState').textContent='Stopped.';
+}
+
+function atLog(msg){
+  const el=document.getElementById('atLog');
+  el.textContent+=msg+'\n'; el.scrollTop=el.scrollHeight;
+}
+
+async function atTick(){
+  // check if it's 9:08 and we haven't sent the pick yet
+  if(atArmed&&!atPickSent){
+    const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+    if(ist.getHours()===9&&ist.getMinutes()>=8){
+      atPickSent=true;
+      // find top pick from current scanner data
+      const rows=Object.values(scData);
+      const picks=rows.filter(r=>{
+        const t=r.ticks||[]; if(t.length<3) return false;
+        const last=t[t.length-1];
+        return last.chgPct>0&&last.ratio>=1.2;
+      }).sort((a,b)=>{
+        const sa=scScore(a), sb=scScore(b);
+        return sb.total-sa.total;
+      });
+      if(picks.length){
+        const p=picks[0], last=p.ticks[p.ticks.length-1];
+        const sc=scScore(p);
+        atLog(`Pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}%`);
+        const r=await (await fetch('/api/autotrader/pick',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct})})).json();
+        document.getElementById('atState').textContent=`Pick locked: ${p.sym} — buying at 9:15`;
+      } else {
+        atLog('No qualifying pick at 9:08 — no trade today.');
+        document.getElementById('atState').textContent='No qualifying pick.';
+        atArmed=false;
+      }
+    }
+  }
+  // poll server status
+  try{
+    const d=await (await fetch('/api/autotrader/status')).json();
+    if(d.log&&d.log.length) document.getElementById('atLog').textContent=d.log.join('\n');
+    document.getElementById('atState').textContent=`State: ${d.state}`+(d.pick?` · ${d.pick.symbol}`:'')+
+      (d.fill_price?` · filled ₹${d.fill_price}`:'');
+  }catch(e){}
+}
+
 // ── end Scanner ────────────────────────────────────────────────────────
 
 // ── Volume Watch (live tab) ────────────────────────────────────────────

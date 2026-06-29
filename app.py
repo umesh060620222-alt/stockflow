@@ -200,6 +200,13 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_india_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/autotrader/status":
+            import autotrader as AT
+            return self._send(200, dumps(AT.TRADER.status()))
+        if path == "/api/autotrader/stop":
+            import autotrader as AT
+            AT.TRADER.stop()
+            return self._send(200, dumps(AT.TRADER.status()))
         if path == "/api/scanner/tokens":
             import scanner as SC
             try:
@@ -234,6 +241,21 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/live/stop":
             LIVE.stop()
             return self._send(200, dumps(LIVE.state()))
+        if path == "/api/autotrader/pick":
+            import autotrader as AT
+            sym = body.get("symbol", "").strip().upper()
+            score = int(body.get("score", 0))
+            ratio = float(body.get("ratio", 0))
+            chg   = float(body.get("chgPct", 0))
+            if not sym:
+                return self._send(200, dumps({"error": "symbol required"}))
+            AT.TRADER.pick = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg}
+            AT.TRADER.state = "locked"
+            AT.TRADER._log(f"PICK RECEIVED from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}%")
+            # start the wait-and-order thread
+            t = threading.Thread(target=AT.TRADER._wait_and_order, daemon=True)
+            t.start()
+            return self._send(200, dumps(AT.TRADER.status()))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:
