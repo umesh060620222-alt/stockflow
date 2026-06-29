@@ -158,14 +158,27 @@
   </div>
 
   <div id="live" class="tab-panel card" style="margin-top:14px">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <b style="font-size:14px">Live recommendations · 30s self-grade</b>
-      <button id="livebtn" style="width:auto;margin:0;padding:7px 12px" onclick="toggleLive()">Start live</button>
-      <span id="livemeta" class="muted"></span>
+    <div style="margin-bottom:10px"><b style="font-size:14px">Volume Watch</b></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <input id="lvSymInput" type="text" placeholder="Symbol e.g. ICICIBANK"
+        style="background:#23252a;border:1px solid #374151;color:#f9fafb;padding:6px 10px;border-radius:6px;font-size:13px;width:160px">
+      <button class="btn btn-yellow" onclick="lvStart()">Watch</button>
+      <button class="btn btn-danger" id="lvStopBtn" onclick="lvStop()" disabled>Stop</button>
     </div>
-    <div id="livescore" class="stats" style="margin-top:12px;display:none"></div>
-    <table id="livetbl" style="display:none"><thead><tr><th>time</th><th>symbol</th><th>side</th><th>best move</th><th>net (after cost)</th><th>verdict</th></tr></thead><tbody id="livebody"></tbody></table>
-    <div id="livenote" class="muted" style="margin-top:8px">Recommends every second, then grades each call 30s later. Needs Zerodha connected + market open.</div>
+    <div class="pm-cards" id="lvCards" style="display:none">
+      <div class="pm-card"><div class="lbl">LTP</div><div class="val" id="lvLtp">—</div></div>
+      <div class="pm-card"><div class="lbl">Change</div><div class="val" id="lvChg">—</div></div>
+      <div class="pm-card buy"><div class="lbl">Buy Vol</div><div class="val" id="lvBuy">—</div></div>
+      <div class="pm-card sell"><div class="lbl">Sell Vol</div><div class="val" id="lvSell">—</div></div>
+      <div class="pm-card ratio"><div class="lbl">Buy/Sell</div><div class="val" id="lvRatio">—</div></div>
+    </div>
+    <div id="lvLog" style="font-size:12px;color:#6b7280;margin-bottom:8px"></div>
+    <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+      <table id="lvTbl" style="display:none;font-size:12px">
+        <thead><tr><th>Time</th><th>LTP</th><th>Chg%</th><th>Buy Vol</th><th>Sell Vol</th><th>Ratio</th><th>Total</th></tr></thead>
+        <tbody id="lvBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="radar" class="tab-panel card" style="margin-top:14px">
@@ -193,6 +206,9 @@
     </div>
 
     <div class="pm-controls">
+      <input id="pmSymInput" type="text" placeholder="Symbol e.g. ICICIBANK"
+        style="background:#23252a;border:1px solid #374151;color:#f9fafb;padding:6px 10px;border-radius:6px;font-size:13px;width:160px"
+        oninput="pmPickSymbol=this.value.trim().toUpperCase();if(pmCreds&&pmPickSymbol)document.getElementById('streamBtn').disabled=false;">
       <button id="streamBtn" class="btn btn-yellow" onclick="pmStartStream()" disabled>Start Stream</button>
       <button id="stopBtn"   class="btn btn-danger"  onclick="pmStop()" disabled>Stop</button>
       <button class="btn btn-muted" onclick="pmDemo()">Demo</button>
@@ -482,6 +498,101 @@ function render(d){
 
 // ── Live ──────────────────────────────────────────────────────────────────────
 let LIVE_TIMER=null;
+// ── Volume Watch (live tab) ────────────────────────────────────────────
+let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[];
+
+function lvLog(msg){ const el=document.getElementById('lvLog'); el.textContent=msg; }
+
+function lvFmt(n){
+  if(n>=1e7) return (n/1e7).toFixed(2)+'Cr';
+  if(n>=1e5) return (n/1e5).toFixed(1)+'L';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'K';
+  return String(n);
+}
+
+async function lvStart(){
+  lvStop();
+  const sym=document.getElementById('lvSymInput').value.trim().toUpperCase();
+  if(!sym){ lvLog('Enter a symbol.'); return; }
+  // reuse pmCreds — load if needed
+  if(!pmCreds){
+    const d=await (await fetch('/api/auth/credentials')).json();
+    if(d.error){ lvLog('Not authenticated — connect Zerodha first.'); return; }
+    pmCreds=d;
+  }
+  lvLog('Resolving token…');
+  const resp=await fetch('/api/instruments/NSE');
+  const csv=await resp.text(), lines=csv.trim().split('\n'), hdr=lines[0].split(',');
+  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol');
+  lvTokenMap={};
+  for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); if(c[iSym]===sym) lvTokenMap[sym]=parseInt(c[iTok]); }
+  if(!lvTokenMap[sym]){ lvLog(`${sym} not found in NSE.`); return; }
+  lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
+  lvBasePrice=null; lvRows=[];
+  document.getElementById('lvCards').style.display='';
+  document.getElementById('lvTbl').style.display='';
+  document.getElementById('lvStopBtn').disabled=false;
+  const url=`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
+  lvWs=new WebSocket(url); lvWs.binaryType='arraybuffer';
+  lvWs.onopen=()=>{
+    const tokens=Object.values(lvTokenMap);
+    lvWs.send(JSON.stringify({a:'subscribe',v:tokens}));
+    lvWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
+    lvLog('Streaming…');
+  };
+  lvWs.onmessage=e=>{ if(typeof e.data!=='string') lvParseBinary(e.data); };
+  lvWs.onerror=()=>lvLog('WebSocket error.');
+  lvWs.onclose=()=>{ lvLog('Disconnected.'); document.getElementById('lvStopBtn').disabled=true; };
+}
+
+function lvStop(){
+  if(lvWs){ lvWs.close(); lvWs=null; }
+  document.getElementById('lvStopBtn').disabled=true;
+  lvLog('');
+}
+
+function lvParseBinary(buf){
+  const view=new DataView(buf); if(buf.byteLength<2) return;
+  const n=view.getInt16(0); let off=2;
+  for(let i=0;i<n;i++){
+    if(off+2>buf.byteLength) break;
+    const len=view.getInt16(off); off+=2;
+    if(len<8){ off+=len; continue; }
+    const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
+    const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
+    const sym=Object.keys(lvTokenMap).find(k=>lvTokenMap[k]===token)||`#${token}`;
+    if(!lvBasePrice) lvBasePrice=ltp;
+    lvOnTick({sym,ltp,buyVol,sellVol});
+    off+=len;
+  }
+}
+
+function lvOnTick({sym,ltp,buyVol,sellVol}){
+  const chgPct=lvBasePrice?((ltp-lvBasePrice)/lvBasePrice*100):0;
+  const ratio=sellVol>0?(buyVol/sellVol):0;
+  const now=new Date(); const pad=n=>String(n).padStart(2,'0');
+  const ts=`${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  document.getElementById('lvLtp').textContent='₹'+ltp.toFixed(2);
+  const chgEl=document.getElementById('lvChg');
+  chgEl.textContent=(chgPct>=0?'+':'')+chgPct.toFixed(2)+'%';
+  chgEl.style.color=chgPct>=0?'#4ade80':'#f87171';
+  document.getElementById('lvBuy').textContent=lvFmt(buyVol);
+  document.getElementById('lvSell').textContent=lvFmt(sellVol);
+  const ratioEl=document.getElementById('lvRatio');
+  ratioEl.textContent=ratio.toFixed(2);
+  ratioEl.style.color=ratio>=1?'#4ade80':'#f87171';
+  const tb=document.getElementById('lvBody');
+  const tr=document.createElement('tr');
+  tr.innerHTML=`<td>${ts}</td><td>₹${ltp.toFixed(2)}</td>`+
+    `<td style="color:${chgPct>=0?'#4ade80':'#f87171'}">${chgPct>=0?'+':''}${chgPct.toFixed(2)}%</td>`+
+    `<td class="buy-col">${lvFmt(buyVol)}</td><td class="sell-col">${lvFmt(sellVol)}</td>`+
+    `<td style="color:${ratio>=1?'#4ade80':'#f87171'}">${ratio.toFixed(2)}</td>`+
+    `<td>${lvFmt(buyVol+sellVol)}</td>`;
+  tb.insertBefore(tr,tb.firstChild);
+  if(tb.children.length>100) tb.removeChild(tb.lastChild);
+}
+// ── end Volume Watch ───────────────────────────────────────────────────
+
 async function toggleLive(){
   const st=await (await fetch("/api/live/state")).json();
   if(st.running){ await fetch("/api/live/stop",{method:"POST"}); stopPoll(); pollLive(); }
@@ -548,6 +659,7 @@ async function pmLoadPick(){
     if(d.error||!d.picks||!d.picks.length){ document.getElementById('pmPickBody').textContent=d.error||'No pick today.'; return; }
     const p=d.picks[0];
     pmPickSymbol=p.symbol.replace('.NS','');
+    const si=document.getElementById('pmSymInput'); if(si) si.value=pmPickSymbol;
     pmPrevClose=p.price;
     document.getElementById('pmPrevClose').textContent='₹'+p.price;
     const sign=x=>`<span style="color:${x>=0?'#4ade80':'#f87171'}">${x>=0?'+':''}${x}%</span>`;

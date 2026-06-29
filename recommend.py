@@ -105,7 +105,7 @@ def _daily_ohlcv(symbols, days=120):
     for s in symbols:
         try:
             df = raw[s] if len(symbols) > 1 else raw
-            sub = df[["Close", "Volume"]].dropna()
+            sub = df[["Open", "Close", "Volume"]].dropna()
             if len(sub) > 25:
                 out[s] = sub
         except Exception:
@@ -135,7 +135,7 @@ def relative_strength(universe, bench_sym, days=120):
     for s, sub in data.items():
         if s == bench_sym:
             continue
-        c, v = sub["Close"], sub["Volume"]
+        c, v, o = sub["Close"], sub["Volume"], sub["Open"]
         r1m = float(c.iloc[-1] / c.iloc[-21] - 1)
         r3m = float(c.iloc[-1] / c.iloc[-min(63, len(c) - 1)] - 1)
         vol20 = float(v.tail(20).mean())             # still used by the reversal check
@@ -157,6 +157,7 @@ def relative_strength(universe, bench_sym, days=120):
             "vol_ok": bool(rising3),                        # volume higher EACH of the last 3 days
             "ext_pct": ext_pct,                            # % above the 50-DMA
             "rev_risk": bool(rev), "rev_flags": rev,
+            "last_bullish": bool(float(c.iloc[-1]) > float(o.iloc[-1])),
         })
     df = pd.DataFrame(rows).sort_values("rs_vs_nifty", ascending=False).reset_index(drop=True)
     return df, round(bret * 100, 1), closes
