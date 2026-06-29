@@ -220,6 +220,22 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_india_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/scanner/history":
+            import data_store as DS
+            return self._send(200, dumps(DS.get_history()))
+        if path == "/api/scanner/enrich":
+            import data_store as DS
+            from urllib.parse import urlparse, parse_qs
+            date_str = parse_qs(urlparse(self.path).query).get("date", [""])[0]
+            if not date_str:
+                import datetime as _dt
+                ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+                date_str = str(ist.date())
+            try:
+                kc = Z.kite()
+                return self._send(200, dumps(DS.enrich(date_str, kc)))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/autotrader/status":
             import autotrader as AT
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
@@ -285,6 +301,15 @@ class H(BaseHTTPRequestHandler):
             t = threading.Thread(target=trader._wait_and_order, kwargs={"delay": delay}, daemon=True)
             t.start()
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
+        if path == "/api/scanner/snapshot":
+            import data_store as DS, datetime as _dt
+            ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+            date_str = str(ist.date())
+            stocks    = body.get("stocks", [])
+            top_pick  = body.get("top_pick")
+            top_loser = body.get("top_loser")
+            saved = DS.save_snapshot(date_str, stocks, top_pick, top_loser)
+            return self._send(200, dumps({"saved": True, "date": date_str, "count": len(stocks)}))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:
