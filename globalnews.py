@@ -42,7 +42,17 @@ _INDIA_CONTEXT = (
     "- China border tension → supply chain risk for Indian manufacturing\n"
     "- FII flows are the single biggest short-term driver of Nifty direction\n"
     "- Gold uncertainty spike → MCX gold rally, jewellery stocks move\n"
-)
+    "\n"
+    "SECTOR ROTATION RULES (critical — do not ignore):\n"
+    "- When US tech/growth sells off (Nasdaq down), FIIs rotate INTO defensives: pharma, FMCG, utilities\n"
+    "  → Indian pharma (DRREDDY, SUNPHARMA, CIPLA) often RISES when Nasdaq falls\n"
+    "- Falling US 10Y yield = growth fears = FIIs buy defensive dividend stocks, not sell them\n"
+    "- Pharma stocks earn in USD → USD/INR strength is a direct earnings tailwind, not headwind\n"
+    "- IT stocks are growth proxies → they fall WITH Nasdaq, not against it\n"
+    "- PSU banks / infra benefit from rate cuts (falling yields = RBI may follow = cheaper loans)\n"
+    "- FMCG is domestic demand → less sensitive to FII flows than export sectors\n"
+    "- When VIX spikes → sell cyclicals (auto, metals, realty), buy defensives (pharma, FMCG)\n"
+)"
 
 _JSON_SHAPE = (
     '{"overall":"bullish|bearish|mixed|neutral","conviction":0-100,'
@@ -387,6 +397,9 @@ def predict_next_day(symbol: str) -> dict:
         f"  {description}\n\n"
         "== INDIA SENSITIVITY RULES ==\n" + _INDIA_CONTEXT + "\n"
         "Reason across ALL inputs:\n"
+        "- What sector is this stock? Apply the SECTOR ROTATION RULES above first.\n"
+        "- Pharma/FMCG/utilities: check if US selloff causes rotation INTO them (often bullish)\n"
+        "- IT/growth: Nasdaq move is a direct proxy — they move together\n"
         "- Which US news directly hits this stock's sector?\n"
         "- What does the India-specific news add?\n"
         "- FII behavior, rupee, oil amplifiers?\n"
