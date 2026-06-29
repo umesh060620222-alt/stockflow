@@ -96,6 +96,7 @@
     <button onclick="showTab('recommend')" id="tab-recommend">Recommend</button>
     <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
     <button onclick="showTab('live')"      id="tab-live">Live</button>
+    <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
     <button onclick="showTab('global')"    id="tab-global">Global News</button>
@@ -194,6 +195,26 @@
       <table id="lvTbl" style="display:none;font-size:12px">
         <thead><tr><th>Time</th><th>LTP</th><th>Chg%</th><th>Buy Vol</th><th>Sell Vol</th><th>Ratio</th><th>ΔBuy</th><th>ΔSell</th><th>Signal</th></tr></thead>
         <tbody id="lvBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="scanner" class="tab-panel card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <b style="font-size:14px">Unusual Volume Scanner</b>
+      <button class="btn btn-yellow" onclick="scLoad()">Scan Now</button>
+      <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
+      <span style="font-size:11px;color:#4b5563;margin-left:auto">Auto-refreshes every 60s · click symbol to watch live</span>
+    </div>
+    <div id="scError" style="display:none;color:#f87171;font-size:13px;margin-bottom:10px"></div>
+    <div style="overflow-x:auto">
+      <table id="scTbl" style="display:none;font-size:13px">
+        <thead><tr>
+          <th>#</th><th>Symbol</th><th>LTP</th><th>Chg%</th>
+          <th title="Volume vs expected for this time of day">Vol Rate</th>
+          <th>Volume</th><th>B/S Ratio</th><th>Signal</th>
+        </tr></thead>
+        <tbody id="scBody"></tbody>
       </table>
     </div>
   </div>
@@ -515,6 +536,77 @@ function render(d){
 
 // ── Live ──────────────────────────────────────────────────────────────────────
 let LIVE_TIMER=null;
+// ── Scanner tab ───────────────────────────────────────────────────────
+let scTimer=null;
+
+function scFmt(n){
+  if(n>=1e7) return (n/1e7).toFixed(1)+'Cr';
+  if(n>=1e5) return (n/1e5).toFixed(1)+'L';
+  if(n>=1e3) return (n/1e3).toFixed(0)+'K';
+  return String(n);
+}
+
+async function scLoad(){
+  document.getElementById('scStatus').textContent='Scanning…';
+  document.getElementById('scError').style.display='none';
+  try{
+    const d=await (await fetch('/api/scanner')).json();
+    if(d.error){ document.getElementById('scError').textContent=d.error;
+      document.getElementById('scError').style.display=''; return; }
+    const tb=document.getElementById('scBody');
+    tb.innerHTML='';
+    (d.stocks||[]).forEach((s,i)=>{
+      const up=s.direction==='up', dn=s.direction==='down';
+      const chgCol=up?'#4ade80':dn?'#f87171':'#9ca3af';
+      const sig=s.vol_rate>=2&&up?'Strong Buy':s.vol_rate>=1.5&&up?'Buy':
+                 s.vol_rate>=2&&dn?'Strong Sell':s.vol_rate>=1.5&&dn?'Sell':
+                 s.vol_rate>=1.2?'Elevated':'Normal';
+      const sigCol=sig.includes('Buy')?'#4ade80':sig.includes('Sell')?'#f87171':'#9ca3af';
+      const volBar=Math.min(100,s.vol_rate*50); // visual bar width %
+      const tr=document.createElement('tr');
+      tr.style.cursor='pointer';
+      tr.title='Click to watch in Live tab';
+      tr.onclick=()=>{
+        document.getElementById('lvSymInput').value=s.symbol;
+        showTab('live');
+        lvStart();
+      };
+      tr.innerHTML=
+        `<td style="color:#4b5563">${i+1}</td>`+
+        `<td style="font-weight:600;color:#fbbf24">${s.symbol}</td>`+
+        `<td>₹${s.ltp}</td>`+
+        `<td style="color:${chgCol}">${s.chg_pct>=0?'+':''}${s.chg_pct}%</td>`+
+        `<td><span style="display:inline-block;background:#23252a;border-radius:4px;padding:2px 6px">`+
+          `<span style="display:inline-block;width:${volBar}px;max-width:80px;height:6px;background:${sigCol};border-radius:2px;vertical-align:middle;margin-right:4px"></span>`+
+          `${s.vol_rate}x</span></td>`+
+        `<td>${scFmt(s.volume)}</td>`+
+        `<td style="color:${s.ratio>=1?'#4ade80':'#f87171'}">${s.ratio}</td>`+
+        `<td style="color:${sigCol};font-weight:600">${sig}</td>`;
+      tb.appendChild(tr);
+    });
+    document.getElementById('scTbl').style.display='';
+    document.getElementById('scStatus').textContent=`Updated ${d.updated} · ${(d.stocks||[]).length} stocks`;
+  }catch(e){
+    document.getElementById('scError').textContent='Scan failed: '+e;
+    document.getElementById('scError').style.display='';
+    document.getElementById('scStatus').textContent='';
+  }
+}
+
+// auto-refresh when scanner tab is active
+const _origShowTab=showTab;
+function showTab(id){
+  _origShowTab(id);
+  if(id==='scanner'){
+    scLoad();
+    if(scTimer) clearInterval(scTimer);
+    scTimer=setInterval(scLoad,60000);
+  } else {
+    if(scTimer){ clearInterval(scTimer); scTimer=null; }
+  }
+}
+// ── end Scanner ────────────────────────────────────────────────────────
+
 // ── Volume Watch (live tab) ────────────────────────────────────────────
 let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[], lvPrevBuy=null, lvPrevSell=null;
 let lvTicks=[], lvRecTimer=null;
