@@ -200,12 +200,6 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_india_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
-        if path == "/api/scanner":
-            import scanner as SC
-            try:
-                return self._send(200, dumps(SC.scan()))
-            except Exception as e:
-                return self._send(200, dumps({"error": str(e), "stocks": []}))
         if path == "/api/premarket/dummy":
             return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))
