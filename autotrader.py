@@ -119,28 +119,32 @@ class AutoTrader:
     def _place_order(self):
         import zerodha as Z
         kc = Z.kite()
-        sym = self.pick["symbol"]
-        qty = self.pick.get("quantity", 1)
-        self._log(f"Placing MARKET BUY for {qty} share(s) of {sym}…")
+        sym  = self.pick["symbol"]
+        qty  = self.pick.get("quantity", 1)
+        side = self.pick.get("side", "BUY").upper()
+        is_buy = side == "BUY"
+        tx      = kc.TRANSACTION_TYPE_BUY  if is_buy else kc.TRANSACTION_TYPE_SELL
+        sl_tx   = kc.TRANSACTION_TYPE_SELL if is_buy else kc.TRANSACTION_TYPE_BUY
+        self._log(f"Placing MARKET {side} for {qty} share(s) of {sym}…")
         try:
             oid = kc.place_order(
-                variety   = kc.VARIETY_REGULAR,
-                exchange  = kc.EXCHANGE_NSE,
-                tradingsymbol = sym,
-                transaction_type = kc.TRANSACTION_TYPE_BUY,
-                quantity  = qty,
-                product   = kc.PRODUCT_MIS,      # intraday
-                order_type= kc.ORDER_TYPE_MARKET,
+                variety          = kc.VARIETY_REGULAR,
+                exchange         = kc.EXCHANGE_NSE,
+                tradingsymbol    = sym,
+                transaction_type = tx,
+                quantity         = qty,
+                product          = kc.PRODUCT_MIS,
+                order_type       = kc.ORDER_TYPE_MARKET,
             )
             self.order_id = oid
             self.state = "ordered"
-            self._log(f"BUY order placed: {oid}")
+            self._log(f"{side} order placed: {oid}")
         except Exception as e:
             self.state = "error"
-            self._log(f"BUY order failed: {e}")
+            self._log(f"{side} order failed: {e}")
             return
 
-        # poll for fill and get avg price
+        # poll for fill
         self._log("Waiting for fill…")
         for _ in range(30):
             time.sleep(2)
@@ -158,23 +162,28 @@ class AutoTrader:
             self.state = "done"
             return
 
-        # place SL-M order
-        sl_trigger = round(self.fill_price * (1 - SL_PCT), 2)
-        self._log(f"Placing SL-M at ₹{sl_trigger} (5% below ₹{self.fill_price})…")
+        # place SL-M
+        if is_buy:
+            sl_trigger = round(self.fill_price * (1 - SL_PCT), 2)
+            sl_desc = f"5% below ₹{self.fill_price}"
+        else:
+            sl_trigger = round(self.fill_price * (1 + SL_PCT), 2)
+            sl_desc = f"5% above ₹{self.fill_price}"
+        self._log(f"Placing SL-M at ₹{sl_trigger} ({sl_desc})…")
         try:
             sl_oid = kc.place_order(
-                variety   = kc.VARIETY_REGULAR,
-                exchange  = kc.EXCHANGE_NSE,
-                tradingsymbol = sym,
-                transaction_type = kc.TRANSACTION_TYPE_SELL,
-                quantity  = qty,
-                product   = kc.PRODUCT_MIS,
-                order_type= kc.ORDER_TYPE_SLM,
-                trigger_price = sl_trigger,
+                variety          = kc.VARIETY_REGULAR,
+                exchange         = kc.EXCHANGE_NSE,
+                tradingsymbol    = sym,
+                transaction_type = sl_tx,
+                quantity         = qty,
+                product          = kc.PRODUCT_MIS,
+                order_type       = kc.ORDER_TYPE_SLM,
+                trigger_price    = sl_trigger,
             )
             self.sl_order_id = sl_oid
             self.state = "done"
-            self._log(f"SL-M order placed: {sl_oid} trigger=₹{sl_trigger}")
+            self._log(f"SL-M placed: {sl_oid} trigger=₹{sl_trigger}")
         except Exception as e:
             self.state = "error"
             self._log(f"SL order failed: {e} — EXIT MANUALLY!")
@@ -221,5 +230,7 @@ def _score(d):
     return {"total": ratioScore + buyScore + sellScore + absorbScore + priceScore}
 
 
-# singleton
-TRADER = AutoTrader()
+# singletons
+TRADER = AutoTrader()   # legacy alias → BUY side
+BUYER  = AutoTrader()
+SELLER = AutoTrader()

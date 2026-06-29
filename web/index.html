@@ -207,22 +207,38 @@
       <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
     <div id="atPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
-      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-        <b style="font-size:13px">Auto Trader</b>
+      <b style="font-size:13px;display:block;margin-bottom:8px">Auto Trader</b>
+      <!-- BUY row -->
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px">
+        <span style="font-size:12px;color:#4ade80;font-weight:600;width:34px">BUY</span>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
-          <div id="atToggleWrap" onclick="atToggle()" style="width:40px;height:22px;border-radius:11px;background:#374151;position:relative;transition:background .2s;cursor:pointer">
-            <div id="atToggleKnob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s"></div>
+          <div id="atBuyWrap" onclick="atToggleBuy()" style="width:40px;height:22px;border-radius:11px;background:#374151;position:relative;transition:background .2s;cursor:pointer">
+            <div id="atBuyKnob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s"></div>
           </div>
-          <span id="atToggleLabel" style="font-size:12px;color:#6b7280">Disarmed</span>
+          <span id="atBuyLabel" style="font-size:12px;color:#6b7280">Disarmed</span>
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9ca3af">
-          Shares:
-          <input id="atQty" type="number" min="1" max="9999" value="1"
-            style="width:60px;padding:2px 6px;background:#111;border:1px solid #374151;border-radius:4px;color:#f3f4f6;font-size:12px;text-align:center">
+          Shares: <input id="atQtyBuy" type="number" min="1" max="9999" value="1"
+            style="width:55px;padding:2px 6px;background:#111;border:1px solid #374151;border-radius:4px;color:#f3f4f6;font-size:12px;text-align:center">
         </label>
-        <span id="atState" style="font-size:12px;color:#6b7280"></span>
+        <span id="atBuyState" style="font-size:11px;color:#6b7280"></span>
       </div>
-      <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;margin-top:8px;max-height:80px;overflow-y:auto;white-space:pre-wrap"></div>
+      <!-- SELL row -->
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="font-size:12px;color:#f87171;font-weight:600;width:34px">SELL</span>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+          <div id="atSellWrap" onclick="atToggleSell()" style="width:40px;height:22px;border-radius:11px;background:#374151;position:relative;transition:background .2s;cursor:pointer">
+            <div id="atSellKnob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s"></div>
+          </div>
+          <span id="atSellLabel" style="font-size:12px;color:#6b7280">Disarmed</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9ca3af">
+          Shares: <input id="atQtySell" type="number" min="1" max="9999" value="1"
+            style="width:55px;padding:2px 6px;background:#111;border:1px solid #374151;border-radius:4px;color:#f3f4f6;font-size:12px;text-align:center">
+        </label>
+        <span id="atSellState" style="font-size:11px;color:#6b7280"></span>
+      </div>
+      <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;max-height:90px;overflow-y:auto;white-space:pre-wrap"></div>
     </div>
     <div id="scTop5" style="display:none;margin-bottom:14px"></div>
     <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
@@ -593,7 +609,8 @@ async function scConnect(){
   scWs.onclose=()=>{ document.getElementById('scStatus').textContent='Disconnected.';
     document.getElementById('scStopBtn').disabled=true;
     document.getElementById('atPanel').style.display='none';
-    if(atArmed) atDisarm();
+    if(atArmedBuy) atDisarmBuy();
+    if(atArmedSell) atDisarmSell();
     if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
     if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; } };
 }
@@ -745,34 +762,54 @@ function scRender(){
   });
 }
 // ── Auto Trader ───────────────────────────────────────────────────────
-let atArmed=false, atPickSent=false, atPollTimer=null;
+let atArmedBuy=false, atPickSentBuy=false;
+let atArmedSell=false, atPickSentSell=false;
+let atPollTimer=null;
 
-function atToggle(){
-  if(atArmed) atDisarm(); else atArm();
+function _atSetToggle(wrap,knob,lbl,on,color){
+  document.getElementById(wrap).style.background=on?color:'#374151';
+  document.getElementById(knob).style.left=on?'20px':'2px';
+  document.getElementById(lbl).textContent=on?'Armed':'Disarmed';
+  document.getElementById(lbl).style.color=on?color:'#6b7280';
 }
 
-function atArm(){
-  atArmed=true; atPickSent=false;
-  document.getElementById('atToggleWrap').style.background='#16a34a';
-  document.getElementById('atToggleKnob').style.left='20px';
-  document.getElementById('atToggleLabel').textContent='Armed';
-  document.getElementById('atToggleLabel').style.color='#4ade80';
-  document.getElementById('atLog').textContent='';
-  document.getElementById('atState').textContent='Watching — will pick at 9:08, buy at 9:15';
-  if(atPollTimer) clearInterval(atPollTimer);
-  atPollTimer=setInterval(atTick,5000);
-  atLog('Armed. Qty='+document.getElementById('atQty').value);
+function atToggleBuy(){ if(atArmedBuy) atDisarmBuy(); else atArmBuy(); }
+function atToggleSell(){ if(atArmedSell) atDisarmSell(); else atArmSell(); }
+
+function atArmBuy(){
+  atArmedBuy=true; atPickSentBuy=false;
+  _atSetToggle('atBuyWrap','atBuyKnob','atBuyLabel',true,'#16a34a');
+  document.getElementById('atBuyState').textContent='Watching — picks at 9:08, buys at 9:15';
+  atLog('BUY armed. Qty='+document.getElementById('atQtyBuy').value);
+  _atStartPoll();
+}
+function atDisarmBuy(){
+  atArmedBuy=false;
+  _atSetToggle('atBuyWrap','atBuyKnob','atBuyLabel',false);
+  fetch('/api/autotrader/stop?side=buy');
+  document.getElementById('atBuyState').textContent='Disarmed.';
+  _atMaybeClearPoll();
+}
+function atArmSell(){
+  atArmedSell=true; atPickSentSell=false;
+  _atSetToggle('atSellWrap','atSellKnob','atSellLabel',true,'#dc2626');
+  document.getElementById('atSellState').textContent='Watching — picks at 9:08, shorts at 9:15';
+  atLog('SELL armed. Qty='+document.getElementById('atQtySell').value);
+  _atStartPoll();
+}
+function atDisarmSell(){
+  atArmedSell=false;
+  _atSetToggle('atSellWrap','atSellKnob','atSellLabel',false);
+  fetch('/api/autotrader/stop?side=sell');
+  document.getElementById('atSellState').textContent='Disarmed.';
+  _atMaybeClearPoll();
 }
 
-function atDisarm(){
-  atArmed=false;
-  document.getElementById('atToggleWrap').style.background='#374151';
-  document.getElementById('atToggleKnob').style.left='2px';
-  document.getElementById('atToggleLabel').textContent='Disarmed';
-  document.getElementById('atToggleLabel').style.color='#6b7280';
-  fetch('/api/autotrader/stop');
-  if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
-  document.getElementById('atState').textContent='Disarmed.';
+function _atStartPoll(){
+  if(!atPollTimer) atPollTimer=setInterval(atTick,5000);
+}
+function _atMaybeClearPoll(){
+  if(!atArmedBuy&&!atArmedSell&&atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
 }
 
 function atLog(msg){
@@ -781,43 +818,62 @@ function atLog(msg){
 }
 
 async function atTick(){
-  // check if it's 9:08 and we haven't sent the pick yet
-  if(atArmed&&!atPickSent){
-    const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
-    if(ist.getHours()===9&&ist.getMinutes()>=8){
-      atPickSent=true;
-      // find top pick from current scanner data
-      const rows=Object.values(scData);
-      const picks=rows.filter(r=>{
-        const t=r.ticks||[]; if(t.length<3) return false;
-        const last=t[t.length-1];
-        return last.chgPct>0&&last.ratio>=1.2;
-      }).sort((a,b)=>{
-        const sa=scScore(a), sb=scScore(b);
-        return sb.total-sa.total;
-      });
-      if(picks.length){
-        const p=picks[0], last=p.ticks[p.ticks.length-1];
-        const sc=scScore(p);
-        const qty=parseInt(document.getElementById('atQty').value)||1;
-        atLog(`Pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}% qty=${qty}`);
-        const r=await (await fetch('/api/autotrader/pick',{method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct,quantity:qty})})).json();
-        document.getElementById('atState').textContent=`Pick locked: ${p.sym} × ${qty} — buying at 9:15`;
-      } else {
-        atLog('No qualifying pick at 9:08 — no trade today.');
-        document.getElementById('atState').textContent='No qualifying pick.';
-        atArmed=false;
-      }
+  const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  const past908=ist.getHours()===9&&ist.getMinutes()>=8;
+  const rows=Object.values(scData);
+
+  if(past908&&atArmedBuy&&!atPickSentBuy){
+    atPickSentBuy=true;
+    const picks=rows.filter(r=>{
+      const t=r.ticks||[]; if(t.length<3) return false;
+      const last=t[t.length-1];
+      return last.chgPct>0&&last.ratio>=1.2;
+    }).sort((a,b)=>scScore(b).total-scScore(a).total);
+    if(picks.length){
+      const p=picks[0], last=p.ticks[p.ticks.length-1], sc=scScore(p);
+      const qty=parseInt(document.getElementById('atQtyBuy').value)||1;
+      atLog(`BUY pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=+${last.chgPct.toFixed(2)}% qty=${qty}`);
+      await fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct,quantity:qty,side:'BUY'})});
+      document.getElementById('atBuyState').textContent=`Locked: ${p.sym} ×${qty} — buying at 9:15`;
+    } else {
+      atLog('BUY: no qualifying pick at 9:08.');
+      document.getElementById('atBuyState').textContent='No qualifying pick.';
+      atDisarmBuy();
     }
   }
+
+  if(past908&&atArmedSell&&!atPickSentSell){
+    atPickSentSell=true;
+    const losers=rows.filter(r=>{
+      const t=r.ticks||[]; if(t.length<3) return false;
+      const last=t[t.length-1];
+      return last.chgPct<-0.1&&last.ratio<0.85;
+    }).sort((a,b)=>a.ticks[a.ticks.length-1].chgPct-b.ticks[b.ticks.length-1].chgPct);
+    if(losers.length){
+      const p=losers[0], last=p.ticks[p.ticks.length-1];
+      const qty=parseInt(document.getElementById('atQtySell').value)||1;
+      atLog(`SELL pick: ${p.sym} ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}% qty=${qty}`);
+      await fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:p.sym,score:0,ratio:last.ratio,chgPct:last.chgPct,quantity:qty,side:'SELL'})});
+      document.getElementById('atSellState').textContent=`Locked: ${p.sym} ×${qty} — shorting at 9:15`;
+    } else {
+      atLog('SELL: no qualifying loser at 9:08.');
+      document.getElementById('atSellState').textContent='No qualifying loser.';
+      atDisarmSell();
+    }
+  }
+
   // poll server status
   try{
     const d=await (await fetch('/api/autotrader/status')).json();
-    if(d.log&&d.log.length) document.getElementById('atLog').textContent=d.log.join('\n');
-    document.getElementById('atState').textContent=`State: ${d.state}`+(d.pick?` · ${d.pick.symbol}`:'')+
-      (d.fill_price?` · filled ₹${d.fill_price}`:'');
+    const b=d.buy, s=d.sell;
+    if(b) document.getElementById('atBuyState').textContent=
+      `${b.state}`+(b.pick?` · ${b.pick.symbol}`:'')+( b.fill_price?` · ₹${b.fill_price}`:'');
+    if(s) document.getElementById('atSellState').textContent=
+      `${s.state}`+(s.pick?` · ${s.pick.symbol}`:'')+( s.fill_price?` · ₹${s.fill_price}`:'');
+    const log=[...(b&&b.log?b.log:[]),...(s&&s.log?s.log:[])].slice(-8);
+    if(log.length) document.getElementById('atLog').textContent=log.join('\n');
   }catch(e){}
 }
 

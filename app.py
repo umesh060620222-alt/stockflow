@@ -86,7 +86,27 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
+        from urllib.parse import urlparse, parse_qs
         path = self.path.split("?", 1)[0]          # ignore query string when routing
+        # Kite redirects back here as a GET with ?request_token=...
+        if path == "/api/auth/token":
+            qs = parse_qs(urlparse(self.path).query)
+            rt = qs.get("request_token", [""])[0]
+            if not rt:
+                page = b"<html><body><h2>Missing request_token</h2></body></html>"
+                return self._send(400, page, "text/html")
+            try:
+                user = Z.exchange_token(rt)
+                page = (
+                    b"<html><head><meta http-equiv='refresh' content='1;url=/'></head>"
+                    b"<body style='font-family:sans-serif;padding:40px'>"
+                    b"<h2 style='color:#16a34a'>&#10003; Zerodha connected!</h2>"
+                    b"<p>Redirecting to app&hellip;</p></body></html>"
+                )
+                return self._send(200, page, "text/html")
+            except Exception as e:
+                page = f"<html><body><h2>Auth failed: {e}</h2></body></html>".encode()
+                return self._send(200, page, "text/html")
         if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
                 html = f.read().decode("utf-8")
@@ -202,11 +222,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/autotrader/status":
             import autotrader as AT
-            return self._send(200, dumps(AT.TRADER.status()))
+            return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path == "/api/autotrader/stop":
             import autotrader as AT
-            AT.TRADER.stop()
-            return self._send(200, dumps(AT.TRADER.status()))
+            from urllib.parse import urlparse, parse_qs
+            side = parse_qs(urlparse(self.path).query).get("side", ["both"])[0]
+            if side in ("buy",  "both"): AT.BUYER.stop()
+            if side in ("sell", "both"): AT.SELLER.stop()
+            return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path == "/api/scanner/tokens":
             import scanner as SC
             try:
@@ -243,20 +266,21 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(LIVE.state()))
         if path == "/api/autotrader/pick":
             import autotrader as AT
-            sym = body.get("symbol", "").strip().upper()
-            score = int(body.get("score", 0))
-            ratio = float(body.get("ratio", 0))
-            chg   = float(body.get("chgPct", 0))
-            qty   = max(1, int(body.get("quantity", 1)))
+            sym  = body.get("symbol", "").strip().upper()
+            score= int(body.get("score", 0))
+            ratio= float(body.get("ratio", 0))
+            chg  = float(body.get("chgPct", 0))
+            qty  = max(1, int(body.get("quantity", 1)))
+            side = body.get("side", "BUY").upper()
             if not sym:
                 return self._send(200, dumps({"error": "symbol required"}))
-            AT.TRADER.pick = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg, "quantity": qty}
-            AT.TRADER.state = "locked"
-            AT.TRADER._log(f"PICK RECEIVED from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}% qty={qty}")
-            # start the wait-and-order thread
-            t = threading.Thread(target=AT.TRADER._wait_and_order, daemon=True)
+            trader = AT.SELLER if side == "SELL" else AT.BUYER
+            trader.pick  = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg, "quantity": qty, "side": side}
+            trader.state = "locked"
+            trader._log(f"PICK [{side}] from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}% qty={qty}")
+            t = threading.Thread(target=trader._wait_and_order, daemon=True)
             t.start()
-            return self._send(200, dumps(AT.TRADER.status()))
+            return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:
