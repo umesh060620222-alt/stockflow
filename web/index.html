@@ -595,19 +595,20 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
     dsEl.style.color=dSell<=0?'#4ade80':'#f87171';
     // absorption: sell wall shrinking while price holds/rises = buyers eating asks
     const absorb=document.getElementById('lvAbsorb');
-    if(dSell<0&&chgPct>=0){ absorb.textContent='Buying'; absorb.style.color='#4ade80'; }
-    else if(dBuy<0&&chgPct<=0){ absorb.textContent='Selling'; absorb.style.color='#f87171'; }
+    if(dSell<0&&chgPct>0){ absorb.textContent='Buying'; absorb.style.color='#4ade80'; }
+    else if(dBuy<0&&chgPct<0){ absorb.textContent='Selling'; absorb.style.color='#f87171'; }
     else{ absorb.textContent='Neutral'; absorb.style.color='#9ca3af'; }
   }
   const rowDBuy=lvPrevBuy!==null?buyVol-lvPrevBuy:null;
   const rowDSell=lvPrevSell!==null?sellVol-lvPrevSell:null;
   lvPrevBuy=buyVol; lvPrevSell=sellVol;
+  if(rowDBuy===0&&rowDSell===0) return;  // skip duplicate ticks with no change
   const tb=document.getElementById('lvBody');
   const tr=document.createElement('tr');
   let sig='—', sigCol='#9ca3af';
   if(rowDBuy!==null&&rowDSell!==null){
-    if(rowDSell<0&&chgPct>=0){sig='Buying';sigCol='#4ade80';}
-    else if(rowDBuy<0&&chgPct<=0){sig='Selling';sigCol='#f87171';}
+    if(rowDSell<0&&chgPct>0){sig='Buying';sigCol='#4ade80';}
+    else if(rowDBuy<0&&chgPct<0){sig='Selling';sigCol='#f87171';}
     else{sig='Neutral';}
   }
   tr.innerHTML=`<td>${ts}</td><td>₹${ltp.toFixed(2)}</td>`+
