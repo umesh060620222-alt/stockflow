@@ -690,14 +690,33 @@ function scScore(d){
   return {total,ratioNow,ratioTrend,absorbTicks:absorptions,priceUp,sellGrowing};
 }
 
+function scScoreSell(d){
+  const t=d.ticks; if(t.length<3) return {total:0};
+  const ratioNow=t[t.length-1].ratio;
+  const ratios=t.map(x=>x.ratio);
+  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b<arr[i-1]?1:-1),0); // trending DOWN
+  const ratioScore=ratioNow<=1?2:ratioTrend>0?1:0;   // low ratio = sell dominant
+  const dBuys=t.filter(x=>x.dBuy!==null).map(x=>x.dBuy);
+  const dSells=t.filter(x=>x.dSell!==null).map(x=>x.dSell);
+  const sellScore=dSells.filter(x=>x>0).length>dSells.length*0.6?1:0;  // sell orders growing
+  const buyScore=dBuys.filter(x=>x<0).length>dBuys.length*0.6?1:0;     // buy orders shrinking
+  const distribs=t.filter(x=>x.dBuy!==null&&x.dBuy<0&&x.chgPct<0).length; // distribution: buy wall shrinking + price falling
+  const absorbScore=distribs>=3?2:distribs>=1?1:0;
+  const prices=t.slice(-6).map(x=>x.ltp);
+  const priceDown=prices[prices.length-1]<prices[0];
+  const priceScore=priceDown?1:0;
+  const total=ratioScore+sellScore+buyScore+absorbScore+priceScore;
+  return {total,ratioNow,priceDown,sellGrowing:sellScore===1};
+}
+
 function scRender(){
   const rows=Object.values(scData);
   if(!rows.length) return;
   rows.forEach(r=>{
     r.chgPct=r.prevClose?((r.ltp-r.prevClose)/r.prevClose*100):0;
     r.ratio=r.sellVol>0?r.buyVol/r.sellVol:0;
-    const s=scScore(r); r._sc=s;
-    r._total=s.total||0;
+    const s=scScore(r); r._sc=s; r._total=s.total||0;
+    const ss=scScoreSell(r); r._scSell=ss; r._totalSell=ss.total||0;
   });
   rows.sort((a,b)=>{
     const aUp=a.chgPct>0.1&&a.ratio>=1.2, bUp=b.chgPct>0.1&&b.ratio>=1.2;
@@ -732,24 +751,25 @@ function scRender(){
   } else { top5El.innerHTML=''; }
 
   // losers — sellers dominant, price falling, high conviction
-  const losers=rows.filter(r=>r.chgPct<-0.1&&r.ratio<=0.8).slice(-5).reverse();
+  const losers=rows.filter(r=>r.chgPct<-0.1&&r.ratio<=0.8)
+    .sort((a,b)=>b._totalSell-a._totalSell||a.chgPct-b.chgPct).slice(0,5);
   scTopLoser=losers[0]||null;
   if(losers.length){
     top5El.style.display='';
     top5El.innerHTML+='<div style="font-size:11px;color:#6b7280;margin-top:10px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Top Losers</div>'+
       losers.map(r=>{
-        const s=r._sc||{};
+        const ss=r._scSell||{};
         const reasons=[];
-        if(s.ratioNow<1) reasons.push(`ratio ${r.ratio.toFixed(2)}`);
-        if(s.absorbTicks>=2) reasons.push(`${s.absorbTicks} sell ticks`);
-        if(!s.priceUp) reasons.push('price ↓');
+        if(ss.ratioNow<=1) reasons.push(`ratio ${r.ratio.toFixed(2)}`);
+        if(ss.sellGrowing) reasons.push('sell wall ↑');
+        if(ss.priceDown) reasons.push('price ↓');
         return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;`+
           `background:#1a1c20;border-radius:8px;border-left:3px solid #f87171;cursor:pointer"`+
           ` onclick="document.getElementById('lvSymInput').value='${r.sym}';showTab('live');lvStart()">`+
           `<span style="font-size:16px;font-weight:700;color:#fbbf24;min-width:100px">${r.sym}</span>`+
           `<span style="color:#f87171">${r.chgPct.toFixed(2)}%</span>`+
           `<span style="color:#a78bfa">B/S ${r.ratio.toFixed(2)}</span>`+
-          `<span style="color:#f87171;font-weight:600">${s.total||0}/7</span>`+
+          `<span style="color:#f87171;font-weight:600">${ss.total||0}/7</span>`+
           `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
           `</div>`;
       }).join('');
