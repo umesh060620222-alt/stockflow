@@ -570,7 +570,7 @@ function render(d){
 // ── Live ──────────────────────────────────────────────────────────────────────
 let LIVE_TIMER=null;
 // ── Scanner ───────────────────────────────────────────────────────────
-let scWs=null, scTokenMap={}, scData={}, scRenderTimer=null;
+let scWs=null, scTokenMap={}, scData={}, scRenderTimer=null, scTopPick=null, scTopLoser=null;
 
 function scFmt(n){
   if(n>=1e7) return (n/1e7).toFixed(1)+'Cr';
@@ -692,6 +692,7 @@ function scRender(){
   // ── Top 5 picks + Bottom 5 losers ────────────────────────────────────
   const top5El=document.getElementById('scTop5');
   const picks=rows.filter(r=>r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
+  scTopPick=picks[0]||null;
   if(picks.length){
     top5El.style.display='';
     top5El.innerHTML='<div style="font-size:11px;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Top Picks</div>'+
@@ -716,6 +717,7 @@ function scRender(){
 
   // losers — sellers dominant, price falling, high conviction
   const losers=rows.filter(r=>r.chgPct<-0.1&&r.ratio<=0.8).slice(-5).reverse();
+  scTopLoser=losers[0]||null;
   if(losers.length){
     top5El.style.display='';
     top5El.innerHTML+='<div style="font-size:11px;color:#6b7280;margin-top:10px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Top Losers</div>'+
@@ -824,42 +826,32 @@ async function atTick(){
 
   if(past908&&atArmedBuy&&!atPickSentBuy){
     atPickSentBuy=true;
-    const picks=rows.filter(r=>{
-      const t=r.ticks||[]; if(t.length<3) return false;
-      const last=t[t.length-1];
-      return last.chgPct>0&&last.ratio>=1.2;
-    }).sort((a,b)=>scScore(b).total-scScore(a).total);
-    if(picks.length){
-      const p=picks[0], last=p.ticks[p.ticks.length-1], sc=scScore(p);
-      const qty=parseInt(document.getElementById('atQtyBuy').value)||1;
-      atLog(`BUY pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=+${last.chgPct.toFixed(2)}% qty=${qty}`);
+    const p=scTopPick;
+    if(p){
+      const last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtyBuy').value)||1;
+      atLog(`BUY #1: ${p.sym} chg=+${last.chgPct.toFixed(2)}% ratio=${last.ratio.toFixed(2)} qty=${qty}`);
       await fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct,quantity:qty,side:'BUY'})});
+        body:JSON.stringify({symbol:p.sym,score:p._total||0,ratio:last.ratio,chgPct:last.chgPct,quantity:qty,side:'BUY'})});
       document.getElementById('atBuyState').textContent=`Locked: ${p.sym} ×${qty} — buying at 9:15`;
     } else {
-      atLog('BUY: no qualifying pick at 9:08.');
-      document.getElementById('atBuyState').textContent='No qualifying pick.';
+      atLog('BUY: no gainer in Top Picks list at 9:08.');
+      document.getElementById('atBuyState').textContent='No top pick.';
       atDisarmBuy();
     }
   }
 
   if(past908&&atArmedSell&&!atPickSentSell){
     atPickSentSell=true;
-    const losers=rows.filter(r=>{
-      const t=r.ticks||[]; if(t.length<3) return false;
-      const last=t[t.length-1];
-      return last.chgPct<-0.1&&last.ratio<0.85;
-    }).sort((a,b)=>a.ticks[a.ticks.length-1].chgPct-b.ticks[b.ticks.length-1].chgPct);
-    if(losers.length){
-      const p=losers[0], last=p.ticks[p.ticks.length-1];
-      const qty=parseInt(document.getElementById('atQtySell').value)||1;
-      atLog(`SELL pick: ${p.sym} ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}% qty=${qty}`);
+    const p=scTopLoser;
+    if(p){
+      const last=p.ticks[p.ticks.length-1], qty=parseInt(document.getElementById('atQtySell').value)||1;
+      atLog(`SELL #1: ${p.sym} chg=${last.chgPct.toFixed(2)}% ratio=${last.ratio.toFixed(2)} qty=${qty}`);
       await fetch('/api/autotrader/pick',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({symbol:p.sym,score:0,ratio:last.ratio,chgPct:last.chgPct,quantity:qty,side:'SELL'})});
       document.getElementById('atSellState').textContent=`Locked: ${p.sym} ×${qty} — shorting at 9:15`;
     } else {
-      atLog('SELL: no qualifying loser at 9:08.');
-      document.getElementById('atSellState').textContent='No qualifying loser.';
+      atLog('SELL: no loser in Top Losers list at 9:08.');
+      document.getElementById('atSellState').textContent='No top loser.';
       atDisarmSell();
     }
   }
