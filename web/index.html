@@ -560,8 +560,8 @@ async function scLoad(){
     const d=await (await fetch('/api/scanner')).json();
     if(d.error){
       const isAuth=d.error.toLowerCase().includes('token')||d.error.toLowerCase().includes('login');
-      document.getElementById('scError').innerHTML=isAuth
-        ? 'Not logged in to Zerodha. <button class="btn btn-yellow" style="padding:3px 10px;font-size:12px" onclick="zLogin()">Connect Zerodha</button>'
+      document.getElementById('scError').textContent=isAuth
+        ? 'Not logged in — use the Connect Zerodha button at the top of the page first.'
         : d.error;
       document.getElementById('scError').style.display=''; return; }
     const tb=document.getElementById('scBody');
