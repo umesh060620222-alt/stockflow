@@ -540,11 +540,22 @@ async function lvStart(){
   }
   lvLog('Resolving token…');
   const resp=await fetch('/api/instruments/NSE');
-  const csv=await resp.text(), lines=csv.trim().split('\n'), hdr=lines[0].split(',');
-  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol');
+  const raw=await resp.text();
+  if(raw.trim().startsWith('{')){ lvLog('Instruments unavailable — login to Zerodha first.'); return; }
+  // split on \r\n or \n, trim each line to handle CRLF
+  const lines=raw.trim().split(/\r?\n/), hdr=lines[0].split(',');
+  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name');
   lvTokenMap={};
-  for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); if(c[iSym]===sym) lvTokenMap[sym]=parseInt(c[iTok]); }
-  if(!lvTokenMap[sym]){ lvLog(`${sym} not found in NSE.`); return; }
+  let bestMatch=null;
+  for(let i=1;i<lines.length;i++){
+    const c=lines[i].trim().split(',');
+    const ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim();
+    if(ts===sym){ bestMatch={ts,tok:parseInt(c[iTok])}; break; }
+    if(!bestMatch&&(ts.startsWith(sym)||nm.includes(sym))) bestMatch={ts,tok:parseInt(c[iTok])};
+  }
+  if(!bestMatch){ lvLog(`${sym} not found in NSE.`); return; }
+  if(bestMatch.ts!==sym) lvLog(`Using ${bestMatch.ts} for ${sym}`);
+  lvTokenMap[bestMatch.ts]=bestMatch.tok;
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
   lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[];
   if(lvRecTimer) clearInterval(lvRecTimer);
@@ -789,11 +800,18 @@ async function pmResolveTokens(){
   pmLog(`Fetching instrument list…`);
   const resp=await fetch(`/api/instruments/NSE`);
   if(!resp.ok) throw new Error(`Instruments fetch failed: ${resp.status}`);
-  const csv=await resp.text(), lines=csv.trim().split('\n'), hdr=lines[0].split(',');
-  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), map={};
-  for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); map[c[iSym]]=parseInt(c[iTok]); }
-  const s=pmPickSymbol.trim().replace(/\s+/g,' ');
-  if(map[s]){ pmTokenMap={[s]:map[s]}; pmLog(`  ${s} → ${map[s]}`, 'ok'); }
+  const raw=await resp.text();
+  if(raw.trim().startsWith('{')) throw new Error('Instruments unavailable — login to Zerodha first.');
+  const lines=raw.trim().split(/\r?\n/), hdr=lines[0].split(',');
+  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name');
+  const s=pmPickSymbol.trim().replace(/\s+/g,' ').toUpperCase();
+  let best=null;
+  for(let i=1;i<lines.length;i++){
+    const c=lines[i].trim().split(','), ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim();
+    if(ts===s){ best={ts,tok:parseInt(c[iTok])}; break; }
+    if(!best&&(ts.startsWith(s)||nm.includes(s))) best={ts,tok:parseInt(c[iTok])};
+  }
+  if(best){ pmTokenMap={[best.ts]:best.tok}; pmLog(`  ${s} → ${best.ts} (${best.tok})`, 'ok'); }
   else{ pmLog(`  ${s} not found in NSE`, 'err'); pmTokenMap={}; }
 }
 
