@@ -677,6 +677,8 @@ async function lvStart(){
   lvTokenMap[bestMatch.ts]=bestMatch.tok;
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
   lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[];
+  document.getElementById('lvBody').innerHTML='';
+  document.getElementById('lvSignal').style.display='none';
   if(lvRecTimer) clearInterval(lvRecTimer);
   lvRecTimer=setInterval(lvRecommend,10000);
   document.getElementById('lvCards').style.display='';
