@@ -339,6 +339,13 @@ function showTab(id){
   document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.getElementById('tab-'+id).classList.add('active');
+  if(id==='scanner'){
+    scLoad();
+    if(scTimer) clearInterval(scTimer);
+    scTimer=setInterval(scLoad,60000);
+  } else {
+    if(scTimer){ clearInterval(scTimer); scTimer=null; }
+  }
 }
 showTab('recommend');
 
@@ -551,7 +558,11 @@ async function scLoad(){
   document.getElementById('scError').style.display='none';
   try{
     const d=await (await fetch('/api/scanner')).json();
-    if(d.error){ document.getElementById('scError').textContent=d.error;
+    if(d.error){
+      const isAuth=d.error.toLowerCase().includes('token')||d.error.toLowerCase().includes('login');
+      document.getElementById('scError').innerHTML=isAuth
+        ? 'Not logged in to Zerodha. <button class="btn btn-yellow" style="padding:3px 10px;font-size:12px" onclick="zLogin()">Connect Zerodha</button>'
+        : d.error;
       document.getElementById('scError').style.display=''; return; }
     const tb=document.getElementById('scBody');
     tb.innerHTML='';
@@ -593,18 +604,7 @@ async function scLoad(){
   }
 }
 
-// auto-refresh when scanner tab is active
-const _origShowTab=showTab;
-function showTab(id){
-  _origShowTab(id);
-  if(id==='scanner'){
-    scLoad();
-    if(scTimer) clearInterval(scTimer);
-    scTimer=setInterval(scLoad,60000);
-  } else {
-    if(scTimer){ clearInterval(scTimer); scTimer=null; }
-  }
-}
+// scanner auto-refresh hook — called from showTab below
 // ── end Scanner ────────────────────────────────────────────────────────
 
 // ── Volume Watch (live tab) ────────────────────────────────────────────
