@@ -732,8 +732,10 @@ function lvRecommend(){
   const total=ratioScore+buyScore+sellScore+absorbScore+priceScore; // max 7
 
   let rec, col, bg;
-  if(total>=5&&priceUp){      rec='STRONG BUY'; col='#4ade80'; bg='rgba(74,222,128,0.08)'; }
-  else if(total>=4&&priceUp){ rec='BUY';         col='#4ade80'; bg='rgba(74,222,128,0.06)'; }
+  // sell wall growing = new sellers piling in → veto strong signals
+  const sellGrowing=sellScore===0&&dSells.filter(x=>x>0).length>dSells.length*0.6;
+  if(total>=5&&priceUp&&!sellGrowing){      rec='STRONG BUY'; col='#4ade80'; bg='rgba(74,222,128,0.08)'; }
+  else if(total>=4&&priceUp&&!sellGrowing){ rec='BUY';         col='#4ade80'; bg='rgba(74,222,128,0.06)'; }
   else if(total>=3){ rec='WATCH';       col='#fbbf24'; bg='rgba(251,191,36,0.06)'; }
   else if(total>=2){ rec='WAIT';        col='#f87171'; bg='rgba(248,113,113,0.06)'; }
   else{              rec='AVOID';       col='#f87171'; bg='rgba(248,113,113,0.08)'; }
