@@ -175,6 +175,20 @@
       <div class="pm-card sell"><div class="lbl">ΔSell (tick)</div><div class="val" id="lvDSell">—</div></div>
       <div class="pm-card"><div class="lbl">Absorption</div><div class="val" id="lvAbsorb">—</div></div>
     </div>
+    <div id="lvSignal" style="display:none;margin-bottom:12px;padding:12px 16px;border-radius:8px;border:1px solid #374151">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span id="lvRecBadge" style="font-size:18px;font-weight:700"></span>
+        <span id="lvRecReason" style="font-size:12px;color:#9ca3af"></span>
+        <span style="font-size:11px;color:#4b5563;margin-left:auto" id="lvRecTime"></span>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:12px">
+        <span>Ratio trend: <b id="lvScRatio">—</b></span>
+        <span>Buy wall: <b id="lvScBuy">—</b></span>
+        <span>Sell wall: <b id="lvScSell">—</b></span>
+        <span>Absorption: <b id="lvScAbsorb">—</b></span>
+        <span>Price: <b id="lvScPrice">—</b></span>
+      </div>
+    </div>
     <div id="lvLog" style="font-size:12px;color:#6b7280;margin-bottom:8px"></div>
     <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
       <table id="lvTbl" style="display:none;font-size:12px">
@@ -503,6 +517,7 @@ function render(d){
 let LIVE_TIMER=null;
 // ── Volume Watch (live tab) ────────────────────────────────────────────
 let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[], lvPrevBuy=null, lvPrevSell=null;
+let lvTicks=[], lvRecTimer=null;
 
 function lvLog(msg){ const el=document.getElementById('lvLog'); el.textContent=msg; }
 
@@ -531,7 +546,9 @@ async function lvStart(){
   for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); if(c[iSym]===sym) lvTokenMap[sym]=parseInt(c[iTok]); }
   if(!lvTokenMap[sym]){ lvLog(`${sym} not found in NSE.`); return; }
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
-  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null;
+  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[];
+  if(lvRecTimer) clearInterval(lvRecTimer);
+  lvRecTimer=setInterval(lvRecommend,10000);
   document.getElementById('lvCards').style.display='';
   document.getElementById('lvTbl').style.display='';
   document.getElementById('lvStopBtn').disabled=false;
@@ -550,8 +567,68 @@ async function lvStart(){
 
 function lvStop(){
   if(lvWs){ lvWs.close(); lvWs=null; }
+  if(lvRecTimer){ clearInterval(lvRecTimer); lvRecTimer=null; }
   document.getElementById('lvStopBtn').disabled=true;
   lvLog('');
+}
+
+function lvRecommend(){
+  const t=lvTicks.slice(-20); // last 20 valid ticks
+  if(t.length<5) return;
+  document.getElementById('lvSignal').style.display='';
+
+  // 1. ratio trend: is ratio rising over last ticks?
+  const ratios=t.map(x=>x.ratio);
+  const ratioNow=ratios[ratios.length-1];
+  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b>arr[i-1]?1:-1),0); // +ve = rising
+  const ratioScore=ratioNow>=1?2:ratioTrend>0?1:0;
+
+  // 2. buy wall: is ΔBuy positive more often than not?
+  const dBuys=t.slice(-10).filter(x=>x.dBuy!==null).map(x=>x.dBuy);
+  const buyGrowing=dBuys.filter(x=>x>0).length, buyScore=buyGrowing>dBuys.length*0.6?1:0;
+
+  // 3. sell wall: is ΔSell shrinking (negative)?
+  const dSells=t.slice(-10).filter(x=>x.dSell!==null).map(x=>x.dSell);
+  const sellShrinking=dSells.filter(x=>x<0).length, sellScore=sellShrinking>dSells.length*0.6?1:0;
+
+  // 4. absorption: sell shrinking while price up
+  const absorptions=t.slice(-10).filter(x=>x.dSell!==null&&x.dSell<0&&x.chgPct>0).length;
+  const absorbScore=absorptions>=2?2:absorptions>=1?1:0;
+
+  // 5. price trend: LTP rising over last 5 ticks?
+  const prices=t.slice(-6).map(x=>x.ltp);
+  const priceUp=prices[prices.length-1]>prices[0], priceScore=priceUp?1:0;
+
+  const total=ratioScore+buyScore+sellScore+absorbScore+priceScore; // max 7
+
+  let rec, col, bg;
+  if(total>=5){      rec='STRONG BUY'; col='#4ade80'; bg='rgba(74,222,128,0.08)'; }
+  else if(total>=4){ rec='BUY';         col='#4ade80'; bg='rgba(74,222,128,0.06)'; }
+  else if(total>=3){ rec='WATCH';       col='#fbbf24'; bg='rgba(251,191,36,0.06)'; }
+  else if(total>=2){ rec='WAIT';        col='#f87171'; bg='rgba(248,113,113,0.06)'; }
+  else{              rec='AVOID';       col='#f87171'; bg='rgba(248,113,113,0.08)'; }
+
+  const reasons=[];
+  if(ratioNow>=1)      reasons.push(`ratio ${ratioNow.toFixed(2)} (buyers leading)`);
+  else if(ratioTrend>0) reasons.push(`ratio rising (${ratioNow.toFixed(2)})`);
+  else                  reasons.push(`ratio ${ratioNow.toFixed(2)} (sellers dominant)`);
+  if(sellScore)         reasons.push('sell wall shrinking');
+  if(absorbScore>=2)    reasons.push('strong absorption');
+  else if(absorbScore)  reasons.push('some absorption');
+  if(priceUp)           reasons.push('price trending up');
+  else                  reasons.push('price trending down');
+
+  const el=document.getElementById('lvSignal');
+  el.style.background=bg; el.style.borderColor=col+'44';
+  document.getElementById('lvRecBadge').style.color=col;
+  document.getElementById('lvRecBadge').textContent=rec;
+  document.getElementById('lvRecReason').textContent=reasons.join(' · ');
+  document.getElementById('lvRecTime').textContent='Updated '+new Date().toLocaleTimeString('en-IN');
+  document.getElementById('lvScRatio').textContent=(ratioScore===2?'↑↑':ratioScore===1?'↑':'↓');
+  document.getElementById('lvScBuy').textContent=(buyScore?'growing':'flat');
+  document.getElementById('lvScSell').textContent=(sellScore?'shrinking':'growing');
+  document.getElementById('lvScAbsorb').textContent=absorptions+' ticks';
+  document.getElementById('lvScPrice').textContent=(priceUp?'↑':'↓');
 }
 
 function lvParseBinary(buf){
@@ -603,6 +680,8 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
   const rowDSell=lvPrevSell!==null?sellVol-lvPrevSell:null;
   lvPrevBuy=buyVol; lvPrevSell=sellVol;
   if(rowDBuy===0&&rowDSell===0) return;  // skip duplicate ticks with no change
+  lvTicks.push({ltp,buyVol,sellVol,ratio,chgPct,dBuy:rowDBuy,dSell:rowDSell});
+  if(lvTicks.length>100) lvTicks.shift();
   const tb=document.getElementById('lvBody');
   const tr=document.createElement('tr');
   let sig='—', sigCol='#9ca3af';
