@@ -703,30 +703,30 @@ function lvStop(){
 }
 
 function lvRecommend(){
-  const t=lvTicks.slice(-20); // last 20 valid ticks
+  const t=lvTicks.slice(-50); // last 50 valid ticks
   if(t.length<5) return;
   document.getElementById('lvSignal').style.display='';
 
   // 1. ratio trend: is ratio rising over last ticks?
   const ratios=t.map(x=>x.ratio);
   const ratioNow=ratios[ratios.length-1];
-  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b>arr[i-1]?1:-1),0); // +ve = rising
+  const ratioTrend=ratios.slice(-10).reduce((a,b,i,arr)=>i===0?0:a+(b>arr[i-1]?1:-1),0); // +ve = rising
   const ratioScore=ratioNow>=1?2:ratioTrend>0?1:0;
 
   // 2. buy wall: is ΔBuy positive more often than not?
-  const dBuys=t.slice(-10).filter(x=>x.dBuy!==null).map(x=>x.dBuy);
+  const dBuys=t.slice(-20).filter(x=>x.dBuy!==null).map(x=>x.dBuy);
   const buyGrowing=dBuys.filter(x=>x>0).length, buyScore=buyGrowing>dBuys.length*0.6?1:0;
 
   // 3. sell wall: is ΔSell shrinking (negative)?
-  const dSells=t.slice(-10).filter(x=>x.dSell!==null).map(x=>x.dSell);
+  const dSells=t.slice(-20).filter(x=>x.dSell!==null).map(x=>x.dSell);
   const sellShrinking=dSells.filter(x=>x<0).length, sellScore=sellShrinking>dSells.length*0.6?1:0;
 
-  // 4. absorption: sell shrinking while price up
-  const absorptions=t.slice(-10).filter(x=>x.dSell!==null&&x.dSell<0&&x.chgPct>0).length;
-  const absorbScore=absorptions>=2?2:absorptions>=1?1:0;
+  // 4. absorption: sell shrinking while price up — wider window catches gradual accumulation
+  const absorptions=t.slice(-30).filter(x=>x.dSell!==null&&x.dSell<0&&x.chgPct>0).length;
+  const absorbScore=absorptions>=4?2:absorptions>=2?1:0;
 
-  // 5. price trend: LTP rising over last 5 ticks?
-  const prices=t.slice(-6).map(x=>x.ltp);
+  // 5. price trend: LTP rising over last 10 ticks?
+  const prices=t.slice(-11).map(x=>x.ltp);
   const priceUp=prices[prices.length-1]>prices[0], priceScore=priceUp?1:0;
 
   const total=ratioScore+buyScore+sellScore+absorbScore+priceScore; // max 7
@@ -813,7 +813,7 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
   lvPrevBuy=buyVol; lvPrevSell=sellVol;
   if(rowDBuy===0&&rowDSell===0) return;  // skip duplicate ticks with no change
   lvTicks.push({ltp,buyVol,sellVol,ratio,chgPct,dBuy:rowDBuy,dSell:rowDSell});
-  if(lvTicks.length>100) lvTicks.shift();
+  if(lvTicks.length>200) lvTicks.shift();
   const tb=document.getElementById('lvBody');
   const tr=document.createElement('tr');
   let sig='—', sigCol='#9ca3af';
