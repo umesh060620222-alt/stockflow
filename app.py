@@ -200,6 +200,17 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_india_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/scanner/tokens":
+            import scanner as SC
+            try:
+                kc = Z.kite()
+                rows = kc.instruments("NSE")
+                wl = set(SC.WATCHLIST)
+                result = {r["tradingsymbol"]: r["instrument_token"]
+                          for r in rows if r["tradingsymbol"] in wl}
+                return self._send(200, dumps(result))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/premarket/dummy":
             return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))

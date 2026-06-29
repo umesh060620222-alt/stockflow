@@ -96,6 +96,7 @@
     <button onclick="showTab('recommend')" id="tab-recommend">Recommend</button>
     <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
     <button onclick="showTab('live')"      id="tab-live">Live</button>
+    <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
     <button onclick="showTab('global')"    id="tab-global">Global News</button>
@@ -194,6 +195,24 @@
       <table id="lvTbl" style="display:none;font-size:12px">
         <thead><tr><th>Time</th><th>LTP</th><th>Chg%</th><th>Buy Vol</th><th>Sell Vol</th><th>Ratio</th><th>ΔBuy</th><th>ΔSell</th><th>Signal</th></tr></thead>
         <tbody id="lvBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="scanner" class="tab-panel card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <b style="font-size:14px">Live Volume Scanner</b>
+      <button class="btn btn-yellow" onclick="scConnect()">Connect</button>
+      <button class="btn btn-danger" id="scStopBtn" onclick="scDisconnect()" disabled>Disconnect</button>
+      <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
+    </div>
+    <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+      <table id="scTbl" style="display:none;font-size:13px">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg%</th>
+          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Signal</th>
+        </tr></thead>
+        <tbody id="scBody"></tbody>
       </table>
     </div>
   </div>
@@ -515,6 +534,104 @@ function render(d){
 
 // ── Live ──────────────────────────────────────────────────────────────────────
 let LIVE_TIMER=null;
+// ── Scanner ───────────────────────────────────────────────────────────
+let scWs=null, scTokenMap={}, scData={}, scRenderTimer=null;
+
+function scFmt(n){
+  if(n>=1e7) return (n/1e7).toFixed(1)+'Cr';
+  if(n>=1e5) return (n/1e5).toFixed(1)+'L';
+  if(n>=1e3) return (n/1e3).toFixed(0)+'K';
+  return String(n);
+}
+
+async function scConnect(){
+  scDisconnect();
+  if(!pmCreds){
+    const d=await (await fetch('/api/auth/credentials')).json();
+    if(d.error){ document.getElementById('scStatus').textContent='Not logged in — connect Zerodha first.'; return; }
+    pmCreds=d;
+  }
+  document.getElementById('scStatus').textContent='Resolving tokens…';
+  const td=await (await fetch('/api/scanner/tokens')).json();
+  if(td.error){ document.getElementById('scStatus').textContent=td.error; return; }
+  scTokenMap={};
+  Object.entries(td).forEach(([sym,tok])=>scTokenMap[tok]=sym);
+  const tokens=Object.keys(scTokenMap).map(Number);
+  document.getElementById('scStatus').textContent=`Connecting (${tokens.length} stocks)…`;
+  const url=`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
+  scWs=new WebSocket(url); scWs.binaryType='arraybuffer';
+  scWs.onopen=()=>{
+    scWs.send(JSON.stringify({a:'subscribe',v:tokens}));
+    scWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
+    document.getElementById('scStatus').textContent=`Live · ${tokens.length} stocks`;
+    document.getElementById('scStopBtn').disabled=false;
+    document.getElementById('scTbl').style.display='';
+    scRenderTimer=setInterval(scRender,2000);
+  };
+  scWs.onmessage=e=>{ if(typeof e.data!=='string') scParseBinary(e.data); };
+  scWs.onerror=()=>{ document.getElementById('scStatus').textContent='WS error.'; };
+  scWs.onclose=()=>{ document.getElementById('scStatus').textContent='Disconnected.';
+    document.getElementById('scStopBtn').disabled=true;
+    if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; } };
+}
+
+function scDisconnect(){
+  if(scWs){ scWs.close(); scWs=null; }
+  if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; }
+  document.getElementById('scStopBtn').disabled=true;
+}
+
+function scParseBinary(buf){
+  const view=new DataView(buf); if(buf.byteLength<2) return;
+  const n=view.getInt16(0); let off=2;
+  for(let i=0;i<n;i++){
+    if(off+2>buf.byteLength) break;
+    const len=view.getInt16(off); off+=2;
+    if(len<8){ off+=len; continue; }
+    const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
+    const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
+    const prevClose=(!scData[token]?.prevClose&&len>=44)?view.getInt32(off+40)/100:null;
+    const sym=scTokenMap[token]; if(!sym){ off+=len; continue; }
+    if(!scData[token]) scData[token]={sym,ltp,prevClose:prevClose||ltp,buyVol,sellVol};
+    else{
+      scData[token].ltp=ltp; scData[token].buyVol=buyVol; scData[token].sellVol=sellVol;
+      if(prevClose&&prevClose>0) scData[token].prevClose=prevClose;
+    }
+    off+=len;
+  }
+}
+
+function scRender(){
+  const rows=Object.values(scData);
+  if(!rows.length) return;
+  rows.forEach(r=>{
+    r.chgPct=r.prevClose?((r.ltp-r.prevClose)/r.prevClose*100):0;
+    r.ratio=r.sellVol>0?r.buyVol/r.sellVol:0;
+    r.score=Math.abs(r.chgPct)*(r.ratio>1?r.ratio:r.ratio>0?1/r.ratio:1);
+  });
+  rows.sort((a,b)=>b.score-a.score);
+  const tb=document.getElementById('scBody'); tb.innerHTML='';
+  rows.forEach(r=>{
+    const up=r.chgPct>0.1, dn=r.chgPct<-0.1;
+    const chgCol=up?'#4ade80':dn?'#f87171':'#9ca3af';
+    const sig=up&&r.ratio>=1.2?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
+    const sigCol=sig==='Buying'?'#4ade80':sig==='Selling'?'#f87171':'#9ca3af';
+    const tr=document.createElement('tr');
+    tr.style.cursor='pointer'; tr.title='Click to watch in Live tab';
+    tr.onclick=()=>{ document.getElementById('lvSymInput').value=r.sym; showTab('live'); lvStart(); };
+    tr.innerHTML=
+      `<td style="font-weight:600;color:#fbbf24">${r.sym}</td>`+
+      `<td>₹${r.ltp.toFixed(2)}</td>`+
+      `<td style="color:${chgCol}">${r.chgPct>=0?'+':''}${r.chgPct.toFixed(2)}%</td>`+
+      `<td class="buy-col">${scFmt(r.buyVol)}</td>`+
+      `<td class="sell-col">${scFmt(r.sellVol)}</td>`+
+      `<td style="color:${r.ratio>=1?'#4ade80':'#f87171'}">${r.ratio.toFixed(2)}</td>`+
+      `<td style="color:${sigCol};font-weight:600">${sig}</td>`;
+    tb.appendChild(tr);
+  });
+}
+// ── end Scanner ────────────────────────────────────────────────────────
+
 // ── Volume Watch (live tab) ────────────────────────────────────────────
 let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[], lvPrevBuy=null, lvPrevSell=null;
 let lvTicks=[], lvRecTimer=null;
