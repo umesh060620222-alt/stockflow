@@ -650,7 +650,7 @@ function scRender(){
     return b._total-a._total||b.ratio-a.ratio;
   });
 
-  // ── Top 5 picks ──────────────────────────────────────────────────────
+  // ── Top 5 picks + Bottom 5 losers ────────────────────────────────────
   const top5El=document.getElementById('scTop5');
   const picks=rows.filter(r=>r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
   if(picks.length){
@@ -673,7 +673,30 @@ function scRender(){
           `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
           `</div>`;
       }).join('');
-  } else { top5El.style.display='none'; }
+  } else { top5El.innerHTML=''; }
+
+  // losers — sellers dominant, price falling, high conviction
+  const losers=rows.filter(r=>r.chgPct<-0.1&&r.ratio<=0.8).slice(-5).reverse();
+  if(losers.length){
+    top5El.style.display='';
+    top5El.innerHTML+='<div style="font-size:11px;color:#6b7280;margin-top:10px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Top Losers</div>'+
+      losers.map(r=>{
+        const s=r._sc||{};
+        const reasons=[];
+        if(s.ratioNow<1) reasons.push(`ratio ${r.ratio.toFixed(2)}`);
+        if(s.absorbTicks>=2) reasons.push(`${s.absorbTicks} sell ticks`);
+        if(!s.priceUp) reasons.push('price ↓');
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;`+
+          `background:#1a1c20;border-radius:8px;border-left:3px solid #f87171;cursor:pointer"`+
+          ` onclick="document.getElementById('lvSymInput').value='${r.sym}';showTab('live');lvStart()">`+
+          `<span style="font-size:16px;font-weight:700;color:#fbbf24;min-width:100px">${r.sym}</span>`+
+          `<span style="color:#f87171">${r.chgPct.toFixed(2)}%</span>`+
+          `<span style="color:#a78bfa">B/S ${r.ratio.toFixed(2)}</span>`+
+          `<span style="color:#f87171;font-weight:600">${s.total||0}/7</span>`+
+          `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
+          `</div>`;
+      }).join('');
+  }
 
   // ── Full table ────────────────────────────────────────────────────────
   const tb=document.getElementById('scBody'); tb.innerHTML='';
