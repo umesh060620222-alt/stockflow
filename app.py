@@ -247,11 +247,12 @@ class H(BaseHTTPRequestHandler):
             score = int(body.get("score", 0))
             ratio = float(body.get("ratio", 0))
             chg   = float(body.get("chgPct", 0))
+            qty   = max(1, int(body.get("quantity", 1)))
             if not sym:
                 return self._send(200, dumps({"error": "symbol required"}))
-            AT.TRADER.pick = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg}
+            AT.TRADER.pick = {"symbol": sym, "score": score, "ratio": ratio, "chgPct": chg, "quantity": qty}
             AT.TRADER.state = "locked"
-            AT.TRADER._log(f"PICK RECEIVED from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}%")
+            AT.TRADER._log(f"PICK RECEIVED from scanner: {sym} score={score}/7 ratio={ratio} chg={chg:+.2f}% qty={qty}")
             # start the wait-and-order thread
             t = threading.Thread(target=AT.TRADER._wait_and_order, daemon=True)
             t.start()

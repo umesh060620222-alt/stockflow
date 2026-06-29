@@ -120,14 +120,15 @@ class AutoTrader:
         import zerodha as Z
         kc = Z.kite()
         sym = self.pick["symbol"]
-        self._log(f"Placing MARKET BUY for 1 share of {sym}…")
+        qty = self.pick.get("quantity", 1)
+        self._log(f"Placing MARKET BUY for {qty} share(s) of {sym}…")
         try:
             oid = kc.place_order(
                 variety   = kc.VARIETY_REGULAR,
                 exchange  = kc.EXCHANGE_NSE,
                 tradingsymbol = sym,
                 transaction_type = kc.TRANSACTION_TYPE_BUY,
-                quantity  = 1,
+                quantity  = qty,
                 product   = kc.PRODUCT_MIS,      # intraday
                 order_type= kc.ORDER_TYPE_MARKET,
             )
@@ -166,7 +167,7 @@ class AutoTrader:
                 exchange  = kc.EXCHANGE_NSE,
                 tradingsymbol = sym,
                 transaction_type = kc.TRANSACTION_TYPE_SELL,
-                quantity  = 1,
+                quantity  = qty,
                 product   = kc.PRODUCT_MIS,
                 order_type= kc.ORDER_TYPE_SLM,
                 trigger_price = sl_trigger,

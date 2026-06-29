@@ -207,13 +207,22 @@
       <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
     <div id="atPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <b style="font-size:13px">Auto Trader</b>
-        <button class="btn btn-yellow" style="padding:4px 10px;font-size:12px" onclick="atArm()">Arm (picks at 9:08, buys at 9:15)</button>
-        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="atStop()">Stop</button>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+          <div id="atToggleWrap" onclick="atToggle()" style="width:40px;height:22px;border-radius:11px;background:#374151;position:relative;transition:background .2s;cursor:pointer">
+            <div id="atToggleKnob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s"></div>
+          </div>
+          <span id="atToggleLabel" style="font-size:12px;color:#6b7280">Disarmed</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9ca3af">
+          Shares:
+          <input id="atQty" type="number" min="1" max="9999" value="1"
+            style="width:60px;padding:2px 6px;background:#111;border:1px solid #374151;border-radius:4px;color:#f3f4f6;font-size:12px;text-align:center">
+        </label>
         <span id="atState" style="font-size:12px;color:#6b7280"></span>
       </div>
-      <div id="atLog" style="font-size:11px;color:#6b7280;margin-top:8px;max-height:80px;overflow-y:auto"></div>
+      <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;margin-top:8px;max-height:80px;overflow-y:auto;white-space:pre-wrap"></div>
     </div>
     <div id="scTop5" style="display:none;margin-bottom:14px"></div>
     <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
@@ -584,7 +593,7 @@ async function scConnect(){
   scWs.onclose=()=>{ document.getElementById('scStatus').textContent='Disconnected.';
     document.getElementById('scStopBtn').disabled=true;
     document.getElementById('atPanel').style.display='none';
-    atArmed=false;
+    if(atArmed) atDisarm();
     if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
     if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; } };
 }
@@ -738,21 +747,32 @@ function scRender(){
 // ── Auto Trader ───────────────────────────────────────────────────────
 let atArmed=false, atPickSent=false, atPollTimer=null;
 
-function atArm(){
-  atArmed=true; atPickSent=false;
-  document.getElementById('atPanel').style.display='';
-  document.getElementById('atState').textContent='Armed — will pick at 9:08, buy at 9:15';
-  document.getElementById('atLog').textContent='';
-  if(atPollTimer) clearInterval(atPollTimer);
-  atPollTimer=setInterval(atTick,5000);
-  atLog('Armed. Scanner must be connected.');
+function atToggle(){
+  if(atArmed) atDisarm(); else atArm();
 }
 
-function atStop(){
+function atArm(){
+  atArmed=true; atPickSent=false;
+  document.getElementById('atToggleWrap').style.background='#16a34a';
+  document.getElementById('atToggleKnob').style.left='20px';
+  document.getElementById('atToggleLabel').textContent='Armed';
+  document.getElementById('atToggleLabel').style.color='#4ade80';
+  document.getElementById('atLog').textContent='';
+  document.getElementById('atState').textContent='Watching — will pick at 9:08, buy at 9:15';
+  if(atPollTimer) clearInterval(atPollTimer);
+  atPollTimer=setInterval(atTick,5000);
+  atLog('Armed. Qty='+document.getElementById('atQty').value);
+}
+
+function atDisarm(){
   atArmed=false;
+  document.getElementById('atToggleWrap').style.background='#374151';
+  document.getElementById('atToggleKnob').style.left='2px';
+  document.getElementById('atToggleLabel').textContent='Disarmed';
+  document.getElementById('atToggleLabel').style.color='#6b7280';
   fetch('/api/autotrader/stop');
   if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
-  document.getElementById('atState').textContent='Stopped.';
+  document.getElementById('atState').textContent='Disarmed.';
 }
 
 function atLog(msg){
@@ -779,11 +799,12 @@ async function atTick(){
       if(picks.length){
         const p=picks[0], last=p.ticks[p.ticks.length-1];
         const sc=scScore(p);
-        atLog(`Pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}%`);
+        const qty=parseInt(document.getElementById('atQty').value)||1;
+        atLog(`Pick: ${p.sym} score=${sc.total}/7 ratio=${last.ratio.toFixed(2)} chg=${last.chgPct.toFixed(2)}% qty=${qty}`);
         const r=await (await fetch('/api/autotrader/pick',{method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct})})).json();
-        document.getElementById('atState').textContent=`Pick locked: ${p.sym} — buying at 9:15`;
+          body:JSON.stringify({symbol:p.sym,score:sc.total,ratio:last.ratio,chgPct:last.chgPct,quantity:qty})})).json();
+        document.getElementById('atState').textContent=`Pick locked: ${p.sym} × ${qty} — buying at 9:15`;
       } else {
         atLog('No qualifying pick at 9:08 — no trade today.');
         document.getElementById('atState').textContent='No qualifying pick.';
