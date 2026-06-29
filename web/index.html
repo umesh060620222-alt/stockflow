@@ -599,23 +599,23 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
     else if(dBuy<0&&chgPct<=0){ absorb.textContent='Selling'; absorb.style.color='#f87171'; }
     else{ absorb.textContent='Neutral'; absorb.style.color='#9ca3af'; }
   }
+  const rowDBuy=lvPrevBuy!==null?buyVol-lvPrevBuy:null;
+  const rowDSell=lvPrevSell!==null?sellVol-lvPrevSell:null;
   lvPrevBuy=buyVol; lvPrevSell=sellVol;
   const tb=document.getElementById('lvBody');
   const tr=document.createElement('tr');
-  const dBuy=lvPrevBuy!==null?buyVol-lvPrevBuy:null;
-  const dSell=lvPrevSell!==null?sellVol-lvPrevSell:null;
   let sig='—', sigCol='#9ca3af';
-  if(dBuy!==null&&dSell!==null){
-    if(dSell<0&&chgPct>=0){sig='Buying';sigCol='#4ade80';}
-    else if(dBuy<0&&chgPct<=0){sig='Selling';sigCol='#f87171';}
+  if(rowDBuy!==null&&rowDSell!==null){
+    if(rowDSell<0&&chgPct>=0){sig='Buying';sigCol='#4ade80';}
+    else if(rowDBuy<0&&chgPct<=0){sig='Selling';sigCol='#f87171';}
     else{sig='Neutral';}
   }
   tr.innerHTML=`<td>${ts}</td><td>₹${ltp.toFixed(2)}</td>`+
     `<td style="color:${chgPct>=0?'#4ade80':'#f87171'}">${chgPct>=0?'+':''}${chgPct.toFixed(2)}%</td>`+
     `<td class="buy-col">${lvFmt(buyVol)}</td><td class="sell-col">${lvFmt(sellVol)}</td>`+
     `<td style="color:${ratio>=1?'#4ade80':'#f87171'}">${ratio.toFixed(2)}</td>`+
-    `<td style="color:${dBuy>=0?'#4ade80':'#f87171'}">${dBuy!==null?(dBuy>=0?'+':'')+lvFmt(dBuy):'—'}</td>`+
-    `<td style="color:${dSell<=0?'#4ade80':'#f87171'}">${dSell!==null?(dSell>=0?'+':'')+lvFmt(dSell):'—'}</td>`+
+    `<td style="color:${rowDBuy>=0?'#4ade80':'#f87171'}">${rowDBuy!==null?(rowDBuy>=0?'+':'')+lvFmt(rowDBuy):'—'}</td>`+
+    `<td style="color:${rowDSell<=0?'#4ade80':'#f87171'}">${rowDSell!==null?(rowDSell>=0?'+':'')+lvFmt(rowDSell):'—'}</td>`+
     `<td style="color:${sigCol}">${sig}</td>`;
   tb.insertBefore(tr,tb.firstChild);
   if(tb.children.length>100) tb.removeChild(tb.lastChild);
