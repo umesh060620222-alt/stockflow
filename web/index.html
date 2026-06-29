@@ -372,7 +372,6 @@
   <div id="journal" class="tab-panel" style="margin-top:14px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <b style="font-size:16px">Scanner Journal</b>
-      <button class="btn btn-yellow" onclick="jEnrich()" style="font-size:12px;padding:4px 10px">Enrich Today</button>
       <button class="btn" onclick="jLoad()" style="font-size:12px;padding:4px 10px">Refresh</button>
       <span id="jStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
@@ -662,7 +661,7 @@ function scParseBinary(buf){
       if(dBuy!==0||dSell!==0){
         d.ticks.push({ltp,buyVol,sellVol,chgPct,
           ratio:sellVol>0?buyVol/sellVol:0,dBuy,dSell});
-        if(d.ticks.length>20) d.ticks.shift();
+        if(d.ticks.length>1800) d.ticks.shift();
       }
       d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
       d.prevBuy=buyVol; d.prevSell=sellVol;
@@ -783,7 +782,7 @@ function scRender(){
 // ── Auto Trader ───────────────────────────────────────────────────────
 let atArmedBuy=false, atPickSentBuy=false;
 let atArmedSell=false, atPickSentSell=false;
-let atSnapshotSaved=false;
+let atSnapshotSaved=false, at945Saved=false;
 let atPollTimer=null;
 
 function _atSetToggle(wrap,knob,lbl,on,color){
@@ -844,16 +843,26 @@ async function atTick(){
 
   if(past908&&(atArmedBuy||atArmedSell)&&!atSnapshotSaved){
     atSnapshotSaved=true;
-    const snap=Object.values(scData).map(r=>{
-      const last=r.ticks&&r.ticks.length?r.ticks[r.ticks.length-1]:{};
-      const sc=r.ticks&&r.ticks.length>=3?scScore(r):{total:0};
-      return {sym:r.sym,score:sc.total,ratio:+(last.ratio||0).toFixed(2),
-              chgPct:+(last.chgPct||0).toFixed(2),ltp:+(last.ltp||0).toFixed(2),
-              prevClose:+(r.prevClose||0).toFixed(2)};
-    });
+    const raw=Object.values(scData).map(r=>({
+      sym:r.sym, prevClose:r.prevClose||0, ticks:r.ticks||[]
+    }));
     fetch('/api/scanner/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({stocks:snap,top_pick:scTopPick?scTopPick.sym:null,
+      body:JSON.stringify({premarket_ticks:raw,top_pick:scTopPick?scTopPick.sym:null,
                            top_loser:scTopLoser?scTopLoser.sym:null})});
+    atLog('9:08 pre-market snapshot saved.');
+  }
+
+  // 9:45 — save raw ticks for all stocks
+  const past945=ist.getHours()>9||(ist.getHours()===9&&ist.getMinutes()>=45);
+  if(past945&&!at945Saved&&Object.keys(scData).length){
+    at945Saved=true;
+    const raw=Object.values(scData).map(r=>({
+      sym:r.sym, prevClose:r.prevClose||0, ticks:r.ticks||[]
+    }));
+    fetch('/api/scanner/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_ticks:raw,top_pick:scTopPick?scTopPick.sym:null,
+                           top_loser:scTopLoser?scTopLoser.sym:null})});
+    atLog('9:45 session snapshot saved.');
   }
 
   if(past908&&atArmedBuy&&!atPickSentBuy){
@@ -937,73 +946,27 @@ async function jLoad(){
   }catch(e){ document.getElementById('jStatus').textContent='Error: '+e; }
 }
 
-async function jEnrich(){
-  document.getElementById('jStatus').textContent='Enriching…';
-  try{
-    await fetch('/api/scanner/enrich');
-    jLoad();
-  }catch(e){ document.getElementById('jStatus').textContent='Error: '+e; }
-}
-
 function jRender(days){
   if(!days.length){
-    document.getElementById('jBody').innerHTML='<p style="color:#6b7280">No data yet — scanner saves a snapshot automatically at 9:08 when armed.</p>';
+    document.getElementById('jBody').innerHTML='<p style="color:#6b7280">No data yet — arm the scanner tomorrow; snapshots save automatically at 9:08 and 9:45.</p>';
     return;
   }
   let html='';
   for(const d of days){
-    const r=d.results||{};
     const pick=d.top_pick, loser=d.top_loser;
-    const pr=r[pick]||{}, lr=r[loser]||{};
-    const pnlColor=p=>p==null?'#6b7280':p>=0?'#4ade80':'#f87171';
-    const fmtPnl=p=>p==null?'—':(p>=0?'+':'')+p.toFixed(2)+'%';
-    const allStocks=(d.stocks||[]).slice().sort((a,b)=>b.chgPct-a.chgPct);
-    const enriched=Object.keys(r).length>0;
-
-    html+=`<div style="background:#1a1c20;border-radius:8px;border:1px solid #374151;padding:14px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+    html+=`<div style="background:#1a1c20;border-radius:8px;border:1px solid #374151;padding:14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <b style="font-size:14px">${d.date}</b>
-        ${pick?`<span style="color:#4ade80;font-size:12px">BUY: <b>${pick}</b>${pr.open?` open ₹${pr.open}`:''} <span style="color:${pnlColor(pr.pnl_pct)}">${fmtPnl(pr.pnl_pct)}</span></span>`:''}
-        ${loser?`<span style="color:#f87171;font-size:12px">SELL: <b>${loser}</b>${lr.open?` open ₹${lr.open}`:''} <span style="color:${pnlColor(lr.pnl_pct?-lr.pnl_pct:null)}">${lr.pnl_pct!=null?fmtPnl(-lr.pnl_pct):'—'}</span></span>`:''}
-        ${!enriched?`<button class="btn" style="font-size:11px;padding:2px 8px" onclick="jEnrichDate('${d.date}')">Enrich</button>`:''}
-      </div>
-      <div style="overflow-x:auto">
-        <table style="font-size:12px;width:100%">
-          <thead><tr style="color:#6b7280">
-            <th style="text-align:left">Symbol</th><th>Score</th><th>Gap%</th><th>Ratio</th>
-            ${enriched?'<th>Open</th><th>30m</th><th>P&L</th>':''}
-          </tr></thead>
-          <tbody>
-          ${allStocks.map(s=>{
-            const res=r[s.sym]||{};
-            const isBuy=s.sym===pick, isSell=s.sym===loser;
-            const rowColor=isBuy?'rgba(74,222,128,.08)':isSell?'rgba(248,113,113,.08)':'';
-            const buyPnl=res.pnl_pct; const sellPnl=res.pnl_pct!=null?-res.pnl_pct:null;
-            const pnl=isSell?sellPnl:buyPnl;
-            return `<tr style="background:${rowColor}">
-              <td>${isBuy?'▲ ':''}${isSell?'▼ ':''}${s.sym}</td>
-              <td style="text-align:center">${s.score}/7</td>
-              <td style="text-align:right;color:${s.chgPct>=0?'#4ade80':'#f87171'}">${s.chgPct>=0?'+':''}${s.chgPct.toFixed(2)}%</td>
-              <td style="text-align:right">${s.ratio.toFixed(2)}</td>
-              ${enriched?`<td style="text-align:right">${res.open?'₹'+res.open:'—'}</td>
-              <td style="text-align:right">${res.price_30m?'₹'+res.price_30m:'—'}</td>
-              <td style="text-align:right;color:${pnlColor(pnl)}">${fmtPnl(pnl)}</td>`:''}
-            </tr>`;
-          }).join('')}
-          </tbody>
-        </table>
+        ${pick?`<span style="color:#4ade80;font-size:12px">▲ BUY: <b>${pick}</b></span>`:''}
+        ${loser?`<span style="color:#f87171;font-size:12px">▼ SELL: <b>${loser}</b></span>`:''}
+        <span style="font-size:11px;color:#6b7280">
+          Pre-market: ${d.has_premarket?`✓ ${d.premarket_count} stocks`:'pending'} &nbsp;|&nbsp;
+          Session 9:45: ${d.has_session?`✓ ${d.session_count} stocks`:'pending'}
+        </span>
       </div>
     </div>`;
   }
   document.getElementById('jBody').innerHTML=html;
-}
-
-async function jEnrichDate(date){
-  document.getElementById('jStatus').textContent=`Enriching ${date}…`;
-  try{
-    await fetch(`/api/scanner/enrich?date=${date}`);
-    jLoad();
-  }catch(e){ document.getElementById('jStatus').textContent='Error: '+e; }
 }
 // ── end Scanner ────────────────────────────────────────────────────────
 

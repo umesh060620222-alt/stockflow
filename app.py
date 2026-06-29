@@ -305,11 +305,8 @@ class H(BaseHTTPRequestHandler):
             import data_store as DS, datetime as _dt
             ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
             date_str = str(ist.date())
-            stocks    = body.get("stocks", [])
-            top_pick  = body.get("top_pick")
-            top_loser = body.get("top_loser")
-            saved = DS.save_snapshot(date_str, stocks, top_pick, top_loser)
-            return self._send(200, dumps({"saved": True, "date": date_str, "count": len(stocks)}))
+            result = DS.save_snapshot(date_str, body)
+            return self._send(200, dumps(result))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:

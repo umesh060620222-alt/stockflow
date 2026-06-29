@@ -11,22 +11,20 @@ def _path(date_str: str) -> str:
     return os.path.join(DATA_DIR, f"scanner_{date_str}.json")
 
 
-def save_snapshot(date_str: str, stocks: list, top_pick: str | None, top_loser: str | None) -> dict:
+def save_snapshot(date_str: str, body: dict) -> dict:
+    """Merge body into the day's file. Body may contain premarket_ticks, session_ticks, top_pick, top_loser."""
     path = _path(date_str)
     existing = {}
     if os.path.exists(path):
         with open(path) as f:
             existing = json.load(f)
-    existing.update({
-        "date":      date_str,
-        "stocks":    stocks,
-        "top_pick":  top_pick,
-        "top_loser": top_loser,
-        "results":   existing.get("results", {}),
-    })
+    existing["date"] = date_str
+    for key in ("premarket_ticks", "session_ticks", "top_pick", "top_loser"):
+        if key in body:
+            existing[key] = body[key]
     with open(path, "w") as f:
-        json.dump(existing, f, indent=2)
-    return existing
+        json.dump(existing, f)          # no indent — raw ticks make files large
+    return {"saved": True, "keys": list(existing.keys())}
 
 
 def enrich(date_str: str, kite) -> dict:
@@ -78,7 +76,17 @@ def get_history() -> list:
     for fname in files[:30]:
         try:
             with open(os.path.join(DATA_DIR, fname)) as f:
-                out.append(json.load(f))
+                d = json.load(f)
+            # return summary only — raw ticks are too large for the history list
+            out.append({
+                "date":      d.get("date"),
+                "top_pick":  d.get("top_pick"),
+                "top_loser": d.get("top_loser"),
+                "has_premarket": "premarket_ticks" in d,
+                "has_session":   "session_ticks" in d,
+                "premarket_count": len(d.get("premarket_ticks", [])),
+                "session_count":   len(d.get("session_ticks", [])),
+            })
         except Exception:
             pass
     return out
