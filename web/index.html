@@ -171,11 +171,14 @@
       <div class="pm-card buy"><div class="lbl">Buy Vol</div><div class="val" id="lvBuy">—</div></div>
       <div class="pm-card sell"><div class="lbl">Sell Vol</div><div class="val" id="lvSell">—</div></div>
       <div class="pm-card ratio"><div class="lbl">Buy/Sell</div><div class="val" id="lvRatio">—</div></div>
+      <div class="pm-card buy"><div class="lbl">ΔBuy (tick)</div><div class="val" id="lvDBuy">—</div></div>
+      <div class="pm-card sell"><div class="lbl">ΔSell (tick)</div><div class="val" id="lvDSell">—</div></div>
+      <div class="pm-card"><div class="lbl">Absorption</div><div class="val" id="lvAbsorb">—</div></div>
     </div>
     <div id="lvLog" style="font-size:12px;color:#6b7280;margin-bottom:8px"></div>
     <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
       <table id="lvTbl" style="display:none;font-size:12px">
-        <thead><tr><th>Time</th><th>LTP</th><th>Chg%</th><th>Buy Vol</th><th>Sell Vol</th><th>Ratio</th><th>Total</th></tr></thead>
+        <thead><tr><th>Time</th><th>LTP</th><th>Chg%</th><th>Buy Vol</th><th>Sell Vol</th><th>Ratio</th><th>ΔBuy</th><th>ΔSell</th><th>Signal</th></tr></thead>
         <tbody id="lvBody"></tbody>
       </table>
     </div>
@@ -499,7 +502,7 @@ function render(d){
 // ── Live ──────────────────────────────────────────────────────────────────────
 let LIVE_TIMER=null;
 // ── Volume Watch (live tab) ────────────────────────────────────────────
-let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[];
+let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[], lvPrevBuy=null, lvPrevSell=null;
 
 function lvLog(msg){ const el=document.getElementById('lvLog'); el.textContent=msg; }
 
@@ -528,7 +531,7 @@ async function lvStart(){
   for(let i=1;i<lines.length;i++){ const c=lines[i].split(','); if(c[iSym]===sym) lvTokenMap[sym]=parseInt(c[iTok]); }
   if(!lvTokenMap[sym]){ lvLog(`${sym} not found in NSE.`); return; }
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
-  lvBasePrice=null; lvRows=[];
+  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null;
   document.getElementById('lvCards').style.display='';
   document.getElementById('lvTbl').style.display='';
   document.getElementById('lvStopBtn').disabled=false;
@@ -581,13 +584,39 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
   const ratioEl=document.getElementById('lvRatio');
   ratioEl.textContent=ratio.toFixed(2);
   ratioEl.style.color=ratio>=1?'#4ade80':'#f87171';
+  // delta: change in order book vs prev tick
+  if(lvPrevBuy!==null){
+    const dBuy=buyVol-lvPrevBuy, dSell=sellVol-lvPrevSell;
+    const dbEl=document.getElementById('lvDBuy');
+    dbEl.textContent=(dBuy>=0?'+':'')+lvFmt(dBuy);
+    dbEl.style.color=dBuy>=0?'#4ade80':'#f87171';
+    const dsEl=document.getElementById('lvDSell');
+    dsEl.textContent=(dSell>=0?'+':'')+lvFmt(dSell);
+    dsEl.style.color=dSell<=0?'#4ade80':'#f87171';
+    // absorption: sell wall shrinking while price holds/rises = buyers eating asks
+    const absorb=document.getElementById('lvAbsorb');
+    if(dSell<0&&chgPct>=0){ absorb.textContent='Buying'; absorb.style.color='#4ade80'; }
+    else if(dBuy<0&&chgPct<=0){ absorb.textContent='Selling'; absorb.style.color='#f87171'; }
+    else{ absorb.textContent='Neutral'; absorb.style.color='#9ca3af'; }
+  }
+  lvPrevBuy=buyVol; lvPrevSell=sellVol;
   const tb=document.getElementById('lvBody');
   const tr=document.createElement('tr');
+  const dBuy=lvPrevBuy!==null?buyVol-lvPrevBuy:null;
+  const dSell=lvPrevSell!==null?sellVol-lvPrevSell:null;
+  let sig='—', sigCol='#9ca3af';
+  if(dBuy!==null&&dSell!==null){
+    if(dSell<0&&chgPct>=0){sig='Buying';sigCol='#4ade80';}
+    else if(dBuy<0&&chgPct<=0){sig='Selling';sigCol='#f87171';}
+    else{sig='Neutral';}
+  }
   tr.innerHTML=`<td>${ts}</td><td>₹${ltp.toFixed(2)}</td>`+
     `<td style="color:${chgPct>=0?'#4ade80':'#f87171'}">${chgPct>=0?'+':''}${chgPct.toFixed(2)}%</td>`+
     `<td class="buy-col">${lvFmt(buyVol)}</td><td class="sell-col">${lvFmt(sellVol)}</td>`+
     `<td style="color:${ratio>=1?'#4ade80':'#f87171'}">${ratio.toFixed(2)}</td>`+
-    `<td>${lvFmt(buyVol+sellVol)}</td>`;
+    `<td style="color:${dBuy>=0?'#4ade80':'#f87171'}">${dBuy!==null?(dBuy>=0?'+':'')+lvFmt(dBuy):'—'}</td>`+
+    `<td style="color:${dSell<=0?'#4ade80':'#f87171'}">${dSell!==null?(dSell>=0?'+':'')+lvFmt(dSell):'—'}</td>`+
+    `<td style="color:${sigCol}">${sig}</td>`;
   tb.insertBefore(tr,tb.firstChild);
   if(tb.children.length>100) tb.removeChild(tb.lastChild);
 }
