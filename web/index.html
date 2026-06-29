@@ -206,11 +206,12 @@
       <button class="btn btn-danger" id="scStopBtn" onclick="scDisconnect()" disabled>Disconnect</button>
       <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
-    <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+    <div id="scTop5" style="display:none;margin-bottom:14px"></div>
+    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
       <table id="scTbl" style="display:none;font-size:13px">
         <thead><tr>
           <th>Symbol</th><th>LTP</th><th>Chg%</th>
-          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Signal</th>
+          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Score</th><th>Signal</th>
         </tr></thead>
         <tbody id="scBody"></tbody>
       </table>
@@ -589,16 +590,49 @@ function scParseBinary(buf){
     const len=view.getInt16(off); off+=2;
     if(len<8){ off+=len; continue; }
     const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
-    const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
-    const prevClose=(!scData[token]?.prevClose&&len>=44)?view.getInt32(off+40)/100:null;
     const sym=scTokenMap[token]; if(!sym){ off+=len; continue; }
-    if(!scData[token]) scData[token]={sym,ltp,prevClose:prevClose||ltp,buyVol,sellVol};
-    else{
-      scData[token].ltp=ltp; scData[token].buyVol=buyVol; scData[token].sellVol=sellVol;
-      if(prevClose&&prevClose>0) scData[token].prevClose=prevClose;
+    const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
+    if(!scData[token]){
+      const pc=len>=44?view.getInt32(off+40)/100:ltp;
+      scData[token]={sym,ltp,prevClose:pc||ltp,buyVol,sellVol,prevBuy:null,prevSell:null,ticks:[]};
+    } else {
+      const d=scData[token];
+      if(len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) d.prevClose=pc; }
+      // sanity: skip wrong-series ticks
+      if(d.prevClose&&Math.abs(ltp-d.prevClose)/d.prevClose>0.3){ off+=len; continue; }
+      const dBuy=d.prevBuy!==null?buyVol-d.prevBuy:null;
+      const dSell=d.prevSell!==null?sellVol-d.prevSell:null;
+      const chgPct=d.prevClose?((ltp-d.prevClose)/d.prevClose*100):0;
+      if(dBuy!==0||dSell!==0){
+        d.ticks.push({ltp,buyVol,sellVol,chgPct,
+          ratio:sellVol>0?buyVol/sellVol:0,dBuy,dSell});
+        if(d.ticks.length>20) d.ticks.shift();
+      }
+      d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
+      d.prevBuy=buyVol; d.prevSell=sellVol;
     }
     off+=len;
   }
+}
+
+function scScore(d){
+  const t=d.ticks; if(t.length<3) return 0;
+  const ratioNow=t[t.length-1].ratio;
+  const ratios=t.map(x=>x.ratio);
+  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b>arr[i-1]?1:-1),0);
+  const ratioScore=ratioNow>=1?2:ratioTrend>0?1:0;
+  const dBuys=t.filter(x=>x.dBuy!==null).map(x=>x.dBuy);
+  const buyScore=dBuys.filter(x=>x>0).length>dBuys.length*0.6?1:0;
+  const dSells=t.filter(x=>x.dSell!==null).map(x=>x.dSell);
+  const sellScore=dSells.filter(x=>x<0).length>dSells.length*0.6?1:0;
+  const absorptions=t.filter(x=>x.dSell!==null&&x.dSell<0&&x.chgPct>0).length;
+  const absorbScore=absorptions>=3?2:absorptions>=1?1:0;
+  const prices=t.slice(-6).map(x=>x.ltp);
+  const priceUp=prices[prices.length-1]>prices[0];
+  const priceScore=priceUp?1:0;
+  const sellGrowing=sellScore===0&&dSells.filter(x=>x>0).length>dSells.length*0.6;
+  const total=ratioScore+buyScore+sellScore+absorbScore+priceScore;
+  return {total,ratioNow,ratioTrend,absorbTicks:absorptions,priceUp,sellGrowing};
 }
 
 function scRender(){
@@ -607,19 +641,51 @@ function scRender(){
   rows.forEach(r=>{
     r.chgPct=r.prevClose?((r.ltp-r.prevClose)/r.prevClose*100):0;
     r.ratio=r.sellVol>0?r.buyVol/r.sellVol:0;
-    r.score=Math.abs(r.chgPct)*(r.ratio>1?r.ratio:r.ratio>0?1/r.ratio:1);
+    const s=scScore(r); r._sc=s;
+    r._total=s.total||0;
   });
-  // buyers first (up + ratio>=1.2), then rising, then rest by score
-  const sigOrder=r=>r.chgPct>0.1&&r.ratio>=1.2?0:r.chgPct>0.1?1:2;
-  rows.sort((a,b)=>sigOrder(a)-sigOrder(b)||b.score-a.score);
+  rows.sort((a,b)=>{
+    const aUp=a.chgPct>0.1&&a.ratio>=1.2, bUp=b.chgPct>0.1&&b.ratio>=1.2;
+    if(aUp!==bUp) return aUp?-1:1;
+    return b._total-a._total||b.ratio-a.ratio;
+  });
+
+  // ── Top 5 picks ──────────────────────────────────────────────────────
+  const top5El=document.getElementById('scTop5');
+  const picks=rows.filter(r=>r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
+  if(picks.length){
+    top5El.style.display='';
+    top5El.innerHTML='<div style="font-size:11px;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Top Picks</div>'+
+      picks.map((r,i)=>{
+        const s=r._sc||{};
+        const reasons=[];
+        if(s.ratioNow>=1) reasons.push(`ratio ${r.ratio.toFixed(2)}`);
+        if(s.absorbTicks>=2) reasons.push(`${s.absorbTicks} absorption ticks`);
+        if(s.priceUp) reasons.push('price ↑');
+        const scoreCol=s.total>=5?'#4ade80':s.total>=3?'#fbbf24':'#9ca3af';
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;`+
+          `background:#1a1c20;border-radius:8px;border-left:3px solid ${scoreCol};cursor:pointer"`+
+          ` onclick="document.getElementById('lvSymInput').value='${r.sym}';showTab('live');lvStart()">`+
+          `<span style="font-size:16px;font-weight:700;color:#fbbf24;min-width:100px">${r.sym}</span>`+
+          `<span style="color:#4ade80">+${r.chgPct.toFixed(2)}%</span>`+
+          `<span style="color:#a78bfa">B/S ${r.ratio.toFixed(2)}</span>`+
+          `<span style="color:${scoreCol};font-weight:600">${s.total||0}/7</span>`+
+          `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
+          `</div>`;
+      }).join('');
+  } else { top5El.style.display='none'; }
+
+  // ── Full table ────────────────────────────────────────────────────────
   const tb=document.getElementById('scBody'); tb.innerHTML='';
+  document.getElementById('scTbl').style.display='';
   rows.forEach(r=>{
     const up=r.chgPct>0.1, dn=r.chgPct<-0.1;
     const chgCol=up?'#4ade80':dn?'#f87171':'#9ca3af';
-    const sig=up&&r.ratio>=1.2?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
+    const s=r._sc||{};
+    const sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
     const sigCol=sig==='Buying'?'#4ade80':sig==='Selling'?'#f87171':'#9ca3af';
     const tr=document.createElement('tr');
-    tr.style.cursor='pointer'; tr.title='Click to watch in Live tab';
+    tr.style.cursor='pointer';
     tr.onclick=()=>{ document.getElementById('lvSymInput').value=r.sym; showTab('live'); lvStart(); };
     tr.innerHTML=
       `<td style="font-weight:600;color:#fbbf24">${r.sym}</td>`+
@@ -628,6 +694,7 @@ function scRender(){
       `<td class="buy-col">${scFmt(r.buyVol)}</td>`+
       `<td class="sell-col">${scFmt(r.sellVol)}</td>`+
       `<td style="color:${r.ratio>=1?'#4ade80':'#f87171'}">${r.ratio.toFixed(2)}</td>`+
+      `<td style="color:${sigCol}">${s.total||0}/7</td>`+
       `<td style="color:${sigCol};font-weight:600">${sig}</td>`;
     tb.appendChild(tr);
   });
