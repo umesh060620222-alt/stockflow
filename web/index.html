@@ -609,7 +609,9 @@ function scRender(){
     r.ratio=r.sellVol>0?r.buyVol/r.sellVol:0;
     r.score=Math.abs(r.chgPct)*(r.ratio>1?r.ratio:r.ratio>0?1/r.ratio:1);
   });
-  rows.sort((a,b)=>b.score-a.score);
+  // buyers first (up + ratio>=1.2), then rising, then rest by score
+  const sigOrder=r=>r.chgPct>0.1&&r.ratio>=1.2?0:r.chgPct>0.1?1:2;
+  rows.sort((a,b)=>sigOrder(a)-sigOrder(b)||b.score-a.score);
   const tb=document.getElementById('scBody'); tb.innerHTML='';
   rows.forEach(r=>{
     const up=r.chgPct>0.1, dn=r.chgPct<-0.1;
