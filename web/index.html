@@ -773,11 +773,14 @@ function lvParseBinary(buf){
     const len=view.getInt16(off); off+=2;
     if(len<8){ off+=len; continue; }
     const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
+    // only process tokens we explicitly subscribed to
+    const sym=Object.keys(lvTokenMap).find(k=>lvTokenMap[k]===token);
+    if(!sym){ off+=len; continue; }
     const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
-    // ohlc.close at offset 40 = previous day's close (always present in full mode)
     if(!lvBasePrice&&len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) lvBasePrice=pc; }
     if(!lvBasePrice) lvBasePrice=ltp;
-    const sym=Object.keys(lvTokenMap).find(k=>lvTokenMap[k]===token)||`#${token}`;
+    // sanity check: ignore ticks >30% away from prevClose (wrong series)
+    if(lvBasePrice&&Math.abs(ltp-lvBasePrice)/lvBasePrice>0.3){ off+=len; continue; }
     lvOnTick({sym,ltp,buyVol,sellVol});
     off+=len;
   }
