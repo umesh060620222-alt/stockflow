@@ -663,13 +663,13 @@ async function lvStart(){
   if(raw.trim().startsWith('{')){ lvLog('Instruments unavailable — login to Zerodha first.'); return; }
   // split on \r\n or \n, trim each line to handle CRLF
   const lines=raw.trim().split(/\r?\n/), hdr=lines[0].split(',');
-  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name');
+  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name'), iType=hdr.indexOf('instrument_type');
   lvTokenMap={};
   let bestMatch=null;
   for(let i=1;i<lines.length;i++){
     const c=lines[i].trim().split(',');
-    const ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim();
-    if(ts===sym){ bestMatch={ts,tok:parseInt(c[iTok])}; break; }
+    const ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim(), itype=(c[iType]||'').trim();
+    if(ts===sym&&itype==='EQ'){ bestMatch={ts,tok:parseInt(c[iTok])}; break; }  // exact EQ match wins
     if(!bestMatch&&(ts.startsWith(sym)||nm.includes(sym))) bestMatch={ts,tok:parseInt(c[iTok])};
   }
   if(!bestMatch){ lvLog(`${sym} not found in NSE.`); return; }
@@ -922,12 +922,12 @@ async function pmResolveTokens(){
   const raw=await resp.text();
   if(raw.trim().startsWith('{')) throw new Error('Instruments unavailable — login to Zerodha first.');
   const lines=raw.trim().split(/\r?\n/), hdr=lines[0].split(',');
-  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name');
+  const iTok=hdr.indexOf('instrument_token'), iSym=hdr.indexOf('tradingsymbol'), iName=hdr.indexOf('name'), iType=hdr.indexOf('instrument_type');
   const s=pmPickSymbol.trim().replace(/\s+/g,' ').toUpperCase();
   let best=null;
   for(let i=1;i<lines.length;i++){
-    const c=lines[i].trim().split(','), ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim();
-    if(ts===s){ best={ts,tok:parseInt(c[iTok])}; break; }
+    const c=lines[i].trim().split(','), ts=(c[iSym]||'').trim(), nm=(c[iName]||'').toUpperCase().trim(), itype=(c[iType]||'').trim();
+    if(ts===s&&itype==='EQ'){ best={ts,tok:parseInt(c[iTok])}; break; }
     if(!best&&(ts.startsWith(s)||nm.includes(s))) best={ts,tok:parseInt(c[iTok])};
   }
   if(best){ pmTokenMap={[best.ts]:best.tok}; pmLog(`  ${s} → ${best.ts} (${best.tok})`, 'ok'); }

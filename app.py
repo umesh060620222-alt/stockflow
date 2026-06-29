@@ -207,7 +207,8 @@ class H(BaseHTTPRequestHandler):
                 rows = kc.instruments("NSE")
                 wl = set(SC.WATCHLIST)
                 result = {r["tradingsymbol"]: r["instrument_token"]
-                          for r in rows if r["tradingsymbol"] in wl}
+                          for r in rows if r["tradingsymbol"] in wl
+                          and r.get("instrument_type") == "EQ"}
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
