@@ -1100,7 +1100,7 @@ const ATX_SL_OPT         = 5.0;    // options SL: -5% of estimated ATM premium
 const ATX_OPT_PREM       = 0.015;  // estimated ATM weekly premium ≈ 1.5% of stock price
 const ATX_FLAT_PCT       = 0.15;   // band for FLAT vs LOSS at manual stop
 const ATX_PULLBACK_PCT   = 0.20;   // wait for 0.2% dip from signal before entering
-const ATX_PULLBACK_TICKS = 60;     // give up if no pullback after 60s
+const ATX_PULLBACK_TICKS = 300;    // give up if no pullback after 5 min
 const ATX_PULLBACK_MAX   = 1.00;   // skip if drops >1% — breakdown not pullback
 
 let atxEntries = [];
