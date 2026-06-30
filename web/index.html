@@ -373,6 +373,7 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <b style="font-size:16px">Scanner Journal</b>
       <button class="btn" onclick="jLoad()" style="font-size:12px;padding:4px 10px">Refresh</button>
+      <a href="/api/scanner/download" download class="btn" style="font-size:12px;padding:4px 10px;text-decoration:none">↓ Week</a>
       <span id="jStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
     <div id="jBody"></div>
@@ -618,6 +619,7 @@ async function scConnect(){
     document.getElementById('scStopBtn').disabled=false;
     document.getElementById('scTbl').style.display='';
     document.getElementById('atPanel').style.display='';
+    atSnapshotSaved=false;
     scRenderTimer=setInterval(scRender,2000);
   };
   scWs.onmessage=e=>{ if(typeof e.data!=='string') scParseBinary(e.data); };
@@ -726,7 +728,7 @@ function scRender(){
 
   // ── Top 5 picks + Bottom 5 losers ────────────────────────────────────
   const top5El=document.getElementById('scTop5');
-  const picks=rows.filter(r=>r.ltp>=1000&&r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
+  const picks=rows.filter(r=>r.ltp>=1000&&r.ltp<=2500&&r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
   scTopPick=picks[0]||null;
   if(picks.length){
     top5El.style.display='';
@@ -751,7 +753,7 @@ function scRender(){
   } else { top5El.innerHTML=''; }
 
   // losers — sellers dominant, price falling, high conviction
-  const losers=rows.filter(r=>r.ltp>=1000&&r.chgPct<-0.1&&r.ratio<=0.8)
+  const losers=rows.filter(r=>r.ltp>=1000&&r.ltp<=2500&&r.chgPct<-0.1&&r.ratio<=0.8)
     .sort((a,b)=>b._totalSell-a._totalSell||a.chgPct-b.chgPct).slice(0,5);
   scTopLoser=losers[0]||null;
   if(losers.length){
@@ -773,6 +775,17 @@ function scRender(){
           `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
           `</div>`;
       }).join('');
+  }
+
+  // ── 9:08 auto-snapshot (fires whenever scanner is connected, no arm needed) ──
+  const _ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  if(_ist.getHours()===9&&_ist.getMinutes()>=8&&!atSnapshotSaved){
+    atSnapshotSaved=true;
+    const raw=Object.values(scData).map(r=>({sym:r.sym,prevClose:r.prevClose||0,ticks:r.ticks||[]}));
+    fetch('/api/scanner/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({premarket_ticks:raw,top_pick:scTopPick?scTopPick.sym:null,
+                           top_loser:scTopLoser?scTopLoser.sym:null})});
+    scDisconnect();
   }
 
   // ── Full table ────────────────────────────────────────────────────────
@@ -861,17 +874,6 @@ async function atTick(){
   const past908=ist.getHours()===9&&ist.getMinutes()>=8;
   const rows=Object.values(scData);
 
-  if(past908&&(atArmedBuy||atArmedSell)&&!atSnapshotSaved){
-    atSnapshotSaved=true;
-    const raw=Object.values(scData).map(r=>({
-      sym:r.sym, prevClose:r.prevClose||0, ticks:r.ticks||[]
-    }));
-    fetch('/api/scanner/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({premarket_ticks:raw,top_pick:scTopPick?scTopPick.sym:null,
-                           top_loser:scTopLoser?scTopLoser.sym:null})});
-    atLog('9:08 snapshot saved — disconnecting scanner.');
-    scDisconnect();
-  }
 
 
   if(past908&&atArmedBuy&&!atPickSentBuy){
@@ -969,9 +971,9 @@ function jRender(days){
         ${pick?`<span style="color:#4ade80;font-size:12px">▲ BUY: <b>${pick}</b></span>`:''}
         ${loser?`<span style="color:#f87171;font-size:12px">▼ SELL: <b>${loser}</b></span>`:''}
         <span style="font-size:11px;color:#6b7280">
-          Pre-market: ${d.has_premarket?`✓ ${d.premarket_count} stocks`:'pending'} &nbsp;|&nbsp;
-          Session 9:45: ${d.has_session?`✓ ${d.session_count} stocks`:'pending'}
+          Pre-market: ${d.has_premarket?`✓ ${d.premarket_count} stocks`:'pending'}
         </span>
+        ${d.has_premarket?`<a href="/api/scanner/download?date=${d.date}" download class="btn" style="font-size:11px;padding:2px 8px;text-decoration:none">↓ JSON</a>`:''}
       </div>
     </div>`;
   }

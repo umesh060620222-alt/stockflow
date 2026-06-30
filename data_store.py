@@ -66,6 +66,28 @@ def enrich(date_str: str, kite) -> dict:
     return data
 
 
+def get_raw(date_str: str) -> dict:
+    path = _path(date_str)
+    if not os.path.exists(path):
+        return {"error": f"No data for {date_str}"}
+    with open(path) as f:
+        return json.load(f)
+
+def get_raw_week() -> list:
+    files = sorted(
+        [f for f in os.listdir(DATA_DIR)
+         if f.startswith("scanner_") and f.endswith(".json")],
+        reverse=True,
+    )
+    out = []
+    for fname in files[:5]:
+        try:
+            with open(os.path.join(DATA_DIR, fname)) as f:
+                out.append(json.load(f))
+        except Exception:
+            pass
+    return out
+
 def get_history() -> list:
     files = sorted(
         [f for f in os.listdir(DATA_DIR)

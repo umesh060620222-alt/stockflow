@@ -220,6 +220,21 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(GN.fetch_india_news()))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path.startswith("/api/scanner/download"):
+            import data_store as DS
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            date_str = qs.get("date", [""])[0]
+            raw = DS.get_raw(date_str) if date_str else DS.get_raw_week()
+            fname = f"scanner_{date_str or 'week'}.json"
+            b = json.dumps(raw, indent=2).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
         if path == "/api/scanner/history":
             import data_store as DS
             return self._send(200, dumps(DS.get_history()))
