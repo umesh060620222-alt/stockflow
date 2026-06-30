@@ -1318,9 +1318,13 @@ function atxRenderTable(){
     const isActive=isPending&&e.entry_phase==='active';
     let pnlCell='—';
     if(isWaiting&&e._liveLtp!=null){
-      const movePct=e.side==='BUY'?(e.signal_price-e._liveLtp)/e.signal_price*100:(e._liveLtp-e.signal_price)/e.signal_price*100;
-      const col=movePct>=0?'#fbbf24':'#9ca3af';
-      pnlCell='<span style="color:'+col+'">'+(movePct>=0?'−':'+')+Math.abs(movePct).toFixed(2)+'% from signal</span>';
+      // actual price change from signal (signed)
+      const actualPct=(e._liveLtp-e.signal_price)/e.signal_price*100;
+      const sign=actualPct>=0?'+':'−';
+      // yellow = moving toward entry target; gray = moving away
+      const towardsEntry=e.side==='BUY'?actualPct<0:actualPct>0;
+      const col=towardsEntry?'#fbbf24':'#9ca3af';
+      pnlCell='<span style="color:'+col+'">'+sign+Math.abs(actualPct).toFixed(2)+'% from signal</span>';
     } else if(isActive&&e._liveLtp!=null){
       const diff=e.side==='BUY'?e._liveLtp-e.entry_price:e.entry_price-e._liveLtp;
       const col=diff>=0?'#4ade80':'#f87171';
