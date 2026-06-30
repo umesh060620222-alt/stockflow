@@ -297,6 +297,36 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/option/token":
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            symbol   = params.get("symbol",  [""])[0].upper()
+            try:
+                strike = float(params.get("strike", [0])[0])
+            except Exception:
+                strike = 0.0
+            opt_type = params.get("type", ["CE"])[0].upper()
+            try:
+                kc = Z.kite()
+                instruments = kc.instruments("NFO")
+                today = datetime.date.today()
+                matches = [i for i in instruments
+                           if i.get("name") == symbol
+                           and float(i.get("strike") or 0) == strike
+                           and i.get("instrument_type") == opt_type
+                           and i.get("expiry") and i["expiry"] >= today]
+                if not matches:
+                    return self._send(404, dumps({"error": "not found"}))
+                matches.sort(key=lambda x: x["expiry"])
+                m = matches[0]
+                return self._send(200, dumps({
+                    "token":         m["instrument_token"],
+                    "tradingsymbol": m["tradingsymbol"],
+                    "expiry":        str(m["expiry"]),
+                    "lot_size":      int(m.get("lot_size") or 500),
+                }))
+            except Exception as e:
+                return self._send(500, dumps({"error": str(e)}))
         if path == "/api/premarket/dummy":
             return self._dummy_stream()
         self._send(404, dumps({"error": "not found"}))

@@ -722,6 +722,32 @@ async function scSaveAndDisconnect(){
   scDisconnect();
 }
 
+// ── Real option price tracking ────────────────────────────────────────
+const optTokenMap={};  // token → {entryId, tradingsymbol, entryLtp}
+const optData={};      // entryId → {ltp, entryLtp, tradingsymbol}
+
+async function atxFetchOptionToken(entry){
+  const strike=_atxStrike(entry.signal_price||0);
+  const type=entry.side==='BUY'?'CE':'PE';
+  try{
+    const r=await fetch('/api/option/token?symbol='+entry.symbol+'&strike='+strike+'&type='+type);
+    if(!r.ok) return;
+    const d=await r.json();
+    if(!d.token) return;
+    // subscribe token to existing WS
+    if(scWs&&scWs.readyState===1){
+      scWs.send(JSON.stringify({a:'subscribe',v:[d.token]}));
+      scWs.send(JSON.stringify({a:'mode',v:['quote',[d.token]]}));
+    }
+    optTokenMap[d.token]={entryId:entry.id,tradingsymbol:d.tradingsymbol,entryLtp:null};
+    // update lot size from real data
+    if(d.lot_size) entry.opt_lot=d.lot_size;
+    entry.opt_token=d.token;
+    entry.opt_tradingsymbol=d.tradingsymbol;
+    atLog('[OPT] subscribed '+d.tradingsymbol+' token='+d.token);
+  }catch(e){ console.warn('option token fetch',e); }
+}
+
 function scParseBinary(buf){
   const view=new DataView(buf); if(buf.byteLength<2) return;
   const n=view.getInt16(0); let off=2;
@@ -730,6 +756,13 @@ function scParseBinary(buf){
     const len=view.getInt16(off); off+=2;
     if(len<8){ off+=len; continue; }
     const token=view.getInt32(off), ltp=view.getInt32(off+4)/100;
+    // check if this is an option token
+    if(optTokenMap[token]){
+      const o=optTokenMap[token];
+      if(o.entryLtp===null) o.entryLtp=ltp;  // first tick = entry price
+      optData[o.entryId]={ltp,entryLtp:o.entryLtp,tradingsymbol:o.tradingsymbol};
+      off+=len; continue;
+    }
     const sym=scTokenMap[token]; if(!sym){ off+=len; continue; }
     const buyVol=len>=24?view.getInt32(off+20):0, sellVol=len>=28?view.getInt32(off+24):0;
     if(!scData[token]){
@@ -1201,6 +1234,7 @@ function atxStreakSignal(sym,side,streakPct,ltp){
   fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
   const pollId=setInterval(()=>atxPollWin(id),1000);
   atxPending[id]={entry,pollId};
+  atxFetchOptionToken(entry);  // subscribe real option token
   atLog('[ATX] ENTRY '+side+' '+sym+' @ ₹'+ltp.toFixed(2)+' (streak='+streakPct.toFixed(2)+'% reversed 0.1%)');
   atxRenderTable();
 }
@@ -1483,10 +1517,22 @@ function atxRenderOptions(){
     const optSym=e.symbol+' '+strike+' '+type;
     const sc=type==='CE'?'#4ade80':'#f87171';
     const isPending=!e.result&&atxPending[e.id];
-    const currentPrice=isPending&&e._liveLtp?e._liveLtp:(e.exit_price??refPrice);
-    const rawMove=refPrice?(e.side==='BUY'?(currentPrice-refPrice):(refPrice-currentPrice)):0;
-    const optMove=rawMove*0.5;  // ATM delta ≈ 0.5
-    const lotPnl=Math.round(optMove*lot*100)/100;
+    const opt=optData[e.id];  // real option data if subscribed
+    const realOpt=opt&&opt.entryLtp;
+    let optMove, lotPnl;
+    if(realOpt){
+      // real option P&L: (current - entry) × lot, direction by CE/PE
+      const optDir=type==='CE'?1:-1;
+      optMove=(opt.ltp-opt.entryLtp)*optDir;
+      lot=e.opt_lot||lot;  // use real lot size from instruments API
+      lotPnl=Math.round(optMove*lot*100)/100;
+    } else {
+      // fallback: delta estimate
+      const currentPrice=isPending&&e._liveLtp?e._liveLtp:(e.exit_price??refPrice);
+      const rawMove=refPrice?(e.side==='BUY'?(currentPrice-refPrice):(refPrice-currentPrice)):0;
+      optMove=rawMove*0.5;
+      lotPnl=Math.round(optMove*lot*100)/100;
+    }
     // SL: -5% of estimated entry premium (≈1.5% of stock price × lot)
     const entryPrem=refPrice*ATX_OPT_PREM;
     const slThreshold=-(entryPrem*lot*ATX_SL_OPT/100);
@@ -1502,7 +1548,7 @@ function atxRenderOptions(){
       +'<td style="padding:6px 8px;color:#6b7280">'+expiry+'</td>'
       +'<td style="padding:6px 8px;color:#a78bfa">'+lot+'</td>'
       +'<td style="padding:6px 8px;color:'+moveCol+'">'+sign+'₹'+optMove.toFixed(2)
-        +(optSlHit?' ⚠':'')+'</td>'
+        +(optSlHit?' ⚠':'')+(realOpt?' •':'~')+'</td>'
       +'<td style="padding:6px 8px;font-weight:700;color:'+moveCol+'">'+sign+'₹'+lotPnl.toFixed(0)+'</td>'
       +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+optResult+'</td>'
       +'</tr>';
