@@ -1094,14 +1094,25 @@ function jRender(days){
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
 const ATX_EXIT_MS   = 5*60*1000;
-const ATX_WIN_PCT        = 0.50;   // target: exit at +0.5%
-const ATX_SL_EQ          = 0.50;   // equity SL: exit at -0.5%
-const ATX_SL_OPT         = 5.0;    // options SL: -5% of estimated ATM premium
-const ATX_OPT_PREM       = 0.015;  // estimated ATM weekly premium ≈ 1.5% of stock price
-const ATX_FLAT_PCT       = 0.15;   // band for FLAT vs LOSS at manual stop
-const ATX_PULLBACK_PCT   = 0.20;   // wait for 0.2% dip from signal before entering
-const ATX_PULLBACK_TICKS = 300;    // give up if no pullback after 5 min
-const ATX_PULLBACK_MAX   = 1.00;   // skip if drops >1% — breakdown not pullback
+const ATX_WIN_PCT          = 0.50;  // target: exit at +0.5%
+const ATX_SL_EQ            = 0.50;  // equity SL default (score 7-8)
+const ATX_SL_OPT           = 5.0;   // options SL: -5% of estimated ATM premium
+const ATX_OPT_PREM         = 0.015; // estimated ATM weekly premium ≈ 1.5% of stock price
+const ATX_FLAT_PCT         = 0.15;  // band for FLAT vs LOSS at manual stop
+const ATX_PULLBACK_PCT     = 0.20;  // wait for 0.2% dip from signal before entering
+const ATX_PULLBACK_MAX     = 1.00;  // skip if drops >1% — breakdown not pullback
+const ATX_TRAIL_LOCK1      = 0.20;  // at +0.2% → move SL to breakeven
+const ATX_TRAIL_LOCK2      = 0.35;  // at +0.35% → move SL to +0.1%
+const ATX_TRAIL_FLOOR      = 0.10;  // SL floor after lock2
+const ATX_FLAT_TICKS       = 15*60; // flat exit window: 15 min post-entry
+const ATX_FLAT_BAND        = 0.10;  // flat if pnl within ±0.1% after window
+const ATX_RESCORE_MIN      = 4;     // min score at entry re-check to proceed
+
+function _atxScoreSl(score){
+  if(score>=7) return 0.50;
+  if(score>=6) return 0.40;
+  return 0.30;
+}
 
 let atxEntries = [];
 let atxTimer   = null;
@@ -1183,43 +1194,77 @@ function atxPollWin(id){
   const ltp=stock.ltp;
   entry._liveLtp=ltp;
 
+  // ── WAITING PHASE ────────────────────────────────────────────────────
   if(entry.entry_phase==='waiting'){
     entry.wait_ticks++;
     const sp=entry.signal_price;
-    // for BUY: wait for dip; for SELL: wait for bounce
     const movePct=entry.side==='BUY'?(sp-ltp)/sp*100:(ltp-sp)/sp*100;
+
     if(movePct>=ATX_PULLBACK_PCT){
-      // pullback hit — enter at current price
+      // [5] Re-score at entry — confirm thesis still holds
+      const t=stock.ticks||[];
+      const reSc=entry.side==='BUY'?scScore(stock):scScoreSell(stock);
+      const reScore=reSc?.total??0;
+      const dBuys=t.map(x=>x.dBuy||0), dSells=t.map(x=>x.dSell||0);
+      const netBuy=dBuys.reduce((a,b)=>a+b,0);
+      const netSell=dSells.reduce((a,b)=>a+b,0);
+      const last=t[t.length-1]||{};
+      // [1] still check ratio + net delta direction
+      const thesisOk=entry.side==='BUY'
+        ?(reScore>=ATX_RESCORE_MIN&&(last.ratio??0)>=1&&netBuy>0)
+        :(reScore>=ATX_RESCORE_MIN&&netSell<0);
+      if(!thesisOk){
+        clearInterval(p.pollId); delete atxPending[id];
+        entry.result='SKIP'; entry.exit_time=_atxIst().toTimeString().slice(0,8);
+        fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+        atLog('[ATX] SKIP '+entry.symbol+' — thesis broken at entry (score='+reScore+')');
+        atxRenderTable(); return;
+      }
+      // all good — enter
       entry.entry_price=ltp;
       entry.entry_phase='active';
+      entry.entry_ticks=0;
+      entry.sl_pct=_atxScoreSl(reScore);  // [3] score-based SL
       fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-      atLog('[ATX] ENTERED '+entry.symbol+' '+entry.side+' @ ₹'+ltp.toFixed(2)+' (−'+movePct.toFixed(2)+'% from signal)');
+      atLog('[ATX] ENTERED '+entry.symbol+' '+entry.side+' @ ₹'+ltp.toFixed(2)
+        +' score='+reScore+' SL='+entry.sl_pct+'%');
     } else if(movePct<=-ATX_PULLBACK_MAX){
-      // breakdown (>1% adverse) — skip
       clearInterval(p.pollId); delete atxPending[id];
-      entry.result='SKIP';
-      entry.exit_time=_atxIst().toTimeString().slice(0,8);
+      entry.result='SKIP'; entry.exit_time=_atxIst().toTimeString().slice(0,8);
       fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
       atLog('[ATX] SKIP '+entry.symbol+' — breakdown >1%');
     }
     atxRenderTable(); return;
   }
 
-  // active phase — WIN / SL check
+  // ── ACTIVE PHASE ─────────────────────────────────────────────────────
   const pnl=entry.side==='BUY'
     ?(ltp-entry.entry_price)/entry.entry_price*100
     :(entry.entry_price-ltp)/entry.entry_price*100;
-  const hit=pnl>=ATX_WIN_PCT?'WIN':pnl<=-ATX_SL_EQ?'SL':null;
+  entry.entry_ticks=(entry.entry_ticks||0)+1;
+
+  // [2] Trailing SL — lock in gains
+  if(!entry.sl_pct) entry.sl_pct=ATX_SL_EQ;
+  if(pnl>=ATX_TRAIL_LOCK2&&entry.sl_pct<ATX_TRAIL_FLOOR) entry.sl_pct=ATX_TRAIL_FLOOR;
+  else if(pnl>=ATX_TRAIL_LOCK1&&entry.sl_pct<0)           entry.sl_pct=0;
+
+  // [4] Time-based flat exit — still flat after 15 min
+  const flatExit=entry.entry_ticks>=ATX_FLAT_TICKS&&Math.abs(pnl)<=ATX_FLAT_BAND;
+
+  const sl=entry.sl_pct??ATX_SL_EQ;
+  const hit=pnl>=ATX_WIN_PCT?'WIN':pnl<=-sl?'SL':flatExit?'FLAT':null;
   if(hit){
     clearInterval(p.pollId); delete atxPending[id];
     entry.exit_time=_atxIst().toTimeString().slice(0,8);
     entry.exit_price=ltp;
     entry.pnl_pct=Math.round(pnl*100)/100;
-    entry.result=hit==='WIN'?'WIN':'LOSS';
+    entry.result=hit==='WIN'?'WIN':hit==='FLAT'?'FLAT':'LOSS';
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-    atLog('[ATX] '+hit+' '+entry.symbol+' '+(pnl>=0?'+':'')+entry.pnl_pct+'% @ ₹'+ltp.toFixed(2));
+    atLog('[ATX] '+hit+' '+entry.symbol+' '+(pnl>=0?'+':'')+entry.pnl_pct+'% @ ₹'+ltp.toFixed(2)
+      +(hit==='SL'?' SL='+sl+'%':hit==='FLAT'?' (flat 15min)':''));
   }
   entry._livePnl=Math.round(pnl*100)/100;
+  entry._liveSl=sl;
   atxRenderTable();
 }
 
@@ -1287,7 +1332,10 @@ function atxRenderTable(){
       const diff=e.exit_price!=null?(e.side==='BUY'?e.exit_price-e.entry_price:e.entry_price-e.exit_price):null;
       pnlCell='<span style="color:'+col+'">'+(diff!=null?sign+'₹'+diff.toFixed(2)+' ':'')+sign+e.pnl_pct+'%</span>';
     }
-    const statusLabel=e.result??(isWaiting?'⏳ pullback…':isActive?'watching…':'—');
+    const slLabel=isActive&&e._liveSl!=null
+      ?(e._liveSl>0?'SL:+'+e._liveSl+'%':e._liveSl===0?'SL:BE':'SL:−'+Math.abs(e._liveSl)+'%')
+      :'';
+    const statusLabel=e.result??(isWaiting?'⏳ pullback…':isActive?'watching… '+slLabel:'—');
     const displayEntry=e.entry_price!=null?'₹'+e.entry_price.toFixed(2):(e.signal_price?'~₹'+e.signal_price.toFixed(2):'—');
     const displayLive=e.exit_price?'₹'+e.exit_price.toFixed(2):isPending&&e._liveLtp?'₹'+e._liveLtp.toFixed(2):'—';
     return '<tr style="border-bottom:1px solid #1f2023">'
