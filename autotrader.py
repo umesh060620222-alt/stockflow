@@ -225,6 +225,15 @@ class AutoTrader:
         }
 
 
+def _vol_surge(deltas: list) -> int:
+    if len(deltas) < 6:
+        return 0
+    recent = deltas[-11:]
+    prev = recent[:-1]
+    avg = sum(prev) / len(prev)
+    return 1 if avg > 0 and recent[-1] >= 2 * avg else 0
+
+
 def _score(d):
     t = d.get("ticks", [])
     if len(t) < 3:
@@ -243,7 +252,8 @@ def _score(d):
     absorbScore = 2 if absorptions >= 3 else (1 if absorptions >= 1 else 0)
     prices = [x["ltp"] for x in t[-6:]]
     priceScore = 1 if len(prices) >= 2 and prices[-1] > prices[0] else 0
-    return {"total": ratioScore + buyScore + sellScore + absorbScore + priceScore}
+    volSurge = _vol_surge(dBuys)
+    return {"total": ratioScore + buyScore + sellScore + absorbScore + priceScore + volSurge}
 
 
 # singletons

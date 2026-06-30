@@ -734,6 +734,15 @@ function scParseBinary(buf){
   }
 }
 
+function _volSurge(deltas){
+  // 1pt if the last delta is >= 2× the avg of the previous 10 (and avg > 0)
+  if(deltas.length<6) return 0;
+  const recent=deltas.slice(-11);
+  const prev=recent.slice(0,-1);
+  const avg=prev.reduce((a,b)=>a+b,0)/prev.length;
+  return avg>0&&recent[recent.length-1]>=2*avg?1:0;
+}
+
 function scScore(d){
   const t=d.ticks; if(t.length<3) return 0;
   const ratioNow=t[t.length-1].ratio;
@@ -749,28 +758,30 @@ function scScore(d){
   const prices=t.slice(-6).map(x=>x.ltp);
   const priceUp=prices[prices.length-1]>prices[0];
   const priceScore=priceUp?1:0;
+  const volSurge=_volSurge(dBuys);            // 8th point: buy-vol spike
   const sellGrowing=sellScore===0&&dSells.filter(x=>x>0).length>dSells.length*0.6;
-  const total=ratioScore+buyScore+sellScore+absorbScore+priceScore;
-  return {total,ratioNow,ratioTrend,absorbTicks:absorptions,priceUp,sellGrowing};
+  const total=ratioScore+buyScore+sellScore+absorbScore+priceScore+volSurge;
+  return {total,ratioNow,ratioTrend,absorbTicks:absorptions,priceUp,sellGrowing,volSurge};
 }
 
 function scScoreSell(d){
   const t=d.ticks; if(t.length<3) return {total:0};
   const ratioNow=t[t.length-1].ratio;
   const ratios=t.map(x=>x.ratio);
-  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b<arr[i-1]?1:-1),0); // trending DOWN
-  const ratioScore=ratioNow<=1?2:ratioTrend>0?1:0;   // low ratio = sell dominant
+  const ratioTrend=ratios.slice(-5).reduce((a,b,i,arr)=>i===0?0:a+(b<arr[i-1]?1:-1),0);
+  const ratioScore=ratioNow<=1?2:ratioTrend>0?1:0;
   const dBuys=t.filter(x=>x.dBuy!==null).map(x=>x.dBuy);
   const dSells=t.filter(x=>x.dSell!==null).map(x=>x.dSell);
-  const sellScore=dSells.filter(x=>x>0).length>dSells.length*0.6?1:0;  // sell orders growing
-  const buyScore=dBuys.filter(x=>x<0).length>dBuys.length*0.6?1:0;     // buy orders shrinking
-  const distribs=t.filter(x=>x.dBuy!==null&&x.dBuy<0&&x.chgPct<0).length; // distribution: buy wall shrinking + price falling
+  const sellScore=dSells.filter(x=>x>0).length>dSells.length*0.6?1:0;
+  const buyScore=dBuys.filter(x=>x<0).length>dBuys.length*0.6?1:0;
+  const distribs=t.filter(x=>x.dBuy!==null&&x.dBuy<0&&x.chgPct<0).length;
   const absorbScore=distribs>=3?2:distribs>=1?1:0;
   const prices=t.slice(-6).map(x=>x.ltp);
   const priceDown=prices[prices.length-1]<prices[0];
   const priceScore=priceDown?1:0;
-  const total=ratioScore+sellScore+buyScore+absorbScore+priceScore;
-  return {total,ratioNow,priceDown,sellGrowing:sellScore===1};
+  const volSurge=_volSurge(dSells);           // 8th point: sell-vol spike
+  const total=ratioScore+sellScore+buyScore+absorbScore+priceScore+volSurge;
+  return {total,ratioNow,priceDown,sellGrowing:sellScore===1,volSurge};
 }
 
 function scRender(){
@@ -808,7 +819,7 @@ function scRender(){
           `<span style="font-size:16px;font-weight:700;color:#fbbf24;min-width:100px">${r.sym}</span>`+
           `<span style="color:#4ade80">+${r.chgPct.toFixed(2)}%</span>`+
           `<span style="color:#a78bfa">B/S ${r.ratio.toFixed(2)}</span>`+
-          `<span style="color:${scoreCol};font-weight:600">${s.total||0}/7</span>`+
+          `<span style="color:${scoreCol};font-weight:600">${s.total||0}/8</span>`+
           `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
           `</div>`;
       }).join('');
@@ -833,7 +844,7 @@ function scRender(){
           `<span style="font-size:16px;font-weight:700;color:#fbbf24;min-width:100px">${r.sym}</span>`+
           `<span style="color:#f87171">${r.chgPct.toFixed(2)}%</span>`+
           `<span style="color:#a78bfa">B/S ${r.ratio.toFixed(2)}</span>`+
-          `<span style="color:#f87171;font-weight:600">${ss.total||0}/7</span>`+
+          `<span style="color:#f87171;font-weight:600">${ss.total||0}/8</span>`+
           `<span style="font-size:11px;color:#6b7280">${reasons.join(' · ')}</span>`+
           `</div>`;
       }).join('');
@@ -872,7 +883,7 @@ function scRender(){
       `<td class="buy-col">${scFmt(r.buyVol)}</td>`+
       `<td class="sell-col">${scFmt(r.sellVol)}</td>`+
       `<td style="color:${r.ratio>=1?'#4ade80':'#f87171'}">${r.ratio.toFixed(2)}</td>`+
-      `<td style="color:${sigCol}">${s.total||0}/7</td>`+
+      `<td style="color:${sigCol}">${s.total||0}/8</td>`+
       `<td style="color:${sigCol};font-weight:600">${sig}</td>`;
     tb.appendChild(tr);
   });
@@ -1114,7 +1125,7 @@ function atxRound(){
       result:null,exit_price:null,exit_time:null,pnl_pct:null};
     atxEntries.unshift(entry);
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-    atLog('[ATX] '+timeStr+' '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/7');
+    atLog('[ATX] '+timeStr+' '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/8');
     // poll every 1s for +0.1% win target
     const pollId=setInterval(()=>atxPollWin(id),1000);
     // force-exit after 3 min
@@ -1191,7 +1202,7 @@ function atxRenderTable(){
       +'<td style="padding:6px 8px">'+(e.exit_price?'₹'+e.exit_price.toFixed(2):'—')+'</td>'
       +'<td style="padding:6px 8px">'+pnl+'</td>'
       +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+(e.result??'watching…')+'</td>'
-      +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/7</td>'
+      +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/8</td>'
       +'</tr>';
   }).join('');
 }
