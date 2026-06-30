@@ -1,9 +1,10 @@
 """Scanner watchlists — pre-market uses 10 curated stocks, daily scan uses top 100."""
 
-# Pre-market auction (9:00–9:08): small focused list, ₹1000–₹2500 range
+# Pre-market auction (9:00–9:08): liquid F&O stocks in ₹1000–₹2500 range
 WATCHLIST = [
     "RELIANCE","HDFCBANK","ICICIBANK","INFY","AXISBANK",
     "SUNPHARMA","TECHM","CIPLA","BAJAJFINSV","ADANIPORTS",
+    "HCLTECH","KOTAKBANK","HINDUNILVR","ASIANPAINT","GRASIM",
 ]
 
 # Daily live scan (9:15+): top 100 liquid NSE stocks by market cap
