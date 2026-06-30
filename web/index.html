@@ -1073,7 +1073,7 @@ function jRender(days){
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
 const ATX_EXIT_MS   = 5*60*1000;
-const ATX_WIN_PCT   = 0.10;   // target: exit immediately at +0.1%
+const ATX_WIN_PCT   = 0.50;   // target: exit immediately at +0.5%
 const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at time-stop
 
 let atxEntries = [];
@@ -1088,12 +1088,10 @@ function atxStart(){
   document.getElementById('atxStartBtn').disabled=true;
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
-  atxTimer=setInterval(atxRound,ATX_CYCLE_MS);
-  atLog('Auto-test: top 10 picks every 5 min · exit on +0.1% or manual stop');
+  atLog('Auto-test: picking top 10 now · watching for +0.1% all day · ■ Stop to exit');
 }
 
 function atxStop(){
-  if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
   // force-exit all pending picks with current prices
   Object.keys(atxPending).forEach(id=>atxForceExit(id));
   document.getElementById('atxStartBtn').disabled=false;
@@ -1119,10 +1117,14 @@ function atxRound(){
     ...buys.slice(0,5).map(p=>[p,'BUY']),
     ...sells.slice(0,5).map(p=>[p,'SELL']),
   ];
+  // never track more than 10 picks simultaneously; skip symbols already being watched
+  const activeSymSide=new Set(Object.values(atxPending).map(p=>p.entry.symbol+'|'+p.entry.side));
   let added=0;
   picks.forEach(([pick,side])=>{
+    if(Object.keys(atxPending).length>=10) return;           // cap at 10 active
+    if(activeSymSide.has(pick.sym+'|'+side)) return;         // already tracking this symbol+side
     const id=timeStr.replace(/:/g,'')+'-'+side+'-'+pick.sym;
-    if(atxPending[id]||atxEntries.find(e=>e.id===id)) return; // skip duplicates
+    if(atxEntries.find(e=>e.id===id)) return;
     const entry={id,time:timeStr,symbol:pick.sym,side,
       entry_price:pick.ltp,score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
       result:null,exit_price:null,exit_time:null,pnl_pct:null};
