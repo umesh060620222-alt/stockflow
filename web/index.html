@@ -750,8 +750,51 @@ function scParseBinary(buf){
       }
       d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
       d.prevBuy=buyVol; d.prevSell=sellVol;
+      // streak reversal detection
+      if(d.ticks.length>=2) scCheckStreak(d);
     }
     off+=len;
+  }
+}
+
+// ── Streak reversal strategy ──────────────────────────────────────────
+// Track consecutive price direction; fire BUY/SELL on first reversal after ≥0.5% streak
+const scStreaks={};  // {sym: {dir, startPrice, lastPrice}}
+const ATX_STREAK_PCT=0.50;  // min streak move to qualify
+
+function scCheckStreak(d){
+  const t=d.ticks;
+  const ltp=t[t.length-1].ltp;
+  const prev=t[t.length-2].ltp;
+  if(ltp===prev) return;  // flat tick — no change
+
+  const sym=d.sym;
+  if(!scStreaks[sym]) scStreaks[sym]={dir:null,startPrice:ltp,lastPrice:ltp};
+  const s=scStreaks[sym];
+  const tickUp=ltp>prev;
+
+  if(s.dir===null){
+    s.dir=tickUp?'up':'down';
+    s.startPrice=prev;
+    s.lastPrice=ltp;
+    return;
+  }
+
+  const streakContinues=(tickUp&&s.dir==='up')||(!tickUp&&s.dir==='down');
+
+  if(streakContinues){
+    s.lastPrice=ltp;
+  } else {
+    // direction flipped — check if streak was big enough
+    const streakPct=Math.abs(s.lastPrice-s.startPrice)/s.startPrice*100;
+    if(streakPct>=ATX_STREAK_PCT){
+      const side=s.dir==='down'?'BUY':'SELL';  // down streak → BUY reversal
+      atxStreakSignal(sym,side,streakPct,ltp);
+    }
+    // start new streak
+    s.dir=tickUp?'up':'down';
+    s.startPrice=s.lastPrice;  // new streak starts from the reversal point
+    s.lastPrice=ltp;
   }
 }
 
@@ -1116,26 +1159,49 @@ function _atxScoreSl(score){
 
 let atxEntries = [];
 let atxTimer   = null;
-// atxPending[id] = {entry, pollId, timeoutId}
+let atxRunning = false;
+// atxPending[id] = {entry, pollId}
 let atxPending = {};
 
 function _atxIst(){ return new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000); }
 
+// Called on every streak reversal ≥ 0.5% — event-driven, no polling cycle needed
+function atxStreakSignal(sym,side,streakPct,ltp){
+  if(!atxRunning) return;
+  if(Object.keys(atxPending).length>=10) return;
+  // skip if same symbol+side already active
+  const activeSymSide=new Set(Object.values(atxPending).map(p=>p.entry.symbol+'|'+p.entry.side));
+  if(activeSymSide.has(sym+'|'+side)) return;
+  const timeStr=_atxIst().toTimeString().slice(0,8);
+  const id=timeStr.replace(/:/g,'')+'-'+side+'-'+sym;
+  if(atxEntries.find(e=>e.id===id)) return;
+  const entry={id,time:timeStr,symbol:sym,side,
+    signal_price:ltp,entry_price:ltp,entry_phase:'active',  // enter immediately
+    streak_pct:Math.round(streakPct*100)/100,
+    entry_ticks:0,sl_pct:ATX_SL_EQ,wait_ticks:0,
+    score:null,ratio:null,chg_pct:null,
+    result:null,exit_price:null,exit_time:null,pnl_pct:null};
+  atxEntries.unshift(entry);
+  fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+  const pollId=setInterval(()=>atxPollWin(id),1000);
+  atxPending[id]={entry,pollId};
+  atLog('[ATX] REVERSAL '+side+' '+sym+' @ ₹'+ltp.toFixed(2)+' streak='+streakPct.toFixed(2)+'%');
+  atxRenderTable();
+}
+
 function atxStart(){
   if(!Object.keys(scData).length){ atLog('Auto-Test: connect scanner first.'); return; }
+  atxRunning=true;
+  // reset streaks so we start fresh
+  Object.keys(scStreaks).forEach(k=>delete scStreaks[k]);
   document.getElementById('atxStartBtn').disabled=true;
   document.getElementById('atxStopBtn').disabled=false;
-  atxRound();
-  atxTimer=setInterval(()=>{
-    // keep scanning every 10s until we have 10 active picks
-    if(Object.keys(atxPending).length<10) atxRound();
-  }, 10000);
-  atLog('Auto-test: scanning every 10s until 10 picks · 0.2% pullback entry · ■ Stop to exit');
+  atLog('Auto-test: watching for ≥0.5% streak reversals · enter immediately · ■ Stop to exit');
 }
 
 function atxStop(){
+  atxRunning=false;
   if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
-  // force-exit all pending picks with current prices
   Object.keys(atxPending).forEach(id=>atxForceExit(id));
   document.getElementById('atxStartBtn').disabled=false;
   document.getElementById('atxStopBtn').disabled=true;
@@ -1351,7 +1417,7 @@ function atxRenderTable(){
       +'<td style="padding:6px 8px">'+displayLive+'</td>'
       +'<td style="padding:6px 8px">'+pnlCell+'</td>'
       +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+statusLabel+'</td>'
-      +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/8</td>'
+      +'<td style="padding:6px 8px;color:#a78bfa">'+(e.streak_pct!=null?'↕'+e.streak_pct+'%':e.score!=null?e.score+'/8':'—')+'</td>'
       +'</tr>';
   }).join('');
   atxRenderOptions();
