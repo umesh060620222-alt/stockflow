@@ -726,7 +726,7 @@ function scRender(){
 
   // ── Top 5 picks + Bottom 5 losers ────────────────────────────────────
   const top5El=document.getElementById('scTop5');
-  const picks=rows.filter(r=>r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
+  const picks=rows.filter(r=>r.ltp>=1000&&r.chgPct>0.1&&r.ratio>=1.2).slice(0,5);
   scTopPick=picks[0]||null;
   if(picks.length){
     top5El.style.display='';
@@ -751,7 +751,7 @@ function scRender(){
   } else { top5El.innerHTML=''; }
 
   // losers — sellers dominant, price falling, high conviction
-  const losers=rows.filter(r=>r.chgPct<-0.1&&r.ratio<=0.8)
+  const losers=rows.filter(r=>r.ltp>=1000&&r.chgPct<-0.1&&r.ratio<=0.8)
     .sort((a,b)=>b._totalSell-a._totalSell||a.chgPct-b.chgPct).slice(0,5);
   scTopLoser=losers[0]||null;
   if(losers.length){
