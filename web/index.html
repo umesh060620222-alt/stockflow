@@ -272,7 +272,7 @@
             <th style="padding:5px 8px">Symbol</th>
             <th style="padding:5px 8px">Side</th>
             <th style="padding:5px 8px">Entry ₹</th>
-            <th style="padding:5px 8px">Exit ₹</th>
+            <th style="padding:5px 8px">Live / Exit ₹</th>
             <th style="padding:5px 8px">P&amp;L</th>
             <th style="padding:5px 8px">Result</th>
             <th style="padding:5px 8px">Score</th>
@@ -281,6 +281,27 @@
             <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px;font-size:12px">Click ▶ Start to begin auto-testing</td></tr>
           </tbody>
         </table>
+      </div>
+      <!-- Options shadow table -->
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:#6b7280;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Options · ATM · Week Expiry · 1 Lot (Δ≈0.5 estimate)</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="color:#6b7280;font-size:11px;text-align:left;position:sticky;top:0;background:#1a1c20">
+              <th style="padding:5px 8px">Option</th>
+              <th style="padding:5px 8px">Type</th>
+              <th style="padding:5px 8px">Strike</th>
+              <th style="padding:5px 8px">Expiry</th>
+              <th style="padding:5px 8px">Lot</th>
+              <th style="padding:5px 8px">Move ₹/share</th>
+              <th style="padding:5px 8px">Lot P&amp;L ₹</th>
+              <th style="padding:5px 8px">Result</th>
+            </tr></thead>
+            <tbody id="atxOptBody">
+              <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px;font-size:12px">—</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -1106,9 +1127,12 @@ function atxRound(){
     const t=r.ticks; if(!t||t.length<3) continue;
     const last=t[t.length-1];
     const sc=scScore(r), ss=scScoreSell(r);
-    if(sc&&typeof sc==='object'&&sc.total>=5&&last.chgPct>0)
+    const dBuys=t.map(x=>x.dBuy||0), dSells=t.map(x=>x.dSell||0);
+    const netBuy=dBuys.reduce((a,b)=>a+b,0);
+    const netSell=dSells.reduce((a,b)=>a+b,0);
+    if(sc&&typeof sc==='object'&&sc.total>=5&&last.chgPct>0.15&&netBuy>0)
       buys.push({sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
-    if(ss&&ss.total>=5&&last.chgPct<0)
+    if(ss&&ss.total>=5&&last.chgPct<-0.15&&netSell<0)
       sells.push({sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
   }
   buys.sort((a,b)=>b.score-a.score);
@@ -1155,8 +1179,10 @@ function atxPollWin(id){
     entry.result='WIN';
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
     atLog('[ATX] WIN '+entry.symbol+' +'+entry.pnl_pct+'% @ ₹'+stock.ltp.toFixed(2));
-    atxRenderTable();
   }
+  entry._liveLtp=stock.ltp;   // store for table render
+  entry._livePnl=Math.round(pnl*100)/100;
+  atxRenderTable();
 }
 
 function atxForceExit(id){
@@ -1201,18 +1227,96 @@ function atxRenderTable(){
   body.innerHTML=atxEntries.slice(0,80).map(e=>{
     const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
     const sc=e.side==='BUY'?'#4ade80':'#f87171';
-    const pnl=e.pnl_pct!==null
-      ?'<span style="color:'+(e.pnl_pct>=0?'#4ade80':'#f87171')+'">'+(e.pnl_pct>=0?'+':'')+e.pnl_pct+'%</span>'
-      :'—';
+    const isPending=!e.result&&atxPending[e.id];
+    let pnlCell;
+    if(isPending&&e._liveLtp!=null){
+      const diff=e.side==='BUY'?e._liveLtp-e.entry_price:e.entry_price-e._liveLtp;
+      const col=diff>=0?'#4ade80':'#f87171';
+      const sign=diff>=0?'+':'';
+      pnlCell='<span style="color:'+col+'">'+sign+'₹'+diff.toFixed(2)
+        +' ('+sign+e._livePnl+'%)</span>';
+    } else if(e.pnl_pct!==null){
+      const col=e.pnl_pct>=0?'#4ade80':'#f87171';
+      const sign=e.pnl_pct>=0?'+':'';
+      const diff=e.exit_price!=null
+        ?(e.side==='BUY'?e.exit_price-e.entry_price:e.entry_price-e.exit_price)
+        :null;
+      pnlCell='<span style="color:'+col+'">'
+        +(diff!=null?sign+'₹'+diff.toFixed(2)+' ':'')+sign+e.pnl_pct+'%</span>';
+    } else { pnlCell='—'; }
     return '<tr style="border-bottom:1px solid #1f2023">'
       +'<td style="padding:6px 8px;color:#6b7280;font-variant-numeric:tabular-nums">'+e.time+'</td>'
       +'<td style="padding:6px 8px;font-weight:700">'+e.symbol+'</td>'
       +'<td style="padding:6px 8px;color:'+sc+';font-weight:600">'+e.side+'</td>'
       +'<td style="padding:6px 8px">'+(e.entry_price!=null?'₹'+e.entry_price.toFixed(2):'—')+'</td>'
-      +'<td style="padding:6px 8px">'+(e.exit_price?'₹'+e.exit_price.toFixed(2):'—')+'</td>'
-      +'<td style="padding:6px 8px">'+pnl+'</td>'
-      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+(e.result??'watching…')+'</td>'
+      +'<td style="padding:6px 8px">'+(e.exit_price?'₹'+e.exit_price.toFixed(2):isPending&&e._liveLtp?'₹'+e._liveLtp.toFixed(2):'—')+'</td>'
+      +'<td style="padding:6px 8px">'+pnlCell+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+(e.result??(isPending?'watching…':'—'))+'</td>'
       +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/8</td>'
+      +'</tr>';
+  }).join('');
+  atxRenderOptions();
+}
+
+// ── Options helpers ───────────────────────────────────────────────────
+const ATX_LOT={
+  RELIANCE:250,TCS:175,HDFCBANK:550,ICICIBANK:1375,INFY:400,
+  HINDUNILVR:300,WIPRO:1500,BHARTIARTL:1851,LT:450,KOTAKBANK:400,
+  HCLTECH:700,SBIN:1500,BAJFINANCE:125,AXISBANK:1200,ASIANPAINT:300,
+  MARUTI:100,SUNPHARMA:700,BAJAJFINSV:125,TITAN:375,TATAMOTORS:1425,
+  NTPC:4500,POWERGRID:4800,ULTRACEMCO:100,ADANIPORTS:1250,ADANIENT:250,
+  COALINDIA:4200,ONGC:3850,NESTLEIND:50,GRASIM:475,JSWSTEEL:850,
+  TATASTEEL:5500,TATACONSUM:1400,HINDALCO:2150,HDFCLIFE:1100,SBILIFE:750,
+  EICHERMOT:200,CIPLA:1300,DIVISLAB:200,APOLLOHOSP:125,DRREDDY:125,
+  HEROMOTOCO:300,BRITANNIA:100,'BAJAJ-AUTO':75,INDUSINDBK:600,TECHM:600,
+  LTIM:150,SHRIRAMFIN:450,UPL:1300,VEDL:2600,BEL:7400,
+};
+const ATX_LOT_DEFAULT=500;
+
+function _atxStrike(ltp){
+  const iv=ltp<=100?2.5:ltp<=250?5:ltp<=500?10:ltp<=1000?25:ltp<=2500?50:100;
+  return Math.round(ltp/iv)*iv;
+}
+
+function _atxWeekExpiry(){
+  const now=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  const d=new Date(now);
+  // find nearest upcoming Thursday (day 4)
+  const daysUntilThu=(4-d.getDay()+7)%7||7;
+  d.setDate(d.getDate()+daysUntilThu);
+  return d.getDate().toString().padStart(2,'0')+'/'+(d.getMonth()+1).toString().padStart(2,'0');
+}
+
+function atxRenderOptions(){
+  const body=document.getElementById('atxOptBody');
+  if(!atxEntries.length){
+    body.innerHTML='<tr><td colspan="8" style="text-align:center;color:#6b7280;padding:12px">—</td></tr>';
+    return;
+  }
+  const expiry=_atxWeekExpiry();
+  body.innerHTML=atxEntries.slice(0,80).map(e=>{
+    const lot=ATX_LOT[e.symbol]||ATX_LOT_DEFAULT;
+    const strike=_atxStrike(e.entry_price||0);
+    const type=e.side==='BUY'?'CE':'PE';
+    const optSym=e.symbol+' '+strike+' '+type;
+    const sc=type==='CE'?'#4ade80':'#f87171';
+    const isPending=!e.result&&atxPending[e.id];
+    const currentPrice=isPending&&e._liveLtp?e._liveLtp:(e.exit_price??e.entry_price);
+    const rawMove=e.side==='BUY'?(currentPrice-e.entry_price):(e.entry_price-currentPrice);
+    const optMove=rawMove*0.5;  // ATM delta ≈ 0.5
+    const lotPnl=Math.round(optMove*lot*100)/100;
+    const moveCol=optMove>=0?'#4ade80':'#f87171';
+    const sign=optMove>=0?'+':'';
+    const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
+    return '<tr style="border-bottom:1px solid #1f2023">'
+      +'<td style="padding:6px 8px;font-weight:600">'+optSym+'</td>'
+      +'<td style="padding:6px 8px;color:'+sc+'">'+type+'</td>'
+      +'<td style="padding:6px 8px">₹'+strike+'</td>'
+      +'<td style="padding:6px 8px;color:#6b7280">'+expiry+'</td>'
+      +'<td style="padding:6px 8px;color:#a78bfa">'+lot+'</td>'
+      +'<td style="padding:6px 8px;color:'+moveCol+'">'+sign+'₹'+optMove.toFixed(2)+'</td>'
+      +'<td style="padding:6px 8px;font-weight:700;color:'+moveCol+'">'+sign+'₹'+lotPnl.toFixed(0)+'</td>'
+      +'<td style="padding:6px 8px;color:'+rc+'">'+(e.result??(isPending?'live':'—'))+'</td>'
       +'</tr>';
   }).join('');
 }
