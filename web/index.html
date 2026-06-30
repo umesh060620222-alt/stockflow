@@ -259,7 +259,7 @@
     <div id="atxPanel" style="display:none;margin-top:18px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-size:13px">Auto-Test</b>
-        <span style="font-size:11px;color:#6b7280">pick every 5 min · exit after 5 min</span>
+        <span style="font-size:11px;color:#6b7280">top 10 picks every 5 min · exits on +0.1% or ■ Stop</span>
         <button class="btn btn-yellow" id="atxStartBtn" style="padding:4px 12px;font-size:12px" onclick="atxStart()">▶ Start</button>
         <button class="btn btn-danger" id="atxStopBtn" style="padding:4px 12px;font-size:12px" onclick="atxStop()" disabled>■ Stop</button>
         <button class="btn btn-muted" style="padding:4px 12px;font-size:12px" onclick="atxLoadToday()">↻ Today</button>
@@ -1089,13 +1089,13 @@ function atxStart(){
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
   atxTimer=setInterval(atxRound,ATX_CYCLE_MS);
-  atLog('Auto-test: picks every 5 min · exit on +0.1% or 5 min stop');
+  atLog('Auto-test: top 10 picks every 5 min · exit on +0.1% or manual stop');
 }
 
 function atxStop(){
   if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
-  Object.values(atxPending).forEach(p=>{ clearInterval(p.pollId); clearTimeout(p.timeoutId); });
-  atxPending={};
+  // force-exit all pending picks with current prices
+  Object.keys(atxPending).forEach(id=>atxForceExit(id));
   document.getElementById('atxStartBtn').disabled=false;
   document.getElementById('atxStopBtn').disabled=true;
 }
@@ -1103,36 +1103,37 @@ function atxStop(){
 function atxRound(){
   const ist=_atxIst();
   const timeStr=ist.toTimeString().slice(0,8);
-  let bestBuy=null,bestBuyScore=-1,bestSell=null,bestSellScore=-1;
+  const buys=[], sells=[];
   for(const r of Object.values(scData)){
     const t=r.ticks; if(!t||t.length<3) continue;
     const last=t[t.length-1];
     const sc=scScore(r), ss=scScoreSell(r);
-    if(sc&&typeof sc==='object'&&sc.total>=6&&sc.volSurge&&sc.total>bestBuyScore&&last.chgPct>0){
-      bestBuyScore=sc.total;
-      bestBuy={sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
-    }
-    if(ss&&ss.total>=6&&ss.volSurge&&ss.total>bestSellScore&&last.chgPct<0){
-      bestSellScore=ss.total;
-      bestSell={sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
-    }
+    if(sc&&typeof sc==='object'&&sc.total>=6&&sc.volSurge&&last.chgPct>0)
+      buys.push({sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
+    if(ss&&ss.total>=6&&ss.volSurge&&last.chgPct<0)
+      sells.push({sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
   }
-  [[bestBuy,'BUY'],[bestSell,'SELL']].forEach(([pick,side])=>{
-    if(!pick) return;
+  buys.sort((a,b)=>b.score-a.score);
+  sells.sort((a,b)=>b.score-a.score);
+  const picks=[
+    ...buys.slice(0,5).map(p=>[p,'BUY']),
+    ...sells.slice(0,5).map(p=>[p,'SELL']),
+  ];
+  let added=0;
+  picks.forEach(([pick,side])=>{
     const id=timeStr.replace(/:/g,'')+'-'+side+'-'+pick.sym;
+    if(atxPending[id]||atxEntries.find(e=>e.id===id)) return; // skip duplicates
     const entry={id,time:timeStr,symbol:pick.sym,side,
       entry_price:pick.ltp,score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
       result:null,exit_price:null,exit_time:null,pnl_pct:null};
     atxEntries.unshift(entry);
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-    atLog('[ATX] '+timeStr+' '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/8');
-    // poll every 1s for +0.1% win target
     const pollId=setInterval(()=>atxPollWin(id),1000);
-    // force-exit after 3 min
-    const timeoutId=setTimeout(()=>atxForceExit(id),ATX_EXIT_MS);
-    atxPending[id]={entry,pollId,timeoutId};
+    atxPending[id]={entry,pollId};
+    atLog('[ATX] '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/8');
+    added++;
   });
-  if(!bestBuy&&!bestSell) atLog('[ATX] '+timeStr+' — no qualifying picks (score<5)');
+  if(!added) atLog('[ATX] '+timeStr+' — no qualifying picks (need score>=6 + vol surge)');
   atxRenderTable();
 }
 
@@ -1145,7 +1146,7 @@ function atxPollWin(id){
     ?(stock.ltp-entry.entry_price)/entry.entry_price*100
     :(entry.entry_price-stock.ltp)/entry.entry_price*100;
   if(pnl>=ATX_WIN_PCT){
-    clearInterval(p.pollId); clearTimeout(p.timeoutId); delete atxPending[id];
+    clearInterval(p.pollId); delete atxPending[id];
     entry.exit_time=_atxIst().toTimeString().slice(0,8);
     entry.exit_price=stock.ltp;
     entry.pnl_pct=Math.round(pnl*100)/100;
@@ -1168,12 +1169,12 @@ function atxForceExit(id){
       ?(stock.ltp-entry.entry_price)/entry.entry_price*100
       :(entry.entry_price-stock.ltp)/entry.entry_price*100;
     entry.pnl_pct=Math.round(pnl*100)/100;
-    entry.result=pnl<-ATX_FLAT_PCT?'LOSS':'FLAT';
+    entry.result=pnl>=ATX_WIN_PCT?'WIN':pnl<-ATX_FLAT_PCT?'LOSS':'FLAT';
   } else {
     entry.result='NO DATA';
   }
   fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-  atLog('[ATX] STOP '+entry.symbol+' '+entry.result+' '+(entry.pnl_pct??'--')+'%');
+  atLog('[ATX] EXIT '+entry.symbol+' '+entry.result+' '+(entry.pnl_pct??'--')+'%');
   atxRenderTable();
 }
 
@@ -1208,21 +1209,9 @@ function atxRenderTable(){
 }
 
 function _atxRestartPending(entry){
-  // called when loading a pending entry from disk — restart timers with remaining time
-  const ist=_atxIst();
-  const [eh,em,es]=entry.time.split(':').map(Number);
-  const nowSec=ist.getHours()*3600+ist.getMinutes()*60+ist.getSeconds();
-  const entrySec=eh*3600+em*60+es;
-  const elapsedMs=(nowSec-entrySec)*1000;
-  const remaining=ATX_EXIT_MS-elapsedMs;
-  if(remaining<=0){
-    // time already expired — force exit now with current price
-    atxForceExit(entry.id);
-  } else {
-    const pollId=setInterval(()=>atxPollWin(entry.id),1000);
-    const timeoutId=setTimeout(()=>atxForceExit(entry.id),remaining);
-    atxPending[entry.id]={entry,pollId,timeoutId};
-  }
+  // restart win-poll for a pending entry loaded from disk (no time-stop)
+  const pollId=setInterval(()=>atxPollWin(entry.id),1000);
+  atxPending[entry.id]={entry,pollId};
 }
 
 async function atxLoadToday(){
