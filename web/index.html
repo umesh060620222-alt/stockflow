@@ -245,11 +245,21 @@
       </div>
       <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;max-height:90px;overflow-y:auto;white-space:pre-wrap"></div>
     </div>
-    <!-- Auto-Test panel -->
-    <div id="atxPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
+    <div id="scTop5" style="display:none;margin-bottom:14px"></div>
+    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+      <table id="scTbl" style="display:none;font-size:13px">
+        <thead><tr>
+          <th>Symbol</th><th>LTP</th><th>Chg%</th>
+          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Score</th><th>Signal</th>
+        </tr></thead>
+        <tbody id="scBody"></tbody>
+      </table>
+    </div>
+    <!-- Auto-Test panel — below live data, only runs on Start -->
+    <div id="atxPanel" style="display:none;margin-top:18px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-size:13px">Auto-Test</b>
-        <span style="font-size:11px;color:#6b7280">5 min cycle: watch 2 min → pick → exit after 3 min</span>
+        <span style="font-size:11px;color:#6b7280">pick every 5 min · exit after 3 min</span>
         <button class="btn btn-yellow" id="atxStartBtn" style="padding:4px 12px;font-size:12px" onclick="atxStart()">▶ Start</button>
         <button class="btn btn-danger" id="atxStopBtn" style="padding:4px 12px;font-size:12px" onclick="atxStop()" disabled>■ Stop</button>
         <button class="btn btn-muted" style="padding:4px 12px;font-size:12px" onclick="atxLoadToday()">↻ Today</button>
@@ -268,20 +278,10 @@
             <th style="padding:5px 8px">Score</th>
           </tr></thead>
           <tbody id="atxBody">
-            <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px;font-size:12px">Start auto-test to begin</td></tr>
+            <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px;font-size:12px">Click ▶ Start to begin auto-testing</td></tr>
           </tbody>
         </table>
       </div>
-    </div>
-    <div id="scTop5" style="display:none;margin-bottom:14px"></div>
-    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
-      <table id="scTbl" style="display:none;font-size:13px">
-        <thead><tr>
-          <th>Symbol</th><th>LTP</th><th>Chg%</th>
-          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Score</th><th>Signal</th>
-        </tr></thead>
-        <tbody id="scBody"></tbody>
-      </table>
     </div>
   </div>
 
