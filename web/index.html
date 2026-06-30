@@ -1053,11 +1053,21 @@ function jRender(days){
   document.getElementById('jBody').innerHTML=html;
 }
 // ── Auto-Test ─────────────────────────────────────────────────────────
-let atxEntries=[];
-let atxTimer=null;
-let atxExitTimers={};
-const ATX_CYCLE_MS=5*60*1000;
-const ATX_EXIT_MS =3*60*1000;
+// Cycle: pick every 5 min. Each pick polls every tick (1s):
+//   → EXIT WIN  if profit hits +0.1% at any tick within 3 min
+//   → EXIT LOSS if 3 min expires and final pnl < -0.15%
+//   → EXIT FLAT if 3 min expires and pnl within ±0.15%
+const ATX_CYCLE_MS  = 5*60*1000;
+const ATX_EXIT_MS   = 3*60*1000;
+const ATX_WIN_PCT   = 0.10;   // target: exit immediately at +0.1%
+const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at time-stop
+
+let atxEntries = [];
+let atxTimer   = null;
+// atxPending[id] = {entry, pollId, timeoutId}
+let atxPending = {};
+
+function _atxIst(){ return new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000); }
 
 function atxStart(){
   if(!Object.keys(scData).length){ atLog('Auto-Test: connect scanner first.'); return; }
@@ -1065,19 +1075,19 @@ function atxStart(){
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
   atxTimer=setInterval(atxRound,ATX_CYCLE_MS);
-  atLog('Auto-test: picks every 5 min, exits after 3 min');
+  atLog('Auto-test: picks every 5 min · exit on +0.1% or 3 min stop');
 }
 
 function atxStop(){
   if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
-  Object.values(atxExitTimers).forEach(t=>clearTimeout(t));
-  atxExitTimers={};
+  Object.values(atxPending).forEach(p=>{ clearInterval(p.pollId); clearTimeout(p.timeoutId); });
+  atxPending={};
   document.getElementById('atxStartBtn').disabled=false;
   document.getElementById('atxStopBtn').disabled=true;
 }
 
 function atxRound(){
-  const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  const ist=_atxIst();
   const timeStr=ist.toTimeString().slice(0,8);
   let bestBuy=null,bestBuyScore=-1,bestSell=null,bestSellScore=-1;
   for(const r of Object.values(scData)){
@@ -1100,35 +1110,56 @@ function atxRound(){
       entry_price:pick.ltp,score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
       result:null,exit_price:null,exit_time:null,pnl_pct:null};
     atxEntries.unshift(entry);
-    fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(entry)});
-    atxExitTimers[id]=setTimeout(()=>atxCheckExit(id),ATX_EXIT_MS);
+    fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
     atLog('[ATX] '+timeStr+' '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/7');
+    // poll every 1s for +0.1% win target
+    const pollId=setInterval(()=>atxPollWin(id),1000);
+    // force-exit after 3 min
+    const timeoutId=setTimeout(()=>atxForceExit(id),ATX_EXIT_MS);
+    atxPending[id]={entry,pollId,timeoutId};
   });
-  if(!bestBuy&&!bestSell) atLog('[ATX] '+timeStr+' — no qualifying picks');
+  if(!bestBuy&&!bestSell) atLog('[ATX] '+timeStr+' — no qualifying picks (score<5)');
   atxRenderTable();
 }
 
-function atxCheckExit(id){
-  const entry=atxEntries.find(e=>e.id===id);
-  if(!entry) return;
+function atxPollWin(id){
+  const p=atxPending[id]; if(!p) return;
+  const entry=p.entry;
   const stock=Object.values(scData).find(r=>r.sym===entry.symbol);
-  const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
-  entry.exit_time=ist.toTimeString().slice(0,8);
+  if(!stock||!stock.ltp) return;
+  const pnl=entry.side==='BUY'
+    ?(stock.ltp-entry.entry_price)/entry.entry_price*100
+    :(entry.entry_price-stock.ltp)/entry.entry_price*100;
+  if(pnl>=ATX_WIN_PCT){
+    clearInterval(p.pollId); clearTimeout(p.timeoutId); delete atxPending[id];
+    entry.exit_time=_atxIst().toTimeString().slice(0,8);
+    entry.exit_price=stock.ltp;
+    entry.pnl_pct=Math.round(pnl*100)/100;
+    entry.result='WIN';
+    fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+    atLog('[ATX] WIN '+entry.symbol+' +'+entry.pnl_pct+'% @ ₹'+stock.ltp.toFixed(2));
+    atxRenderTable();
+  }
+}
+
+function atxForceExit(id){
+  const p=atxPending[id]; if(!p) return;
+  clearInterval(p.pollId); delete atxPending[id];
+  const entry=p.entry;
+  const stock=Object.values(scData).find(r=>r.sym===entry.symbol);
+  entry.exit_time=_atxIst().toTimeString().slice(0,8);
   if(stock&&stock.ltp){
     entry.exit_price=stock.ltp;
     const pnl=entry.side==='BUY'
       ?(stock.ltp-entry.entry_price)/entry.entry_price*100
       :(entry.entry_price-stock.ltp)/entry.entry_price*100;
     entry.pnl_pct=Math.round(pnl*100)/100;
-    entry.result=pnl>0.15?'WIN':pnl<-0.15?'LOSS':'FLAT';
+    entry.result=pnl<-ATX_FLAT_PCT?'LOSS':'FLAT';
   } else {
     entry.result='NO DATA';
   }
-  fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(entry)});
-  delete atxExitTimers[id];
-  atLog('[ATX] EXIT '+entry.symbol+' '+entry.result+' pnl='+(entry.pnl_pct??'--')+'%');
+  fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+  atLog('[ATX] STOP '+entry.symbol+' '+entry.result+' '+(entry.pnl_pct??'--')+'%');
   atxRenderTable();
 }
 
