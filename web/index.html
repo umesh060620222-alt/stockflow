@@ -1094,8 +1094,11 @@ function jRender(days){
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
 const ATX_EXIT_MS   = 5*60*1000;
-const ATX_WIN_PCT   = 0.50;   // target: exit immediately at +0.5%
-const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at time-stop
+const ATX_WIN_PCT   = 0.50;   // target: exit at +0.5%
+const ATX_SL_EQ     = 0.50;   // equity SL: exit at -0.5%
+const ATX_SL_OPT    = 5.0;    // options SL: -5% of estimated ATM premium
+const ATX_OPT_PREM  = 0.015;  // estimated ATM weekly premium ≈ 1.5% of stock price
+const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at manual stop
 
 let atxEntries = [];
 let atxTimer   = null;
@@ -1171,16 +1174,17 @@ function atxPollWin(id){
   const pnl=entry.side==='BUY'
     ?(stock.ltp-entry.entry_price)/entry.entry_price*100
     :(entry.entry_price-stock.ltp)/entry.entry_price*100;
-  if(pnl>=ATX_WIN_PCT){
+  const hit = pnl>=ATX_WIN_PCT ? 'WIN' : pnl<=-ATX_SL_EQ ? 'SL' : null;
+  if(hit){
     clearInterval(p.pollId); delete atxPending[id];
     entry.exit_time=_atxIst().toTimeString().slice(0,8);
     entry.exit_price=stock.ltp;
     entry.pnl_pct=Math.round(pnl*100)/100;
-    entry.result='WIN';
+    entry.result=hit==='WIN'?'WIN':'LOSS';
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-    atLog('[ATX] WIN '+entry.symbol+' +'+entry.pnl_pct+'% @ ₹'+stock.ltp.toFixed(2));
+    atLog('[ATX] '+hit+' '+entry.symbol+' '+(pnl>=0?'+':'')+entry.pnl_pct+'% @ ₹'+stock.ltp.toFixed(2));
   }
-  entry._liveLtp=stock.ltp;   // store for table render
+  entry._liveLtp=stock.ltp;
   entry._livePnl=Math.round(pnl*100)/100;
   atxRenderTable();
 }
@@ -1305,18 +1309,24 @@ function atxRenderOptions(){
     const rawMove=e.side==='BUY'?(currentPrice-e.entry_price):(e.entry_price-currentPrice);
     const optMove=rawMove*0.5;  // ATM delta ≈ 0.5
     const lotPnl=Math.round(optMove*lot*100)/100;
-    const moveCol=optMove>=0?'#4ade80':'#f87171';
+    // SL: -5% of estimated entry premium (≈1.5% of stock price × lot)
+    const entryPrem=(e.entry_price||0)*ATX_OPT_PREM;
+    const slThreshold=-(entryPrem*lot*ATX_SL_OPT/100);
+    const optSlHit=lotPnl<=slThreshold;
+    const moveCol=optMove>=0?'#4ade80':(optSlHit?'#ef4444':'#f87171');
     const sign=optMove>=0?'+':'';
-    const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
-    return '<tr style="border-bottom:1px solid #1f2023">'
+    const optResult=e.result??(optSlHit?'SL':(isPending?'live':'—'));
+    const rc=optResult==='WIN'?'#4ade80':optResult==='SL'||optResult==='LOSS'?'#ef4444':optResult==='FLAT'?'#fbbf24':'#6b7280';
+    return '<tr style="border-bottom:1px solid #1f2023'+(optSlHit&&!e.result?';background:#1f1215':'') +'">'
       +'<td style="padding:6px 8px;font-weight:600">'+optSym+'</td>'
       +'<td style="padding:6px 8px;color:'+sc+'">'+type+'</td>'
       +'<td style="padding:6px 8px">₹'+strike+'</td>'
       +'<td style="padding:6px 8px;color:#6b7280">'+expiry+'</td>'
       +'<td style="padding:6px 8px;color:#a78bfa">'+lot+'</td>'
-      +'<td style="padding:6px 8px;color:'+moveCol+'">'+sign+'₹'+optMove.toFixed(2)+'</td>'
+      +'<td style="padding:6px 8px;color:'+moveCol+'">'+sign+'₹'+optMove.toFixed(2)
+        +(optSlHit?' ⚠':'')+'</td>'
       +'<td style="padding:6px 8px;font-weight:700;color:'+moveCol+'">'+sign+'₹'+lotPnl.toFixed(0)+'</td>'
-      +'<td style="padding:6px 8px;color:'+rc+'">'+(e.result??(isPending?'live':'—'))+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+optResult+'</td>'
       +'</tr>';
   }).join('');
 }
