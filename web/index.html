@@ -1324,7 +1324,8 @@ function atxRenderTable(){
       // yellow = moving toward entry target; gray = moving away
       const towardsEntry=e.side==='BUY'?actualPct<0:actualPct>0;
       const col=towardsEntry?'#fbbf24':'#9ca3af';
-      pnlCell='<span style="color:'+col+'">'+sign+Math.abs(actualPct).toFixed(2)+'% from signal</span>';
+      const need=e.side==='BUY'?'need −0.2%':'need +0.2%';
+      pnlCell='<span style="color:'+col+'">'+sign+Math.abs(actualPct).toFixed(2)+'% · '+need+'</span>';
     } else if(isActive&&e._liveLtp!=null){
       const diff=e.side==='BUY'?e._liveLtp-e.entry_price:e.entry_price-e._liveLtp;
       const col=diff>=0?'#4ade80':'#f87171';
