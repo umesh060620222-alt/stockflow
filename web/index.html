@@ -259,7 +259,7 @@
     <div id="atxPanel" style="display:none;margin-top:18px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-size:13px">Auto-Test</b>
-        <span style="font-size:11px;color:#6b7280">pick every 5 min · exit after 3 min</span>
+        <span style="font-size:11px;color:#6b7280">pick every 5 min · exit after 5 min</span>
         <button class="btn btn-yellow" id="atxStartBtn" style="padding:4px 12px;font-size:12px" onclick="atxStart()">▶ Start</button>
         <button class="btn btn-danger" id="atxStopBtn" style="padding:4px 12px;font-size:12px" onclick="atxStop()" disabled>■ Stop</button>
         <button class="btn btn-muted" style="padding:4px 12px;font-size:12px" onclick="atxLoadToday()">↻ Today</button>
@@ -1058,7 +1058,7 @@ function jRender(days){
 //   → EXIT LOSS if 3 min expires and final pnl < -0.15%
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
-const ATX_EXIT_MS   = 3*60*1000;
+const ATX_EXIT_MS   = 5*60*1000;
 const ATX_WIN_PCT   = 0.10;   // target: exit immediately at +0.1%
 const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at time-stop
 
@@ -1075,7 +1075,7 @@ function atxStart(){
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
   atxTimer=setInterval(atxRound,ATX_CYCLE_MS);
-  atLog('Auto-test: picks every 5 min · exit on +0.1% or 3 min stop');
+  atLog('Auto-test: picks every 5 min · exit on +0.1% or 5 min stop');
 }
 
 function atxStop(){
