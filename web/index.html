@@ -633,7 +633,10 @@ async function scConnect(){
     pmCreds=d;
   }
   document.getElementById('scStatus').textContent='Resolving tokens…';
-  const td=await (await fetch('/api/scanner/tokens')).json();
+  const _now=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  const _isPremarket=_now.getHours()<9||(_now.getHours()===9&&_now.getMinutes()<15);
+  const _mode=_isPremarket?'premarket':'daily';
+  const td=await (await fetch('/api/scanner/tokens?mode='+_mode)).json();
   if(td.error){ document.getElementById('scStatus').textContent=td.error; return; }
   scTokenMap={};
   Object.entries(td).forEach(([sym,tok])=>scTokenMap[tok]=sym);
@@ -644,7 +647,7 @@ async function scConnect(){
   scWs.onopen=()=>{
     scWs.send(JSON.stringify({a:'subscribe',v:tokens}));
     scWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
-    document.getElementById('scStatus').textContent=`Live · ${tokens.length} stocks`;
+    document.getElementById('scStatus').textContent=(_isPremarket?'Pre-market':'Live')+' · '+tokens.length+' stocks';
     document.getElementById('scStopBtn').disabled=false;
     document.getElementById('scTbl').style.display='';
     document.getElementById('atPanel').style.display='';

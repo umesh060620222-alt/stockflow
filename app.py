@@ -285,10 +285,12 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path == "/api/scanner/tokens":
             import scanner as SC
+            from urllib.parse import urlparse, parse_qs
+            mode = parse_qs(urlparse(self.path).query).get("mode", ["daily"])[0]
+            wl = set(SC.WATCHLIST if mode == "premarket" else SC.WATCHLIST_DAILY)
             try:
                 kc = Z.kite()
                 rows = kc.instruments("NSE")
-                wl = set(SC.WATCHLIST)
                 result = {r["tradingsymbol"]: r["instrument_token"]
                           for r in rows if r["tradingsymbol"] in wl
                           and r.get("instrument_type") == "EQ"}
