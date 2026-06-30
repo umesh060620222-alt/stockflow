@@ -46,12 +46,15 @@ def get_history() -> list:
                 entries = json.load(f)
             completed = [e for e in entries if e.get("result") in ("WIN", "LOSS", "FLAT")]
             wins = sum(1 for e in completed if e.get("result") == "WIN")
+            total_pnl = round(sum(e.get("pnl_pct") or 0 for e in completed), 2)
             out.append({
                 "date":      date_str,
                 "total":     len(entries),
                 "completed": len(completed),
                 "wins":      wins,
                 "win_rate":  round(wins / len(completed) * 100, 1) if completed else 0,
+                "total_pnl": total_pnl,
+                "good_day":  total_pnl > 0 if completed else None,
             })
         except Exception:
             pass

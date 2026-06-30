@@ -1187,8 +1187,15 @@ function atxRenderTable(){
   const completed=atxEntries.filter(e=>['WIN','LOSS','FLAT'].includes(e.result));
   const wins=completed.filter(e=>e.result==='WIN').length;
   const wr=completed.length?Math.round(wins/completed.length*100):0;
-  document.getElementById('atxStats').textContent=
-    atxEntries.length+' picks · '+wins+'/'+completed.length+' resolved · '+wr+'% win';
+  const totalPnl=completed.reduce((s,e)=>s+(e.pnl_pct||0),0);
+  const pnlRounded=Math.round(totalPnl*100)/100;
+  const dayLabel=completed.length
+    ?(pnlRounded>0?'✓ GOOD DAY':'✗ BAD DAY')
+    :'—';
+  const dayColor=pnlRounded>0?'#4ade80':'#f87171';
+  document.getElementById('atxStats').innerHTML=
+    atxEntries.length+' picks · '+wins+'/'+completed.length+' wins · '+wr+'% · '
+    +'<b style="color:'+dayColor+'">Day P&L: '+(pnlRounded>=0?'+':'')+pnlRounded+'% '+dayLabel+'</b>';
   body.innerHTML=atxEntries.slice(0,80).map(e=>{
     const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
     const sc=e.side==='BUY'?'#4ade80':'#f87171';
