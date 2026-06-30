@@ -1094,11 +1094,14 @@ function jRender(days){
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
 const ATX_EXIT_MS   = 5*60*1000;
-const ATX_WIN_PCT   = 0.50;   // target: exit at +0.5%
-const ATX_SL_EQ     = 0.50;   // equity SL: exit at -0.5%
-const ATX_SL_OPT    = 5.0;    // options SL: -5% of estimated ATM premium
-const ATX_OPT_PREM  = 0.015;  // estimated ATM weekly premium ≈ 1.5% of stock price
-const ATX_FLAT_PCT  = 0.15;   // band for FLAT vs LOSS at manual stop
+const ATX_WIN_PCT        = 0.50;   // target: exit at +0.5%
+const ATX_SL_EQ          = 0.50;   // equity SL: exit at -0.5%
+const ATX_SL_OPT         = 5.0;    // options SL: -5% of estimated ATM premium
+const ATX_OPT_PREM       = 0.015;  // estimated ATM weekly premium ≈ 1.5% of stock price
+const ATX_FLAT_PCT       = 0.15;   // band for FLAT vs LOSS at manual stop
+const ATX_PULLBACK_PCT   = 0.20;   // wait for 0.2% dip from signal before entering
+const ATX_PULLBACK_TICKS = 60;     // give up if no pullback after 60s
+const ATX_PULLBACK_MAX   = 1.00;   // skip if drops >1% — breakdown not pullback
 
 let atxEntries = [];
 let atxTimer   = null;
@@ -1112,10 +1115,15 @@ function atxStart(){
   document.getElementById('atxStartBtn').disabled=true;
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
-  atLog('Auto-test: picking top 10 now · watching for +0.1% all day · ■ Stop to exit');
+  atxTimer=setInterval(()=>{
+    // keep scanning every 5 min until we have 10 active picks
+    if(Object.keys(atxPending).length<10) atxRound();
+  }, ATX_CYCLE_MS);
+  atLog('Auto-test: scanning every 5 min until 10 picks · 0.2% pullback entry · ■ Stop to exit');
 }
 
 function atxStop(){
+  if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
   // force-exit all pending picks with current prices
   Object.keys(atxPending).forEach(id=>atxForceExit(id));
   document.getElementById('atxStartBtn').disabled=false;
@@ -1153,13 +1161,14 @@ function atxRound(){
     const id=timeStr.replace(/:/g,'')+'-'+side+'-'+pick.sym;
     if(atxEntries.find(e=>e.id===id)) return;
     const entry={id,time:timeStr,symbol:pick.sym,side,
-      entry_price:pick.ltp,score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
+      signal_price:pick.ltp,entry_price:null,entry_phase:'waiting',wait_ticks:0,
+      score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
       result:null,exit_price:null,exit_time:null,pnl_pct:null};
     atxEntries.unshift(entry);
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
     const pollId=setInterval(()=>atxPollWin(id),1000);
     atxPending[id]={entry,pollId};
-    atLog('[ATX] '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/8');
+    atLog('[ATX] SIGNAL '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' — waiting for -0.2% pullback');
     added++;
   });
   if(!added) atLog('[ATX] '+timeStr+' — no qualifying picks (need score>=5)');
@@ -1170,21 +1179,47 @@ function atxPollWin(id){
   const p=atxPending[id]; if(!p) return;
   const entry=p.entry;
   const stock=Object.values(scData).find(r=>r.sym===entry.symbol);
-  if(!stock||!stock.ltp) return;
+  if(!stock||!stock.ltp){ atxRenderTable(); return; }
+  const ltp=stock.ltp;
+  entry._liveLtp=ltp;
+
+  if(entry.entry_phase==='waiting'){
+    entry.wait_ticks++;
+    const sp=entry.signal_price;
+    // for BUY: wait for dip; for SELL: wait for bounce
+    const movePct=entry.side==='BUY'?(sp-ltp)/sp*100:(ltp-sp)/sp*100;
+    if(movePct>=ATX_PULLBACK_PCT){
+      // pullback hit — enter at current price
+      entry.entry_price=ltp;
+      entry.entry_phase='active';
+      fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+      atLog('[ATX] ENTERED '+entry.symbol+' '+entry.side+' @ ₹'+ltp.toFixed(2)+' (−'+movePct.toFixed(2)+'% from signal)');
+    } else if(entry.wait_ticks>=ATX_PULLBACK_TICKS||movePct<=-ATX_PULLBACK_MAX){
+      // timeout or breakdown — skip
+      clearInterval(p.pollId); delete atxPending[id];
+      entry.result='SKIP';
+      entry.exit_time=_atxIst().toTimeString().slice(0,8);
+      fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
+      const reason=movePct<=-ATX_PULLBACK_MAX?'breakdown':'no pullback in 60s';
+      atLog('[ATX] SKIP '+entry.symbol+' — '+reason);
+    }
+    atxRenderTable(); return;
+  }
+
+  // active phase — WIN / SL check
   const pnl=entry.side==='BUY'
-    ?(stock.ltp-entry.entry_price)/entry.entry_price*100
-    :(entry.entry_price-stock.ltp)/entry.entry_price*100;
-  const hit = pnl>=ATX_WIN_PCT ? 'WIN' : pnl<=-ATX_SL_EQ ? 'SL' : null;
+    ?(ltp-entry.entry_price)/entry.entry_price*100
+    :(entry.entry_price-ltp)/entry.entry_price*100;
+  const hit=pnl>=ATX_WIN_PCT?'WIN':pnl<=-ATX_SL_EQ?'SL':null;
   if(hit){
     clearInterval(p.pollId); delete atxPending[id];
     entry.exit_time=_atxIst().toTimeString().slice(0,8);
-    entry.exit_price=stock.ltp;
+    entry.exit_price=ltp;
     entry.pnl_pct=Math.round(pnl*100)/100;
     entry.result=hit==='WIN'?'WIN':'LOSS';
     fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-    atLog('[ATX] '+hit+' '+entry.symbol+' '+(pnl>=0?'+':'')+entry.pnl_pct+'% @ ₹'+stock.ltp.toFixed(2));
+    atLog('[ATX] '+hit+' '+entry.symbol+' '+(pnl>=0?'+':'')+entry.pnl_pct+'% @ ₹'+ltp.toFixed(2));
   }
-  entry._liveLtp=stock.ltp;
   entry._livePnl=Math.round(pnl*100)/100;
   atxRenderTable();
 }
@@ -1195,7 +1230,10 @@ function atxForceExit(id){
   const entry=p.entry;
   const stock=Object.values(scData).find(r=>r.sym===entry.symbol);
   entry.exit_time=_atxIst().toTimeString().slice(0,8);
-  if(stock&&stock.ltp){
+  if(entry.entry_phase==='waiting'){
+    // never entered — just cancel
+    entry.result='SKIP';
+  } else if(stock&&stock.ltp){
     entry.exit_price=stock.ltp;
     const pnl=entry.side==='BUY'
       ?(stock.ltp-entry.entry_price)/entry.entry_price*100
@@ -1229,33 +1267,38 @@ function atxRenderTable(){
     atxEntries.length+' picks · '+wins+'/'+completed.length+' wins · '+wr+'% · '
     +'<b style="color:'+dayColor+'">Day P&L: '+(pnlRounded>=0?'+':'')+pnlRounded+'% '+dayLabel+'</b>';
   body.innerHTML=atxEntries.slice(0,80).map(e=>{
-    const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
+    const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':e.result==='SKIP'?'#6b7280':'#6b7280';
     const sc=e.side==='BUY'?'#4ade80':'#f87171';
     const isPending=!e.result&&atxPending[e.id];
-    let pnlCell;
-    if(isPending&&e._liveLtp!=null){
+    const isWaiting=isPending&&e.entry_phase==='waiting';
+    const isActive=isPending&&e.entry_phase==='active';
+    let pnlCell='—';
+    if(isWaiting&&e._liveLtp!=null){
+      const movePct=e.side==='BUY'?(e.signal_price-e._liveLtp)/e.signal_price*100:(e._liveLtp-e.signal_price)/e.signal_price*100;
+      const col=movePct>=0?'#fbbf24':'#9ca3af';
+      pnlCell='<span style="color:'+col+'">'+(movePct>=0?'−':'+')+Math.abs(movePct).toFixed(2)+'% from signal</span>';
+    } else if(isActive&&e._liveLtp!=null){
       const diff=e.side==='BUY'?e._liveLtp-e.entry_price:e.entry_price-e._liveLtp;
       const col=diff>=0?'#4ade80':'#f87171';
       const sign=diff>=0?'+':'';
-      pnlCell='<span style="color:'+col+'">'+sign+'₹'+diff.toFixed(2)
-        +' ('+sign+e._livePnl+'%)</span>';
-    } else if(e.pnl_pct!==null){
+      pnlCell='<span style="color:'+col+'">'+sign+'₹'+diff.toFixed(2)+' ('+sign+e._livePnl+'%)</span>';
+    } else if(e.pnl_pct!=null){
       const col=e.pnl_pct>=0?'#4ade80':'#f87171';
       const sign=e.pnl_pct>=0?'+':'';
-      const diff=e.exit_price!=null
-        ?(e.side==='BUY'?e.exit_price-e.entry_price:e.entry_price-e.exit_price)
-        :null;
-      pnlCell='<span style="color:'+col+'">'
-        +(diff!=null?sign+'₹'+diff.toFixed(2)+' ':'')+sign+e.pnl_pct+'%</span>';
-    } else { pnlCell='—'; }
+      const diff=e.exit_price!=null?(e.side==='BUY'?e.exit_price-e.entry_price:e.entry_price-e.exit_price):null;
+      pnlCell='<span style="color:'+col+'">'+(diff!=null?sign+'₹'+diff.toFixed(2)+' ':'')+sign+e.pnl_pct+'%</span>';
+    }
+    const statusLabel=e.result??(isWaiting?'⏳ pullback…':isActive?'watching…':'—');
+    const displayEntry=e.entry_price!=null?'₹'+e.entry_price.toFixed(2):(e.signal_price?'~₹'+e.signal_price.toFixed(2):'—');
+    const displayLive=e.exit_price?'₹'+e.exit_price.toFixed(2):isPending&&e._liveLtp?'₹'+e._liveLtp.toFixed(2):'—';
     return '<tr style="border-bottom:1px solid #1f2023">'
       +'<td style="padding:6px 8px;color:#6b7280;font-variant-numeric:tabular-nums">'+e.time+'</td>'
       +'<td style="padding:6px 8px;font-weight:700">'+e.symbol+'</td>'
       +'<td style="padding:6px 8px;color:'+sc+';font-weight:600">'+e.side+'</td>'
-      +'<td style="padding:6px 8px">'+(e.entry_price!=null?'₹'+e.entry_price.toFixed(2):'—')+'</td>'
-      +'<td style="padding:6px 8px">'+(e.exit_price?'₹'+e.exit_price.toFixed(2):isPending&&e._liveLtp?'₹'+e._liveLtp.toFixed(2):'—')+'</td>'
+      +'<td style="padding:6px 8px">'+displayEntry+'</td>'
+      +'<td style="padding:6px 8px">'+displayLive+'</td>'
       +'<td style="padding:6px 8px">'+pnlCell+'</td>'
-      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+(e.result??(isPending?'watching…':'—'))+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+statusLabel+'</td>'
       +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/8</td>'
       +'</tr>';
   }).join('');
