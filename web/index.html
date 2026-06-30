@@ -1343,17 +1343,18 @@ function atxRenderOptions(){
   const expiry=_atxWeekExpiry();
   body.innerHTML=atxEntries.slice(0,80).map(e=>{
     const lot=ATX_LOT[e.symbol]||ATX_LOT_DEFAULT;
-    const strike=_atxStrike(e.entry_price||0);
+    const refPrice=e.entry_price??e.signal_price??0;
+    const strike=_atxStrike(refPrice);
     const type=e.side==='BUY'?'CE':'PE';
     const optSym=e.symbol+' '+strike+' '+type;
     const sc=type==='CE'?'#4ade80':'#f87171';
     const isPending=!e.result&&atxPending[e.id];
-    const currentPrice=isPending&&e._liveLtp?e._liveLtp:(e.exit_price??e.entry_price);
-    const rawMove=e.side==='BUY'?(currentPrice-e.entry_price):(e.entry_price-currentPrice);
+    const currentPrice=isPending&&e._liveLtp?e._liveLtp:(e.exit_price??refPrice);
+    const rawMove=refPrice?(e.side==='BUY'?(currentPrice-refPrice):(refPrice-currentPrice)):0;
     const optMove=rawMove*0.5;  // ATM delta ≈ 0.5
     const lotPnl=Math.round(optMove*lot*100)/100;
     // SL: -5% of estimated entry premium (≈1.5% of stock price × lot)
-    const entryPrem=(e.entry_price||0)*ATX_OPT_PREM;
+    const entryPrem=refPrice*ATX_OPT_PREM;
     const slThreshold=-(entryPrem*lot*ATX_SL_OPT/100);
     const optSlHit=lotPnl<=slThreshold;
     const moveCol=optMove>=0?'#4ade80':(optSlHit?'#ef4444':'#f87171');
