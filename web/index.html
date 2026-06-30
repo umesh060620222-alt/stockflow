@@ -245,6 +245,34 @@
       </div>
       <div id="atLog" style="font-family:monospace;font-size:11px;color:#6b7280;max-height:90px;overflow-y:auto;white-space:pre-wrap"></div>
     </div>
+    <!-- Auto-Test panel -->
+    <div id="atxPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <b style="font-size:13px">Auto-Test</b>
+        <span style="font-size:11px;color:#6b7280">5 min cycle: watch 2 min → pick → exit after 3 min</span>
+        <button class="btn btn-yellow" id="atxStartBtn" style="padding:4px 12px;font-size:12px" onclick="atxStart()">▶ Start</button>
+        <button class="btn btn-danger" id="atxStopBtn" style="padding:4px 12px;font-size:12px" onclick="atxStop()" disabled>■ Stop</button>
+        <button class="btn btn-muted" style="padding:4px 12px;font-size:12px" onclick="atxLoadToday()">↻ Today</button>
+        <span id="atxStats" style="font-size:11px;color:#9ca3af"></span>
+      </div>
+      <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="color:#6b7280;font-size:11px;text-align:left;position:sticky;top:0;background:#1a1c20">
+            <th style="padding:5px 8px">Time</th>
+            <th style="padding:5px 8px">Symbol</th>
+            <th style="padding:5px 8px">Side</th>
+            <th style="padding:5px 8px">Entry ₹</th>
+            <th style="padding:5px 8px">Exit ₹</th>
+            <th style="padding:5px 8px">P&amp;L</th>
+            <th style="padding:5px 8px">Result</th>
+            <th style="padding:5px 8px">Score</th>
+          </tr></thead>
+          <tbody id="atxBody">
+            <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px;font-size:12px">Start auto-test to begin</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <div id="scTop5" style="display:none;margin-bottom:14px"></div>
     <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
       <table id="scTbl" style="display:none;font-size:13px">
@@ -620,6 +648,8 @@ async function scConnect(){
     document.getElementById('scStopBtn').disabled=false;
     document.getElementById('scTbl').style.display='';
     document.getElementById('atPanel').style.display='';
+    document.getElementById('atxPanel').style.display='';
+    atxLoadToday();
     atSnapshotSaved=false;
     scSessionStart=new Date();
     scRenderTimer=setInterval(scRender,2000);
@@ -629,10 +659,12 @@ async function scConnect(){
   scWs.onclose=()=>{ document.getElementById('scStatus').textContent='Disconnected.';
     document.getElementById('scStopBtn').disabled=true;
     document.getElementById('atPanel').style.display='none';
+    document.getElementById('atxPanel').style.display='none';
     if(atArmedBuy) atDisarmBuy();
     if(atArmedSell) atDisarmSell();
     if(atPollTimer){ clearInterval(atPollTimer); atPollTimer=null; }
-    if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; } };
+    if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; }
+    atxStop(); };
 }
 
 function scDisconnect(){
@@ -1020,6 +1052,126 @@ function jRender(days){
     </div>`;
   }
   document.getElementById('jBody').innerHTML=html;
+}
+// ── Auto-Test ─────────────────────────────────────────────────────────
+let atxEntries=[];
+let atxTimer=null;
+let atxExitTimers={};
+const ATX_CYCLE_MS=5*60*1000;
+const ATX_EXIT_MS =3*60*1000;
+
+function atxStart(){
+  if(!Object.keys(scData).length){ atLog('Auto-Test: connect scanner first.'); return; }
+  document.getElementById('atxStartBtn').disabled=true;
+  document.getElementById('atxStopBtn').disabled=false;
+  atxRound();
+  atxTimer=setInterval(atxRound,ATX_CYCLE_MS);
+  atLog('Auto-test: picks every 5 min, exits after 3 min');
+}
+
+function atxStop(){
+  if(atxTimer){ clearInterval(atxTimer); atxTimer=null; }
+  Object.values(atxExitTimers).forEach(t=>clearTimeout(t));
+  atxExitTimers={};
+  document.getElementById('atxStartBtn').disabled=false;
+  document.getElementById('atxStopBtn').disabled=true;
+}
+
+function atxRound(){
+  const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  const timeStr=ist.toTimeString().slice(0,8);
+  let bestBuy=null,bestBuyScore=-1,bestSell=null,bestSellScore=-1;
+  for(const r of Object.values(scData)){
+    const t=r.ticks; if(!t||t.length<3) continue;
+    const last=t[t.length-1];
+    const sc=scScore(r), ss=scScoreSell(r);
+    if(sc&&typeof sc==='object'&&sc.total>bestBuyScore&&last.chgPct>0){
+      bestBuyScore=sc.total;
+      bestBuy={sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
+    }
+    if(ss&&ss.total>bestSellScore&&last.chgPct<0){
+      bestSellScore=ss.total;
+      bestSell={sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
+    }
+  }
+  [[bestBuy,'BUY'],[bestSell,'SELL']].forEach(([pick,side])=>{
+    if(!pick) return;
+    const id=timeStr.replace(/:/g,'')+'-'+side+'-'+pick.sym;
+    const entry={id,time:timeStr,symbol:pick.sym,side,
+      entry_price:pick.ltp,score:pick.score,ratio:pick.ratio,chg_pct:pick.chgPct,
+      result:null,exit_price:null,exit_time:null,pnl_pct:null};
+    atxEntries.unshift(entry);
+    fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(entry)});
+    atxExitTimers[id]=setTimeout(()=>atxCheckExit(id),ATX_EXIT_MS);
+    atLog('[ATX] '+timeStr+' '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/7');
+  });
+  if(!bestBuy&&!bestSell) atLog('[ATX] '+timeStr+' — no qualifying picks');
+  atxRenderTable();
+}
+
+function atxCheckExit(id){
+  const entry=atxEntries.find(e=>e.id===id);
+  if(!entry) return;
+  const stock=Object.values(scData).find(r=>r.sym===entry.symbol);
+  const ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
+  entry.exit_time=ist.toTimeString().slice(0,8);
+  if(stock&&stock.ltp){
+    entry.exit_price=stock.ltp;
+    const pnl=entry.side==='BUY'
+      ?(stock.ltp-entry.entry_price)/entry.entry_price*100
+      :(entry.entry_price-stock.ltp)/entry.entry_price*100;
+    entry.pnl_pct=Math.round(pnl*100)/100;
+    entry.result=pnl>0.05?'WIN':pnl<-0.05?'LOSS':'FLAT';
+  } else {
+    entry.result='NO DATA';
+  }
+  fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(entry)});
+  delete atxExitTimers[id];
+  atLog('[ATX] EXIT '+entry.symbol+' '+entry.result+' pnl='+(entry.pnl_pct??'--')+'%');
+  atxRenderTable();
+}
+
+function atxRenderTable(){
+  const body=document.getElementById('atxBody');
+  if(!atxEntries.length){
+    body.innerHTML='<tr><td colspan="8" style="text-align:center;color:#6b7280;padding:20px">No picks yet</td></tr>';
+    return;
+  }
+  const completed=atxEntries.filter(e=>['WIN','LOSS','FLAT'].includes(e.result));
+  const wins=completed.filter(e=>e.result==='WIN').length;
+  const wr=completed.length?Math.round(wins/completed.length*100):0;
+  document.getElementById('atxStats').textContent=
+    atxEntries.length+' picks · '+wins+'/'+completed.length+' resolved · '+wr+'% win';
+  body.innerHTML=atxEntries.slice(0,80).map(e=>{
+    const rc=e.result==='WIN'?'#4ade80':e.result==='LOSS'?'#f87171':e.result==='FLAT'?'#fbbf24':'#6b7280';
+    const sc=e.side==='BUY'?'#4ade80':'#f87171';
+    const pnl=e.pnl_pct!==null
+      ?'<span style="color:'+(e.pnl_pct>=0?'#4ade80':'#f87171')+'">'+(e.pnl_pct>=0?'+':'')+e.pnl_pct+'%</span>'
+      :'—';
+    return '<tr style="border-bottom:1px solid #1f2023">'
+      +'<td style="padding:6px 8px;color:#6b7280;font-variant-numeric:tabular-nums">'+e.time+'</td>'
+      +'<td style="padding:6px 8px;font-weight:700">'+e.symbol+'</td>'
+      +'<td style="padding:6px 8px;color:'+sc+';font-weight:600">'+e.side+'</td>'
+      +'<td style="padding:6px 8px">'+(e.entry_price!=null?'₹'+e.entry_price.toFixed(2):'—')+'</td>'
+      +'<td style="padding:6px 8px">'+(e.exit_price?'₹'+e.exit_price.toFixed(2):'—')+'</td>'
+      +'<td style="padding:6px 8px">'+pnl+'</td>'
+      +'<td style="padding:6px 8px;font-weight:600;color:'+rc+'">'+(e.result??'watching…')+'</td>'
+      +'<td style="padding:6px 8px;color:#a78bfa">'+e.score+'/7</td>'
+      +'</tr>';
+  }).join('');
+}
+
+async function atxLoadToday(){
+  try{
+    const rows=await (await fetch('/api/autotest/today')).json();
+    if(!rows.length) return;
+    const existing=new Set(atxEntries.map(e=>e.id));
+    rows.reverse().forEach(e=>{ if(!existing.has(e.id)) atxEntries.push(e); });
+    atxEntries.sort((a,b)=>b.time.localeCompare(a.time));
+    atxRenderTable();
+  }catch(e){ console.error('atxLoadToday',e); }
 }
 // ── end Scanner ────────────────────────────────────────────────────────
 

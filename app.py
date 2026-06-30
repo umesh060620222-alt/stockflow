@@ -266,6 +266,13 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(DS.enrich(date_str, kc)))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/autotest/today":
+            import auto_test as AXT, datetime as _dt
+            ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+            return self._send(200, dumps(AXT.get_today(str(ist.date()))))
+        if path == "/api/autotest/history":
+            import auto_test as AXT
+            return self._send(200, dumps(AXT.get_history()))
         if path == "/api/autotrader/status":
             import autotrader as AT
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
@@ -331,6 +338,11 @@ class H(BaseHTTPRequestHandler):
             t = threading.Thread(target=trader._wait_and_order, kwargs={"delay": delay}, daemon=True)
             t.start()
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
+        if path == "/api/autotest/record":
+            import auto_test as AXT, datetime as _dt
+            ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+            result = AXT.save_entry(str(ist.date()), body)
+            return self._send(200, dumps(result))
         if path == "/api/scanner/snapshot":
             import data_store as DS, datetime as _dt
             ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
