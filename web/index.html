@@ -1116,10 +1116,10 @@ function atxStart(){
   document.getElementById('atxStopBtn').disabled=false;
   atxRound();
   atxTimer=setInterval(()=>{
-    // keep scanning every 5 min until we have 10 active picks
+    // keep scanning every 10s until we have 10 active picks
     if(Object.keys(atxPending).length<10) atxRound();
-  }, ATX_CYCLE_MS);
-  atLog('Auto-test: scanning every 5 min until 10 picks · 0.2% pullback entry · ■ Stop to exit');
+  }, 10000);
+  atLog('Auto-test: scanning every 10s until 10 picks · 0.2% pullback entry · ■ Stop to exit');
 }
 
 function atxStop(){
