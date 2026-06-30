@@ -759,47 +759,58 @@ function scParseBinary(buf){
 
 // ── Streak reversal strategy ──────────────────────────────────────────
 // Track consecutive price direction; fire BUY/SELL on first reversal after ≥0.5% streak
-const scStreaks={};  // {sym: {dir, startPrice, lastPrice, signalFired}}
-const ATX_STREAK_PCT=0.50;  // min streak move to enter with momentum
+// {sym: {state:'streaking'|'watching', dir:'up'|'down', startPrice, extremePrice}}
+const scStreaks={};
+const ATX_STREAK_PCT   = 0.50;  // min streak to qualify
+const ATX_REVERSAL_PCT = 0.10;  // reversal confirmation before entry
 
 function scCheckStreak(d){
   const t=d.ticks;
   const ltp=t[t.length-1].ltp;
   const prev=t[t.length-2].ltp;
-  if(ltp===prev) return;  // flat tick — skip
+  if(ltp===prev) return;
 
   const sym=d.sym;
-  if(!scStreaks[sym]) scStreaks[sym]={dir:null,startPrice:prev,lastPrice:ltp,signalFired:false};
+  if(!scStreaks[sym]) scStreaks[sym]={state:'streaking',dir:null,startPrice:prev,extremePrice:prev};
   const s=scStreaks[sym];
   const tickUp=ltp>prev;
 
-  if(s.dir===null){
-    s.dir=tickUp?'up':'down';
-    s.startPrice=prev;
-    s.lastPrice=ltp;
-    s.signalFired=false;
-    return;
-  }
-
-  const streakContinues=(tickUp&&s.dir==='up')||(!tickUp&&s.dir==='down');
-
-  if(streakContinues){
-    s.lastPrice=ltp;
-    // fire once when streak crosses 0.5% — enter WITH momentum
-    if(!s.signalFired){
-      const streakPct=Math.abs(s.lastPrice-s.startPrice)/s.startPrice*100;
-      if(streakPct>=ATX_STREAK_PCT){
-        s.signalFired=true;
-        const side=s.dir==='up'?'BUY':'SELL';
-        atxStreakSignal(sym,side,streakPct,ltp);
-      }
+  if(s.state==='streaking'){
+    if(s.dir===null){
+      s.dir=tickUp?'up':'down'; s.startPrice=prev; s.extremePrice=ltp; return;
     }
-  } else {
-    // direction flipped — reset streak
-    s.dir=tickUp?'up':'down';
-    s.startPrice=s.lastPrice;
-    s.lastPrice=ltp;
-    s.signalFired=false;
+    const cont=(tickUp&&s.dir==='up')||(!tickUp&&s.dir==='down');
+    if(cont){
+      s.extremePrice=ltp;
+      const streakPct=Math.abs(s.extremePrice-s.startPrice)/s.startPrice*100;
+      if(streakPct>=ATX_STREAK_PCT){
+        s.state='watching';  // streak big enough — now wait for reversal
+        s.streakPct=streakPct;
+      }
+    } else {
+      // reset streak in new direction
+      s.dir=tickUp?'up':'down'; s.startPrice=prev; s.extremePrice=ltp;
+    }
+
+  } else if(s.state==='watching'){
+    const cont=(tickUp&&s.dir==='up')||(!tickUp&&s.dir==='down');
+    if(cont){
+      // streak still extending — update extreme, don't reset
+      s.extremePrice=ltp;
+      s.streakPct=Math.abs(s.extremePrice-s.startPrice)/s.startPrice*100;
+    } else {
+      // reversal tick — measure from extreme
+      const reversalPct=Math.abs(ltp-s.extremePrice)/s.extremePrice*100;
+      if(reversalPct>=ATX_REVERSAL_PCT){
+        // confirmed reversal — enter opposite to streak
+        const side=s.dir==='down'?'BUY':'SELL';
+        atxStreakSignal(sym,side,s.streakPct,ltp);
+        // reset streak in new direction
+        s.state='streaking'; s.dir=tickUp?'up':'down';
+        s.startPrice=s.extremePrice; s.extremePrice=ltp;
+      }
+      // else: tiny reversal, keep watching for bigger confirmation
+    }
   }
 }
 
@@ -1142,7 +1153,7 @@ function jRender(days){
 //   → EXIT FLAT if 3 min expires and pnl within ±0.15%
 const ATX_CYCLE_MS  = 5*60*1000;
 const ATX_EXIT_MS   = 5*60*1000;
-const ATX_WIN_PCT          = 0.10;  // target: exit at +0.1% (momentum quick exit)
+const ATX_WIN_PCT          = 0.50;  // target: exit at +0.5%
 const ATX_SL_EQ            = 0.50;  // equity SL default (score 7-8)
 const ATX_SL_OPT           = 5.0;   // options SL: -5% of estimated ATM premium
 const ATX_OPT_PREM         = 0.015; // estimated ATM weekly premium ≈ 1.5% of stock price
@@ -1190,7 +1201,7 @@ function atxStreakSignal(sym,side,streakPct,ltp){
   fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
   const pollId=setInterval(()=>atxPollWin(id),1000);
   atxPending[id]={entry,pollId};
-  atLog('[ATX] MOMENTUM '+side+' '+sym+' @ ₹'+ltp.toFixed(2)+' streak='+streakPct.toFixed(2)+'% → target +0.1%');
+  atLog('[ATX] ENTRY '+side+' '+sym+' @ ₹'+ltp.toFixed(2)+' (streak='+streakPct.toFixed(2)+'% reversed 0.1%)');
   atxRenderTable();
 }
 
