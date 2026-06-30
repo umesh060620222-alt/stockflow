@@ -1108,9 +1108,9 @@ function atxRound(){
     const t=r.ticks; if(!t||t.length<3) continue;
     const last=t[t.length-1];
     const sc=scScore(r), ss=scScoreSell(r);
-    if(sc&&typeof sc==='object'&&sc.total>=6&&sc.volSurge&&last.chgPct>0)
+    if(sc&&typeof sc==='object'&&sc.total>=5&&last.chgPct>0)
       buys.push({sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
-    if(ss&&ss.total>=6&&ss.volSurge&&last.chgPct<0)
+    if(ss&&ss.total>=5&&last.chgPct<0)
       sells.push({sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio});
   }
   buys.sort((a,b)=>b.score-a.score);
@@ -1133,7 +1133,7 @@ function atxRound(){
     atLog('[ATX] '+side+' '+pick.sym+' @ ₹'+pick.ltp.toFixed(2)+' score='+pick.score+'/8');
     added++;
   });
-  if(!added) atLog('[ATX] '+timeStr+' — no qualifying picks (need score>=6 + vol surge)');
+  if(!added) atLog('[ATX] '+timeStr+' — no qualifying picks (need score>=5)');
   atxRenderTable();
 }
 
