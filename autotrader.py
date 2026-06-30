@@ -118,47 +118,75 @@ class AutoTrader:
                 break
             time.sleep(1)
 
+    def _atm_strike(self, ltp):
+        for threshold, iv in [(100,2.5),(250,5),(500,10),(1000,25),(2500,50)]:
+            if ltp <= threshold:
+                return round(ltp / iv) * iv
+        return round(ltp / 100) * 100
+
+    def _get_option(self, kc, sym, ltp, side):
+        """Return nearest-expiry ATM option instrument from Kite NFO."""
+        strike   = self._atm_strike(ltp)
+        opt_type = "CE" if side == "BUY" else "PE"
+        today    = datetime.date.today()
+        rows     = kc.instruments("NFO")
+        matches  = [r for r in rows
+                    if r.get("name") == sym
+                    and float(r.get("strike") or 0) == strike
+                    and r.get("instrument_type") == opt_type
+                    and r.get("expiry") and r["expiry"] >= today]
+        if not matches:
+            return None
+        matches.sort(key=lambda r: r["expiry"])
+        return matches[0]
+
     def _place_order(self):
         sym  = self.pick["symbol"]
-        qty  = self.pick.get("quantity", 1)
+        ltp  = self.pick.get("ltp", 0)
         side = self.pick.get("side", "BUY").upper()
-        is_buy = side == "BUY"
 
         if PAPER:
-            self._log(f"[PAPER] MARKET {side} {qty}×{sym}")
-            self.order_id = "PAPER-001"
-            self.state = "ordered"
+            strike = self._atm_strike(ltp)
+            opt_type = "CE" if side == "BUY" else "PE"
+            self._log(f"[PAPER] BUY 1 lot {sym} {strike} {opt_type} @ market")
+            self.order_id  = "PAPER-001"
+            self.state     = "ordered"
             time.sleep(2)
             import random
-            self.fill_price = round(self.pick.get("ltp", 1000) * (1 + random.uniform(-0.001, 0.001)), 2)
-            self._log(f"[PAPER] FILLED at ₹{self.fill_price} (simulated)")
-            sl_trigger = round(self.fill_price * (1 - SL_PCT if is_buy else 1 + SL_PCT), 2)
+            self.fill_price = round(ltp * 0.015 * (1 + random.uniform(-0.05, 0.05)), 2)
+            sl_trigger = round(self.fill_price * 0.50, 2)  # SL at 50% of premium
             self.sl_order_id = "PAPER-002"
             self.state = "done"
-            self._log(f"[PAPER] SL-M at ₹{sl_trigger} (simulated)")
+            self._log(f"[PAPER] FILLED premium ₹{self.fill_price} · SL at ₹{sl_trigger}")
             return
 
         import zerodha as Z
         kc = Z.kite()
-        tx    = kc.TRANSACTION_TYPE_BUY  if is_buy else kc.TRANSACTION_TYPE_SELL
-        sl_tx = kc.TRANSACTION_TYPE_SELL if is_buy else kc.TRANSACTION_TYPE_BUY
-        self._log(f"Placing MARKET {side} for {qty}×{sym}…")
+        opt = self._get_option(kc, sym, ltp, side)
+        if not opt:
+            self.state = "error"
+            self._log(f"No ATM option found for {sym} @ ₹{ltp}")
+            return
+
+        tradingsymbol = opt["tradingsymbol"]
+        lot_size      = int(opt.get("lot_size") or 1)
+        self._log(f"Placing MARKET BUY 1 lot ({lot_size} qty) {tradingsymbol}…")
         try:
             oid = kc.place_order(
                 variety          = kc.VARIETY_REGULAR,
-                exchange         = kc.EXCHANGE_NSE,
-                tradingsymbol    = sym,
-                transaction_type = tx,
-                quantity         = qty,
+                exchange         = kc.EXCHANGE_NFO,
+                tradingsymbol    = tradingsymbol,
+                transaction_type = kc.TRANSACTION_TYPE_BUY,
+                quantity         = lot_size,
                 product          = kc.PRODUCT_MIS,
                 order_type       = kc.ORDER_TYPE_MARKET,
             )
             self.order_id = oid
-            self.state = "ordered"
-            self._log(f"{side} order placed: {oid}")
+            self.state    = "ordered"
+            self._log(f"Option BUY placed: {oid} · {tradingsymbol}")
         except Exception as e:
             self.state = "error"
-            self._log(f"{side} order failed: {e}")
+            self._log(f"Option order failed: {e}")
             return
 
         # poll for fill
@@ -170,36 +198,31 @@ class AutoTrader:
                 o = next((x for x in orders if str(x["order_id"]) == str(self.order_id)), None)
                 if o and o["status"] == "COMPLETE":
                     self.fill_price = float(o["average_price"])
-                    self._log(f"FILLED at ₹{self.fill_price}")
+                    self._log(f"FILLED at ₹{self.fill_price} premium")
                     break
             except Exception:
                 pass
         else:
-            self._log("Could not confirm fill — place SL manually.")
+            self._log("Could not confirm fill — exit manually.")
             self.state = "done"
             return
 
-        # place SL-M
-        if is_buy:
-            sl_trigger = round(self.fill_price * (1 - SL_PCT), 2)
-            sl_desc = f"5% below ₹{self.fill_price}"
-        else:
-            sl_trigger = round(self.fill_price * (1 + SL_PCT), 2)
-            sl_desc = f"5% above ₹{self.fill_price}"
-        self._log(f"Placing SL-M at ₹{sl_trigger} ({sl_desc})…")
+        # SL at 50% of premium paid
+        sl_trigger = round(self.fill_price * 0.50, 2)
+        self._log(f"Placing SL-M at ₹{sl_trigger} (50% of ₹{self.fill_price} premium)…")
         try:
             sl_oid = kc.place_order(
                 variety          = kc.VARIETY_REGULAR,
-                exchange         = kc.EXCHANGE_NSE,
-                tradingsymbol    = sym,
-                transaction_type = sl_tx,
-                quantity         = qty,
+                exchange         = kc.EXCHANGE_NFO,
+                tradingsymbol    = tradingsymbol,
+                transaction_type = kc.TRANSACTION_TYPE_SELL,
+                quantity         = lot_size,
                 product          = kc.PRODUCT_MIS,
                 order_type       = kc.ORDER_TYPE_SLM,
                 trigger_price    = sl_trigger,
             )
             self.sl_order_id = sl_oid
-            self.state = "done"
+            self.state       = "done"
             self._log(f"SL-M placed: {sl_oid} trigger=₹{sl_trigger}")
         except Exception as e:
             self.state = "error"
