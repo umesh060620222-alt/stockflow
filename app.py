@@ -224,9 +224,15 @@ class H(BaseHTTPRequestHandler):
             import data_store as DS
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
-            date_str = qs.get("date", [""])[0]
-            raw = DS.get_raw(date_str) if date_str else DS.get_raw_week()
-            fname = f"scanner_{date_str or 'week'}.json"
+            date_str   = qs.get("date",    [""])[0]
+            snap_type  = qs.get("type",    ["premarket"])[0]
+            session_id = qs.get("session", [""])[0]
+            if snap_type == "session" and date_str and session_id:
+                raw   = DS.get_session_raw(date_str, session_id)
+                fname = f"session_{date_str}_{session_id}.json"
+            else:
+                raw   = DS.get_raw(date_str) if date_str else {}
+                fname = f"premarket_{date_str or 'today'}.json"
             b = json.dumps(raw, indent=2).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -238,6 +244,15 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/scanner/history":
             import data_store as DS
             return self._send(200, dumps(DS.get_history()))
+        if path == "/api/scanner/sessions":
+            import data_store as DS
+            from urllib.parse import urlparse, parse_qs
+            date_str = parse_qs(urlparse(self.path).query).get("date", [""])[0]
+            if not date_str:
+                import datetime as _dt
+                ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+                date_str = str(ist.date())
+            return self._send(200, dumps(DS.get_sessions(date_str)))
         if path == "/api/scanner/enrich":
             import data_store as DS
             from urllib.parse import urlparse, parse_qs
@@ -320,7 +335,12 @@ class H(BaseHTTPRequestHandler):
             import data_store as DS, datetime as _dt
             ist = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
             date_str = str(ist.date())
-            result = DS.save_snapshot(date_str, body)
+            snap_type = body.get("type", "premarket")
+            if snap_type == "session":
+                session_id = body.get("session_id", ist.strftime("%H-%M-%S"))
+                result = DS.save_session(date_str, session_id, body)
+            else:
+                result = DS.save_premarket(date_str, body)
             return self._send(200, dumps(result))
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))

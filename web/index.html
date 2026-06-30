@@ -204,7 +204,7 @@
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <b style="font-size:14px">Live Volume Scanner</b>
       <button class="btn btn-yellow" onclick="scConnect()">Connect</button>
-      <button class="btn btn-danger" id="scStopBtn" onclick="scDisconnect()" disabled>Disconnect</button>
+      <button class="btn btn-danger" id="scStopBtn" onclick="scSaveAndDisconnect()" disabled>Disconnect</button>
       <span id="scStatus" style="font-size:12px;color:#6b7280"></span>
     </div>
     <div id="atPanel" style="display:none;margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
@@ -588,6 +588,7 @@ function render(d){
 let LIVE_TIMER=null;
 // ── Scanner ───────────────────────────────────────────────────────────
 let scWs=null, scTokenMap={}, scData={}, scRenderTimer=null, scTopPick=null, scTopLoser=null;
+let scSessionStart=null;
 
 function scFmt(n){
   if(n>=1e7) return (n/1e7).toFixed(1)+'Cr';
@@ -620,6 +621,7 @@ async function scConnect(){
     document.getElementById('scTbl').style.display='';
     document.getElementById('atPanel').style.display='';
     atSnapshotSaved=false;
+    scSessionStart=new Date();
     scRenderTimer=setInterval(scRender,2000);
   };
   scWs.onmessage=e=>{ if(typeof e.data!=='string') scParseBinary(e.data); };
@@ -637,6 +639,32 @@ function scDisconnect(){
   if(scWs){ scWs.close(); scWs=null; }
   if(scRenderTimer){ clearInterval(scRenderTimer); scRenderTimer=null; }
   document.getElementById('scStopBtn').disabled=true;
+  scSessionStart=null;
+}
+
+async function scSaveSession(){
+  const stocks=Object.values(scData);
+  if(!stocks.length) return;
+  const ist=t=>new Date(t.getTime()+t.getTimezoneOffset()*60000+5.5*3600000);
+  const now=ist(new Date());
+  const dateStr=now.toISOString().slice(0,10);
+  const startIst=scSessionStart?ist(scSessionStart):now;
+  const sessionId=startIst.toTimeString().slice(0,8).replace(/:/g,'-');
+  const ticks=stocks.map(r=>({sym:r.sym,prevClose:r.prevClose||0,ticks:r.ticks||[]}));
+  try{
+    await fetch('/api/scanner/snapshot',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type:'session',session_id:sessionId,ticks,
+        top_pick:scTopPick?scTopPick.sym:null,
+        top_loser:scTopLoser?scTopLoser.sym:null})});
+    atLog('Session saved: '+sessionId+' ('+ticks.length+' stocks)');
+  }catch(e){ atLog('Session save error: '+e); }
+}
+
+async function scSaveAndDisconnect(){
+  document.getElementById('scStopBtn').disabled=true;
+  await scSaveSession();
+  scDisconnect();
 }
 
 function scParseBinary(buf){
@@ -777,15 +805,18 @@ function scRender(){
       }).join('');
   }
 
-  // ── 9:08 auto-snapshot (fires whenever scanner is connected, no arm needed) ──
+  // ── 9:08 auto-snapshot + auto-disconnect ─────────────────────────────────
   const _ist=new Date(new Date().getTime()+new Date().getTimezoneOffset()*60000+5.5*3600000);
   if(_ist.getHours()===9&&_ist.getMinutes()>=8&&!atSnapshotSaved){
     atSnapshotSaved=true;
     const raw=Object.values(scData).map(r=>({sym:r.sym,prevClose:r.prevClose||0,ticks:r.ticks||[]}));
     fetch('/api/scanner/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({premarket_ticks:raw,top_pick:scTopPick?scTopPick.sym:null,
-                           top_loser:scTopLoser?scTopLoser.sym:null})});
-    atLog('9:08 snapshot saved.');
+      body:JSON.stringify({type:'premarket',premarket_ticks:raw,
+        top_pick:scTopPick?scTopPick.sym:null,
+        top_loser:scTopLoser?scTopLoser.sym:null})
+    }).then(()=>atLog('Pre-market snapshot → data/premarket/'));
+    atLog('9:08 — saving and auto-disconnecting…');
+    scDisconnect();
   }
 
   // ── Full table ────────────────────────────────────────────────────────
@@ -959,22 +990,33 @@ async function jLoad(){
 
 function jRender(days){
   if(!days.length){
-    document.getElementById('jBody').innerHTML='<p style="color:#6b7280">No data yet — arm the scanner tomorrow; snapshots save automatically at 9:08 and 9:45.</p>';
+    document.getElementById('jBody').innerHTML='<p style="color:#6b7280">No data yet — connect the scanner; pre-market snapshots save automatically at 9:08.</p>';
     return;
   }
   let html='';
   for(const d of days){
     const pick=d.top_pick, loser=d.top_loser;
+    const sessions=d.sessions||[];
+    const sessHtml=sessions.map(s=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:4px 8px;background:#101113;border-radius:6px;font-size:11px">
+        <span style="color:#9ca3af">📋 ${s.session_id}</span>
+        ${s.top_pick?`<span style="color:#4ade80">▲${s.top_pick}</span>`:''}
+        ${s.top_loser?`<span style="color:#f87171">▼${s.top_loser}</span>`:''}
+        <span style="color:#6b7280">${s.stock_count} stocks</span>
+        <a href="/api/scanner/download?date=${d.date}&type=session&session=${s.session_id}" download style="color:#fbbf24;text-decoration:none">↓</a>
+      </div>`).join('');
     html+=`<div style="background:#1a1c20;border-radius:8px;border:1px solid #374151;padding:14px;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:${sessions.length?'10px':'0'}">
         <b style="font-size:14px">${d.date}</b>
         ${pick?`<span style="color:#4ade80;font-size:12px">▲ BUY: <b>${pick}</b></span>`:''}
         ${loser?`<span style="color:#f87171;font-size:12px">▼ SELL: <b>${loser}</b></span>`:''}
         <span style="font-size:11px;color:#6b7280">
-          Pre-market: ${d.has_premarket?`✓ ${d.premarket_count} stocks`:'pending'}
+          Pre-market: ${d.has_premarket?`✓ ${d.premarket_count} stocks`:'—'}
         </span>
-        ${d.has_premarket?`<a href="/api/scanner/download?date=${d.date}" download class="btn" style="font-size:11px;padding:2px 8px;text-decoration:none">↓ JSON</a>`:''}
+        ${d.has_premarket?`<a href="/api/scanner/download?date=${d.date}" download class="btn" style="font-size:11px;padding:2px 8px;text-decoration:none">↓ Pre-mkt</a>`:''}
+        ${sessions.length?`<span style="font-size:11px;color:#a78bfa">${sessions.length} session(s)</span>`:''}
       </div>
+      ${sessHtml?`<div style="display:flex;flex-direction:column;gap:4px">${sessHtml}</div>`:''}
     </div>`;
   }
   document.getElementById('jBody').innerHTML=html;
