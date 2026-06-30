@@ -1194,14 +1194,13 @@ function atxPollWin(id){
       entry.entry_phase='active';
       fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
       atLog('[ATX] ENTERED '+entry.symbol+' '+entry.side+' @ ₹'+ltp.toFixed(2)+' (−'+movePct.toFixed(2)+'% from signal)');
-    } else if(entry.wait_ticks>=ATX_PULLBACK_TICKS||movePct<=-ATX_PULLBACK_MAX){
-      // timeout or breakdown — skip
+    } else if(movePct<=-ATX_PULLBACK_MAX){
+      // breakdown (>1% adverse) — skip
       clearInterval(p.pollId); delete atxPending[id];
       entry.result='SKIP';
       entry.exit_time=_atxIst().toTimeString().slice(0,8);
       fetch('/api/autotest/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});
-      const reason=movePct<=-ATX_PULLBACK_MAX?'breakdown':'no pullback in 60s';
-      atLog('[ATX] SKIP '+entry.symbol+' — '+reason);
+      atLog('[ATX] SKIP '+entry.symbol+' — breakdown >1%');
     }
     atxRenderTable(); return;
   }
