@@ -1084,11 +1084,11 @@ function atxRound(){
     const t=r.ticks; if(!t||t.length<3) continue;
     const last=t[t.length-1];
     const sc=scScore(r), ss=scScoreSell(r);
-    if(sc&&typeof sc==='object'&&sc.total>bestBuyScore&&last.chgPct>0){
+    if(sc&&typeof sc==='object'&&sc.total>=5&&sc.total>bestBuyScore&&last.chgPct>0){
       bestBuyScore=sc.total;
       bestBuy={sym:r.sym,score:sc.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
     }
-    if(ss&&ss.total>bestSellScore&&last.chgPct<0){
+    if(ss&&ss.total>=5&&ss.total>bestSellScore&&last.chgPct<0){
       bestSellScore=ss.total;
       bestSell={sym:r.sym,score:ss.total,ltp:last.ltp,chgPct:last.chgPct,ratio:last.ratio};
     }
@@ -1121,7 +1121,7 @@ function atxCheckExit(id){
       ?(stock.ltp-entry.entry_price)/entry.entry_price*100
       :(entry.entry_price-stock.ltp)/entry.entry_price*100;
     entry.pnl_pct=Math.round(pnl*100)/100;
-    entry.result=pnl>0.05?'WIN':pnl<-0.05?'LOSS':'FLAT';
+    entry.result=pnl>0.15?'WIN':pnl<-0.15?'LOSS':'FLAT';
   } else {
     entry.result='NO DATA';
   }
