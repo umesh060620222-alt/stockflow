@@ -202,7 +202,7 @@
         <span style="font-size:11px;color:#f87171;width:28px" id="lvFlowSellN">0</span>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280;margin-top:3px;padding:0 38px">
-        <span>Buy ticks</span><span id="lvFlowLabel" style="color:#9ca3af"></span><span>Sell ticks</span>
+        <span>Buy ticks (total)</span><span id="lvFlowLabel" style="color:#9ca3af;font-weight:600"></span><span>Sell ticks (total)</span>
       </div>
     </div>
     <div id="lvLog" style="font-size:12px;color:#6b7280;margin-bottom:8px"></div>
@@ -1646,7 +1646,7 @@ async function atxLoadToday(){
 
 // ── Volume Watch (live tab) ────────────────────────────────────────────
 let lvWs=null, lvTokenMap={}, lvBasePrice=null, lvRows=[], lvPrevBuy=null, lvPrevSell=null;
-let lvTicks=[], lvRecTimer=null;
+let lvTicks=[], lvRecTimer=null, lvCumBuy=0, lvCumSell=0;
 
 function lvLog(msg){ const el=document.getElementById('lvLog'); el.textContent=msg; }
 
@@ -1686,7 +1686,7 @@ async function lvStart(){
   if(bestMatch.ts!==sym) lvLog(`Using ${bestMatch.ts} for ${sym}`);
   lvTokenMap[bestMatch.ts]=bestMatch.tok;
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
-  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[];
+  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[]; lvCumBuy=0; lvCumSell=0;
   document.getElementById('lvFlowBar').style.display='none';
   document.getElementById('lvBody').innerHTML='';
   document.getElementById('lvSignal').style.display='none';
@@ -1832,24 +1832,23 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
   if(rowDBuy===0&&rowDSell===0) return;  // skip duplicate ticks with no change
   lvTicks.push({ltp,buyVol,sellVol,ratio,chgPct,dBuy:rowDBuy,dSell:rowDSell});
   if(lvTicks.length>200) lvTicks.shift();
-  // tick flow bar — last 20 price ticks
-  const last20=lvTicks.slice(-21);
-  let flowUp=0,flowDn=0;
-  for(let i=1;i<last20.length;i++){
-    if(last20[i].ltp>last20[i-1].ltp) flowUp++;
-    else if(last20[i].ltp<last20[i-1].ltp) flowDn++;
+  // cumulative tick flow — count from session start
+  if(lvTicks.length>=2){
+    const prev2=lvTicks[lvTicks.length-2], cur=lvTicks[lvTicks.length-1];
+    if(cur.ltp>prev2.ltp) lvCumBuy++;
+    else if(cur.ltp<prev2.ltp) lvCumSell++;
   }
-  if(flowUp+flowDn>0){
-    const tot=flowUp+flowDn;
-    const bw=Math.round(flowUp/tot*100);
+  if(lvCumBuy+lvCumSell>0){
+    const tot=lvCumBuy+lvCumSell;
+    const bw=Math.round(lvCumBuy/tot*100);
     document.getElementById('lvFlowBar').style.display='';
     document.getElementById('lvFlowBuyBar').style.width=bw+'%';
     document.getElementById('lvFlowSellBar').style.width=(100-bw)+'%';
-    document.getElementById('lvFlowBuyN').textContent=flowUp;
-    document.getElementById('lvFlowSellN').textContent=flowDn;
-    const domReal=flowUp>flowDn?'Buying':flowUp<flowDn?'Selling':'Neutral';
-    const domCol=domReal==='Buying'?'#4ade80':domReal==='Selling'?'#f87171':'#9ca3af';
-    document.getElementById('lvFlowLabel').textContent=domReal;
+    document.getElementById('lvFlowBuyN').textContent=lvCumBuy;
+    document.getElementById('lvFlowSellN').textContent=lvCumSell;
+    const dom=lvCumBuy>lvCumSell?'Buying':lvCumBuy<lvCumSell?'Selling':'Neutral';
+    const domCol=dom==='Buying'?'#4ade80':dom==='Selling'?'#f87171':'#9ca3af';
+    document.getElementById('lvFlowLabel').textContent=dom;
     document.getElementById('lvFlowLabel').style.color=domCol;
   }
   const tb=document.getElementById('lvBody');
