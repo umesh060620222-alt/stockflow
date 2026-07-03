@@ -1013,11 +1013,21 @@ function scRender(){
     const up=r.chgPct>0.1, dn=r.chgPct<-0.1;
     const chgCol=up?'#4ade80':dn?'#f87171':'#9ca3af';
     const s=r._sc||{};
-    const sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
-    const sigCol=sig==='Buying'?'#4ade80':sig==='Selling'?'#f87171':'#9ca3af';
+    // drift: count up vs down ticks in last 20 — fires even when total move is tiny
+    const last20=(r.ticks||[]).slice(-21);
+    let driftUp=0,driftDn=0;
+    for(let i=1;i<last20.length;i++){
+      if(last20[i].ltp>last20[i-1].ltp) driftUp++;
+      else if(last20[i].ltp<last20[i-1].ltp) driftDn++;
+    }
+    const driftScore=driftUp-driftDn;
+    const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
+    let sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
+    if(sig==='Flat'&&drifting) sig=driftScore>0?'Drift ↑':'Drift ↓';
+    const sigCol=sig==='Buying'||sig==='Drift ↑'?'#4ade80':sig==='Selling'||sig==='Drift ↓'?'#f87171':'#9ca3af';
     const tr=document.createElement('tr');
     tr.style.cursor='pointer';
-    tr.onclick=()=>{ document.getElementById('lvSymInput').value=r.sym; showTab('live'); lvStart(); };
+    tr.onclick=()=>window.open('/?tab=live&sym='+r.sym,'_blank');
     tr.innerHTML=
       `<td style="font-weight:600;color:#fbbf24">${r.sym}</td>`+
       `<td>₹${r.ltp.toFixed(2)}</td>`+
