@@ -250,7 +250,7 @@
       <table id="scTbl" style="display:none;font-size:13px">
         <thead><tr>
           <th>Symbol</th><th>LTP</th><th>Chg%</th>
-          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Score</th><th>Signal</th>
+          <th>Buy Vol</th><th>Sell Vol</th><th>B/S</th><th>Score</th><th>Signal</th><th>Tick Flow</th>
         </tr></thead>
         <tbody id="scBody"></tbody>
       </table>
@@ -1013,7 +1013,7 @@ function scRender(){
     const up=r.chgPct>0.1, dn=r.chgPct<-0.1;
     const chgCol=up?'#4ade80':dn?'#f87171':'#9ca3af';
     const s=r._sc||{};
-    // drift: count up vs down ticks in last 20 — fires even when total move is tiny
+    // tick flow: count up vs down ticks in last 20
     const last20=(r.ticks||[]).slice(-21);
     let driftUp=0,driftDn=0;
     for(let i=1;i<last20.length;i++){
@@ -1022,9 +1022,20 @@ function scRender(){
     }
     const driftScore=driftUp-driftDn;
     const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
-    let sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':'Flat';
-    if(sig==='Flat'&&drifting) sig=driftScore>0?'Drift ↑':'Drift ↓';
-    const sigCol=sig==='Buying'||sig==='Drift ↑'?'#4ade80':sig==='Selling'||sig==='Drift ↓'?'#f87171':'#9ca3af';
+    let sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':
+            drifting?(driftScore>0?'Buying':'Selling'):'Flat';
+    const sigCol=sig==='Buying'?'#4ade80':sig==='Selling'?'#f87171':'#9ca3af';
+    // tick flow bar
+    const total=driftUp+driftDn||1;
+    const buyW=Math.round(driftUp/total*100), sellW=100-buyW;
+    const flowBar=`<div style="display:flex;align-items:center;gap:3px;min-width:90px">
+      <span style="font-size:10px;color:#4ade80;width:18px;text-align:right">${driftUp}</span>
+      <div style="flex:1;height:8px;display:flex;border-radius:3px;overflow:hidden">
+        <div style="width:${buyW}%;background:#4ade80"></div>
+        <div style="width:${sellW}%;background:#f87171"></div>
+      </div>
+      <span style="font-size:10px;color:#f87171;width:18px">${driftDn}</span>
+    </div>`;
     const tr=document.createElement('tr');
     tr.style.cursor='pointer';
     tr.onclick=()=>window.open('/?tab=live&sym='+r.sym,'_blank');
@@ -1036,7 +1047,8 @@ function scRender(){
       `<td class="sell-col">${scFmt(r.sellVol)}</td>`+
       `<td style="color:${r.ratio>=1?'#4ade80':'#f87171'}">${r.ratio.toFixed(2)}</td>`+
       `<td style="color:${sigCol}">${s.total||0}/8</td>`+
-      `<td style="color:${sigCol};font-weight:600">${sig}</td>`;
+      `<td style="color:${sigCol};font-weight:600">${sig}</td>`+
+      `<td>${flowBar}</td>`;
     tb.appendChild(tr);
   });
 }
