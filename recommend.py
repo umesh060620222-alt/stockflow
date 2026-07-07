@@ -360,30 +360,60 @@ def load_history(market="IN"):
     return json.load(open(path)) if os.path.exists(path) else []
 
 
-def backtest(market="IN", days=15):
-    """Re-run the RS pick for the last N trading days (price/volume only; EPS not
-    historical so it's omitted here).  Returns list of {date, symbol, entry, next_open,
-    next_high, ret_pct, rs}."""
-    import yfinance as yf
+def backtest(market="IN", days=15, kc=None):
+    """Re-run the RS pick for the last N trading days via Kite historical API.
+    Returns list of {date, symbol, next_open, next_high}."""
+    import zerodha as Z
+    import datetime as _dt
+
+    if kc is None:
+        kc = Z.kite()
+
     m      = MARKETS.get(market, MARKETS["IN"])
     bench  = m["bench"]
-    syms   = m["universe"] + [bench]
+    # universe is .NS-suffixed for yfinance; strip for Kite tradingsymbols
+    universe = [s.replace(".NS", "") for s in m["universe"]]
 
-    # need Open+High+Close+Volume — download flat then split per symbol
-    raw_all = yf.download(syms, period="150d", interval="1d", group_by="ticker",
-                          progress=False, threads=True, auto_adjust=False)
+    imap   = Z.instrument_map(kc)
+    to_dt  = _dt.datetime.now()
+    from_dt = to_dt - _dt.timedelta(days=160)
 
-    def _get(sym):
+    def _fetch(sym):
+        # bench uses index token lookup; equities use instrument_map
+        tok = imap.get(sym)
+        if not tok:
+            return pd.DataFrame()
         try:
-            df = raw_all[sym] if len(syms) > 1 else raw_all
-            # newer yfinance returns MultiIndex columns (field, ticker); flatten if needed
-            if isinstance(df.columns, pd.MultiIndex):
-                df = df.droplevel(1, axis=1)
+            rows = kc.historical_data(tok, from_dt, to_dt, "day")
+            if not rows:
+                return pd.DataFrame()
+            df = pd.DataFrame(rows)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            df = df.rename(columns={"open": "Open", "high": "High",
+                                    "low": "Low", "close": "Close", "volume": "Volume"})
             return df[["Open", "High", "Close", "Volume"]].dropna()
         except Exception:
             return pd.DataFrame()
 
-    data = {s: _get(s) for s in syms}
+    # fetch bench separately using NSE index instrument token
+    def _fetch_bench():
+        # Nifty 50 instrument token on NSE is 256265
+        NIFTY_TOKEN = 256265
+        try:
+            rows = kc.historical_data(NIFTY_TOKEN, from_dt, to_dt, "day")
+            if not rows:
+                return pd.DataFrame()
+            df = pd.DataFrame(rows)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            df = df.rename(columns={"close": "Close"})
+            return df[["Close"]].dropna()
+        except Exception:
+            return pd.DataFrame()
+
+    bench_df = _fetch_bench()
+    data = {s: _fetch(s) for s in universe}
     bench_df = data.get(bench, pd.DataFrame())
     if bench_df.empty or len(bench_df) < 25:
         return []
@@ -404,7 +434,7 @@ def backtest(market="IN", days=15):
 
         best_sym, best_rs = None, -999.0
         for sym, df in data.items():
-            if sym == bench or df.empty:
+            if df.empty:
                 continue
             sub = df[df.index <= date_ts]
             if len(sub) < 52:

@@ -132,7 +132,7 @@ class H(BaseHTTPRequestHandler):
                 market = "IN"
             days = int(q.get("days", ["15"])[0])
             try:
-                results = REC.backtest(market=market, days=days)
+                results = REC.backtest(market=market, days=days, kc=Z.kite())
                 return self._send(200, dumps({"rows": results}))
             except Exception as e:
                 return self._send(200, dumps({"error": f"{type(e).__name__}: {e}", "rows": []}))
