@@ -825,17 +825,11 @@ async function tdEnter(token, side){
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
     try{
-      // 1. LIMIT entry order at current LTP
-      const r=await (await fetch('/api/trading/order',{method:'POST',
+      // single call — server places LIMIT entry, then polls for fill, then places SL-M
+      const r=await (await fetch('/api/trading/entry',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:d.sym,side,order_type:'LIMIT',price:entry})})).json();
+        body:JSON.stringify({symbol:d.sym,side,price:entry,sl})})).json();
       if(d.trade) d.trade.orderId=r.order_id||null;
-      // 2. SLM protective order on opposite side
-      const slSide=side==='BUY'?'SELL':'BUY';
-      const rs=await (await fetch('/api/trading/order',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:d.sym,side:slSide,order_type:'SLM',trigger_price:sl})})).json();
-      if(d.trade) d.trade.slOrderId=rs.order_id||null;
     }catch(e){ console.warn('Order failed',e); }
   }
 }
@@ -855,16 +849,18 @@ async function tdCloseTrade(token, result){
     d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
   }
   if(!t.test){
-    if(t.slOrderId){
-      // cancel the SLM — on TARGET this removes protection; on SL it may already be filled (fails gracefully)
-      try{ await fetch('/api/trading/cancel',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({order_id:t.slOrderId})}); }catch(e){}
-    }
     if(result==='TARGET'){
-      // user exits target manually — no order placed here
+      // cancel the SL-M so it doesn't fire after manual target exit
+      try{
+        const sl=await (await fetch('/api/trading/sl-order?symbol='+d.sym)).json();
+        if(sl.sl_order_id){
+          await fetch('/api/trading/cancel',{method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({order_id:sl.sl_order_id})});
+        }
+      }catch(e){ console.warn('SL cancel failed',e); }
     }
-    // SL case: SLM already fired on exchange, nothing more needed
+    // SL case: SL-M already fired on exchange, nothing more needed
   }
 }
 

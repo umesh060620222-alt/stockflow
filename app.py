@@ -15,6 +15,40 @@ import newsflash as NF
 from live import ENGINE as LIVE
 
 _REC_CACHE = {}   # market -> {"date": ..., "data": ...}
+_SL_ORDERS = {}   # sym -> sl_order_id (set by background thread after fill)
+
+
+def _wait_and_place_sl(kc, entry_oid, sym, sl_side, sl_trigger):
+    """Poll until LIMIT entry fills, then place SL-M on opposite side."""
+    for _ in range(240):          # up to 2 min (240 × 0.5s)
+        time.sleep(0.5)
+        try:
+            orders = kc.orders()
+            o = next((x for x in orders if str(x["order_id"]) == str(entry_oid)), None)
+            if not o:
+                continue
+            if o["status"] == "COMPLETE":
+                tt = (kc.TRANSACTION_TYPE_SELL if sl_side == "SELL"
+                      else kc.TRANSACTION_TYPE_BUY)
+                sl_oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NSE,
+                    tradingsymbol    = sym,
+                    transaction_type = tt,
+                    quantity         = int(o.get("filled_quantity") or o.get("quantity") or 1),
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_SLM,
+                    trigger_price    = sl_trigger,
+                )
+                _SL_ORDERS[sym] = sl_oid
+                print(f"[trading] {sym} filled @ {o.get('average_price')} → SL-M {sl_oid} trigger={sl_trigger}", flush=True)
+                return
+            if o["status"] in ("CANCELLED", "REJECTED"):
+                print(f"[trading] {sym} entry {o['status']} — no SL placed", flush=True)
+                return
+        except Exception as e:
+            print(f"[trading] poll error {sym}: {e}", flush=True)
+    print(f"[trading] timed out waiting for fill on {entry_oid}", flush=True)
 
 HERE = os.path.dirname(__file__)
 
@@ -144,6 +178,11 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/sl-order":
+            from urllib.parse import urlparse, parse_qs
+            sym = parse_qs(urlparse(self.path).query).get("symbol", [""])[0].upper()
+            oid = _SL_ORDERS.get(sym)
+            return self._send(200, dumps({"symbol": sym, "sl_order_id": oid}))
         if path == "/api/trading/mock-tokens":
             return self._send(200, dumps({"TESTBUY": 341249, "TESTSELL": 408065}))
         if path == "/api/trading/resolve":
@@ -419,6 +458,37 @@ class H(BaseHTTPRequestHandler):
                 if otype == "LIMIT" and price:
                     kwargs["price"] = float(price)
                 oid = kc.place_order(**kwargs)
+                return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/entry":
+            sym  = body.get("symbol", "")
+            side = body.get("side", "BUY").upper()
+            price = body.get("price")
+            sl    = body.get("sl")
+            qty   = int(body.get("quantity", 1))
+            if not sym or not price or not sl:
+                return self._send(200, dumps({"error": "symbol, price, sl required"}))
+            try:
+                kc = Z.kite()
+                tt = kc.TRANSACTION_TYPE_BUY if side == "BUY" else kc.TRANSACTION_TYPE_SELL
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NSE,
+                    tradingsymbol    = sym,
+                    transaction_type = tt,
+                    quantity         = qty,
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = float(price),
+                )
+                sl_side = "SELL" if side == "BUY" else "BUY"
+                _SL_ORDERS.pop(sym, None)
+                threading.Thread(
+                    target=_wait_and_place_sl,
+                    args=(kc, oid, sym, sl_side, float(sl)),
+                    daemon=True
+                ).start()
                 return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
