@@ -2,10 +2,15 @@
 
 Flow:
   1. scan_near_resistance() — fetch daily OHLCV via yfinance, find stocks within
-     NEAR_PCT% of a key resistance level (prev-day high, 20d high, 52w high).
+     NEAR_PCT% of their 52-week high, with volume > 20d avg AND RSI(14) > 65.
   2. check_reversal(symbol, kc) — fetch latest 5-min candles from Kite, run
      TA-Lib (preferred) or pandas-ta candlestick pattern detection.
   3. Returns confirmed bearish-reversal candidates ready to flash as SELL.
+
+Entry filters (ALL must pass):
+  - Within NEAR_PCT% of the 52-week high
+  - Today's volume > 20-day average volume  (participation present)
+  - RSI(14) > 65  (overbought zone, momentum stretched)
 
 Additional signals beyond candlestick patterns:
   - RSI divergence    : price at new high, RSI making lower high (momentum fading)
@@ -36,8 +41,10 @@ except ImportError:
 
 from scanner import WATCHLIST_DAILY
 
-NEAR_PCT   = 0.50   # within this % of resistance → candidate
+NEAR_PCT   = 0.50   # within this % of 52-week high → candidate
 SCAN_TOP   = 40     # how many stocks from WATCHLIST_DAILY to scan daily
+RSI_MIN    = 65     # RSI(14) must be above this (overbought / momentum stretched)
+VOL_RATIO  = 1.0    # today's volume must be >= this × 20d avg volume
 
 # TA-Lib CDL function → label  (all bearish = negative return value)
 BEARISH_PATTERNS = {
@@ -63,19 +70,30 @@ PANDAS_TA_PATTERNS = [
 # ── resistance levels ─────────────────────────────────────────────────────────
 
 def _resistance_levels(df: pd.DataFrame) -> dict:
-    """Key resistance levels from daily OHLCV (High column)."""
+    """52-week high is the only resistance we track."""
     levels: dict[str, float] = {}
-    if len(df) >= 2:
-        levels["prev_day_high"] = float(df["High"].iloc[-2])
-    if len(df) >= 20:
-        levels["20d_high"] = float(df["High"].tail(20).max())
-    if len(df) >= 60:
-        levels["3m_high"] = float(df["High"].tail(63).max())
-    if len(df) >= 126:
-        levels["6m_high"] = float(df["High"].tail(126).max())
-    if len(df) >= 252:
+    if len(df) >= 200:   # need ~200 trading days for a clean 52w high
         levels["52w_high"] = float(df["High"].tail(252).max())
+    elif len(df) >= 60:  # fallback for newer listings: use whatever history we have
+        levels["52w_high"] = float(df["High"].max())
     return levels
+
+
+def _rsi(close: "np.ndarray", period: int = 14) -> float:
+    """Simple RSI without TA-Lib dependency."""
+    if HAS_TALIB:
+        r = ta.RSI(close.astype(float), timeperiod=period)
+        v = r[~np.isnan(r)]
+        return float(v[-1]) if len(v) else float("nan")
+    # Wilder's smoothed RS
+    deltas = np.diff(close[-period * 3:].astype(float))
+    gains  = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+    avg_g  = gains[-period:].mean()
+    avg_l  = losses[-period:].mean()
+    if avg_l == 0:
+        return 100.0
+    return float(100 - 100 / (1 + avg_g / avg_l))
 
 
 def _nearest_resistance(ltp: float, levels: dict) -> tuple[str, float] | tuple[None, None]:
@@ -93,13 +111,13 @@ def _nearest_resistance(ltp: float, levels: dict) -> tuple[str, float] | tuple[N
 # ── daily scan ────────────────────────────────────────────────────────────────
 
 def scan_near_resistance(symbols: list[str] | None = None) -> list[dict]:
-    """Return stocks whose last close is within NEAR_PCT% of a key resistance."""
+    """Return stocks near their 52w high with volume > 20d avg AND RSI(14) > 65."""
     import yfinance as yf
     if symbols is None:
         symbols = WATCHLIST_DAILY[:SCAN_TOP]
     yf_syms = [s + ".NS" for s in symbols]
     try:
-        raw = yf.download(yf_syms, period="252d", interval="1d",
+        raw = yf.download(yf_syms, period="380d", interval="1d",
                           group_by="ticker", progress=False,
                           threads=True, auto_adjust=True)
     except Exception as e:
@@ -110,23 +128,42 @@ def scan_near_resistance(symbols: list[str] | None = None) -> list[dict]:
     for sym, yf_sym in zip(symbols, yf_syms):
         try:
             df = raw[yf_sym] if len(yf_syms) > 1 else raw
-            df = df.dropna()
-            if len(df) < 5:
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.droplevel(1, axis=1)
+            df = df.dropna(subset=["Close", "Volume"])
+            if len(df) < 20:
                 continue
-            ltp = float(df["Close"].iloc[-1])
+
+            ltp     = float(df["Close"].iloc[-1])
+            vol_now = float(df["Volume"].iloc[-1])
+            vol20   = float(df["Volume"].tail(21).iloc[:-1].mean())  # 20d avg excl. today
+
+            # volume filter
+            if vol20 > 0 and vol_now < VOL_RATIO * vol20:
+                continue
+
+            # RSI filter
+            rsi_val = _rsi(df["Close"].values)
+            if np.isnan(rsi_val) or rsi_val < RSI_MIN:
+                continue
+
             levels = _resistance_levels(df)
             res_name, res_level = _nearest_resistance(ltp, levels)
-            if res_name:
-                out.append({
-                    "symbol":         sym,
-                    "ltp":            round(ltp, 2),
-                    "resistance":     round(res_level, 2),
-                    "resistance_type": res_name.replace("_", " "),
-                    "pct_from_res":   round((res_level - ltp) / res_level * 100, 2),
-                    "patterns":       [],   # filled by check_reversal
-                    "extra_signals":  [],
-                    "confirmed":      False,
-                })
+            if not res_name:
+                continue
+
+            out.append({
+                "symbol":          sym,
+                "ltp":             round(ltp, 2),
+                "resistance":      round(res_level, 2),
+                "resistance_type": "52w high",
+                "pct_from_res":    round((res_level - ltp) / res_level * 100, 2),
+                "rsi":             round(rsi_val, 1),
+                "vol_ratio":       round(vol_now / vol20, 2) if vol20 > 0 else None,
+                "patterns":        [],
+                "extra_signals":   [],
+                "confirmed":       False,
+            })
         except Exception as e:
             log.debug("scan error %s: %s", sym, e)
 

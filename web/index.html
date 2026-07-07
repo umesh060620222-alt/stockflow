@@ -700,8 +700,10 @@ async function loadReversal(force){
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span style="font-size:18px;font-weight:700;color:#fbbf24">${c.symbol}</span>
           ${badge}
-          <span class="muted">₹${c.ltp} → resistance ₹${c.resistance} <span style="color:#9ca3af">(${resLabel})</span></span>
+          <span class="muted">₹${c.ltp} → 52w high ₹${c.resistance}</span>
           <span style="color:#f87171;font-weight:600">${c.pct_from_res.toFixed(2)}% away</span>
+          <span style="color:#a78bfa;font-size:12px">RSI ${c.rsi}</span>
+          ${c.vol_ratio!=null?`<span style="color:#34d399;font-size:12px">Vol ${c.vol_ratio}× avg</span>`:''}
         </div>
         ${pats||extras?`<div style="margin-top:8px">${pats}${extras}</div>`:''}
       </div>`;
