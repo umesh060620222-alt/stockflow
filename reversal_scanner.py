@@ -71,10 +71,10 @@ PANDAS_TA_PATTERNS = [
 # ── resistance levels ─────────────────────────────────────────────────────────
 
 def _resistance_levels(df: pd.DataFrame) -> dict:
-    """2-week high (10 trading days) as resistance."""
+    """30-day high as resistance."""
     levels: dict[str, float] = {}
     if len(df) >= 10:
-        levels["2w_high"] = float(df["High"].tail(10).max())
+        levels["30d_high"] = float(df["High"].tail(30).max())
     return levels
 
 
