@@ -680,31 +680,15 @@ async function loadReversal(force){
     if(d.error){ document.getElementById('rvStatus').textContent='Error: '+d.error; return; }
     const list=d.candidates||[];
     document.getElementById('rvStatus').textContent=
-      list.length+' stocks within 0.5% of resistance · '+(list.filter(x=>x.confirmed).length)+' confirmed reversals · '+new Date().toLocaleTimeString('en-IN');
-    if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near resistance right now.</p>'; return; }
-    const patTag=p=>`<span style="display:inline-block;padding:2px 7px;margin:2px;background:#2a1414;border:1px solid #7f1d1d;border-radius:4px;font-size:11px;color:#f87171">${p}</span>`;
-    const sigTag=s=>`<span style="display:inline-block;padding:2px 7px;margin:2px;background:#1c1a0a;border:1px solid #78350f;border-radius:4px;font-size:11px;color:#fbbf24">${s}</span>`;
-    document.getElementById('rvBody').innerHTML=list.map(c=>{
-      const confBg=c.confirmed?'#1a0a0a':'#101113';
-      const confBorder=c.confirmed?'#7f1d1d':'#2a2c30';
-      const badge=c.confirmed
-        ?'<span style="background:#7f1d1d;color:#fca5a5;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">⚠ SELL</span>'
-        :'<span style="color:#6b7280;font-size:11px">watching</span>';
-      const pats=(c.patterns||[]).map(patTag).join('');
-      const extras=(c.extra_signals||[]).map(sigTag).join('');
-      const resLabel=c.resistance_type||'';
-      return `<div style="padding:12px 14px;margin-bottom:10px;background:${confBg};border:1px solid ${confBorder};border-radius:9px">
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <span style="font-size:18px;font-weight:700;color:#fbbf24">${c.symbol}</span>
-          ${badge}
-          <span class="muted">₹${c.ltp} → 52w high ₹${c.resistance}</span>
-          <span style="color:#f87171;font-weight:600">${c.pct_from_res.toFixed(2)}% away</span>
-          <span style="color:#a78bfa;font-size:12px">RSI ${c.rsi}</span>
-          ${c.vol_ratio!=null?`<span style="color:#34d399;font-size:12px">Vol ${c.vol_ratio}× avg</span>`:''}
-        </div>
-        ${pats||extras?`<div style="margin-top:8px">${pats}${extras}</div>`:''}
-      </div>`;
-    }).join('');
+      list.length+' stocks within 0.5% of 52w high · '+new Date().toLocaleTimeString('en-IN');
+    if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near 52w high right now.</p>'; return; }
+    document.getElementById('rvBody').innerHTML=list.map(c=>`
+      <div style="padding:10px 14px;margin-bottom:8px;background:#101113;border:1px solid #2a2c30;border-radius:9px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="font-size:17px;font-weight:700;color:#fbbf24">${c.symbol}</span>
+        <span class="muted">₹${c.ltp}</span>
+        <span style="color:#9ca3af">→ 52w high ₹${c.resistance}</span>
+        <span style="color:#f87171;font-weight:600">${c.pct_from_res.toFixed(2)}% away</span>
+      </div>`).join('');
   }catch(e){
     _rvLoading=false;
     document.getElementById('rvStatus').textContent='Error: '+e;

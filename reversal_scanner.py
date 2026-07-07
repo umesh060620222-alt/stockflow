@@ -139,8 +139,7 @@ def _kite_daily(kc, symbols: list[str], days: int = 400) -> dict[str, pd.DataFra
 
 
 def scan_near_resistance(kc, symbols: list[str] | None = None) -> list[dict]:
-    """Return stocks near their 52w high with volume > 20d avg AND RSI(14) > 65.
-    Uses Kite historical API for accurate, real-time daily data."""
+    """Return stocks within NEAR_PCT% of their 52-week high."""
     if symbols is None:
         symbols = WATCHLIST_DAILY[:SCAN_TOP]
 
@@ -152,16 +151,16 @@ def scan_near_resistance(kc, symbols: list[str] | None = None) -> list[dict]:
             if len(df) < 20:
                 continue
 
-            ltp     = float(df["Close"].iloc[-1])
-            vol_now = float(df["Volume"].iloc[-1])
-            vol20   = float(df["Volume"].tail(21).iloc[:-1].mean())  # 20d avg excl. today
+            ltp = float(df["Close"].iloc[-1])
 
-            if vol20 > 0 and vol_now < VOL_RATIO * vol20:
-                continue
-
-            rsi_val = _rsi(df["Close"].values)
-            if np.isnan(rsi_val) or rsi_val < RSI_MIN:
-                continue
+            # -- disabled filters (re-enable when needed) --
+            # vol_now = float(df["Volume"].iloc[-1])
+            # vol20   = float(df["Volume"].tail(21).iloc[:-1].mean())
+            # if vol20 > 0 and vol_now < VOL_RATIO * vol20:
+            #     continue
+            # rsi_val = _rsi(df["Close"].values)
+            # if np.isnan(rsi_val) or rsi_val < RSI_MIN:
+            #     continue
 
             levels = _resistance_levels(df)
             res_name, res_level = _nearest_resistance(ltp, levels)
@@ -169,16 +168,13 @@ def scan_near_resistance(kc, symbols: list[str] | None = None) -> list[dict]:
                 continue
 
             out.append({
-                "symbol":          sym,
-                "ltp":             round(ltp, 2),
-                "resistance":      round(res_level, 2),
-                "resistance_type": "52w high",
-                "pct_from_res":    round((res_level - ltp) / res_level * 100, 2),
-                "rsi":             round(rsi_val, 1),
-                "vol_ratio":       round(vol_now / vol20, 2) if vol20 > 0 else None,
-                "patterns":        [],
-                "extra_signals":   [],
-                "confirmed":       False,
+                "symbol":      sym,
+                "ltp":         round(ltp, 2),
+                "resistance":  round(res_level, 2),
+                "pct_from_res": round((res_level - ltp) / res_level * 100, 2),
+                "patterns":    [],
+                "extra_signals": [],
+                "confirmed":   False,
             })
         except Exception as e:
             log.debug("scan error %s: %s", sym, e)
@@ -335,17 +331,17 @@ def check_reversal(symbol: str, kc, resistance: float = 0,
 # ── full run (called from backend endpoint) ───────────────────────────────────
 
 def run(kc) -> list[dict]:
-    """Scan for near-resistance stocks via Kite daily data, then verify with
-    Kite 5-min candlestick patterns.  Always requires an authenticated kc."""
-    imap       = Z.instrument_map(kc)   # fetch once, reuse for both daily + 5-min
+    """Return stocks within 0.5% of their 52-week high via Kite daily data."""
     candidates = scan_near_resistance(kc, symbols=None)
 
-    for c in candidates:
-        rev = check_reversal(c["symbol"], kc, resistance=c["resistance"], imap=imap)
-        c["patterns"]      = rev.get("patterns", [])
-        c["extra_signals"] = rev.get("extra_signals", [])
-        c["confirmed"]     = rev.get("confirmed", False)
-        c["error"]         = rev.get("error")
+    # -- pattern/signal detection disabled --
+    # imap = Z.instrument_map(kc)
+    # for c in candidates:
+    #     rev = check_reversal(c["symbol"], kc, resistance=c["resistance"], imap=imap)
+    #     c["patterns"]      = rev.get("patterns", [])
+    #     c["extra_signals"] = rev.get("extra_signals", [])
+    #     c["confirmed"]     = rev.get("confirmed", False)
+    #     c["error"]         = rev.get("error")
+    # candidates.sort(key=lambda x: (not x["confirmed"], x["pct_from_res"]))
 
-    candidates.sort(key=lambda x: (not x["confirmed"], x["pct_from_res"]))
     return candidates
