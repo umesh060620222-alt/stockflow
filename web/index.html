@@ -97,6 +97,7 @@
     <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
     <button onclick="showTab('live')"      id="tab-live">Live</button>
     <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
+    <button onclick="showTab('reversal');loadReversal()" id="tab-reversal">Reversal</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
     <button onclick="showTab('global')"    id="tab-global">Global News</button>
@@ -323,6 +324,21 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ── Reversal tab ─────────────────────────────────────────────────── -->
+  <div id="reversal" class="tab-panel card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <b style="font-size:14px">Resistance Reversal Scanner</b>
+      <div style="display:flex;gap:8px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9ca3af">
+          <input type="checkbox" id="rvKite"> Use Kite (5-min patterns)
+        </label>
+        <button style="width:auto;margin:0;padding:7px 14px" onclick="loadReversal(true)">Scan</button>
+      </div>
+    </div>
+    <div id="rvStatus" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+    <div id="rvBody"></div>
   </div>
 
   <div id="radar" class="tab-panel card" style="margin-top:14px">
@@ -587,6 +603,50 @@ async function loadRec(refresh){
   ${sellHtml}
   ${(d.conflicts&&d.conflicts.length)?`<div class="muted" style="margin-top:8px">Skipped on conflict: ${d.conflicts.map(c=>`<b>${c.symbol}</b>`).join(", ")}</div>`:""}
   <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
+}
+
+// ── Reversal ──────────────────────────────────────────────────────────────────
+let _rvLoading=false;
+async function loadReversal(force){
+  if(_rvLoading) return;
+  _rvLoading=true;
+  const useKite=document.getElementById('rvKite').checked;
+  document.getElementById('rvStatus').textContent='Scanning… (fetches daily data via yfinance'+(useKite?' + Kite 5-min candles':'')+')';
+  document.getElementById('rvBody').innerHTML='';
+  try{
+    const url='/api/reversal'+(useKite?'?kite=1':'');
+    const d=await (await fetch(url)).json();
+    _rvLoading=false;
+    if(d.error){ document.getElementById('rvStatus').textContent='Error: '+d.error; return; }
+    const list=d.candidates||[];
+    document.getElementById('rvStatus').textContent=
+      list.length+' stocks within 0.5% of resistance · '+(list.filter(x=>x.confirmed).length)+' confirmed reversals · '+new Date().toLocaleTimeString('en-IN');
+    if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near resistance right now.</p>'; return; }
+    const patTag=p=>`<span style="display:inline-block;padding:2px 7px;margin:2px;background:#2a1414;border:1px solid #7f1d1d;border-radius:4px;font-size:11px;color:#f87171">${p}</span>`;
+    const sigTag=s=>`<span style="display:inline-block;padding:2px 7px;margin:2px;background:#1c1a0a;border:1px solid #78350f;border-radius:4px;font-size:11px;color:#fbbf24">${s}</span>`;
+    document.getElementById('rvBody').innerHTML=list.map(c=>{
+      const confBg=c.confirmed?'#1a0a0a':'#101113';
+      const confBorder=c.confirmed?'#7f1d1d':'#2a2c30';
+      const badge=c.confirmed
+        ?'<span style="background:#7f1d1d;color:#fca5a5;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">⚠ SELL</span>'
+        :'<span style="color:#6b7280;font-size:11px">watching</span>';
+      const pats=(c.patterns||[]).map(patTag).join('');
+      const extras=(c.extra_signals||[]).map(sigTag).join('');
+      const resLabel=c.resistance_type||'';
+      return `<div style="padding:12px 14px;margin-bottom:10px;background:${confBg};border:1px solid ${confBorder};border-radius:9px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:18px;font-weight:700;color:#fbbf24">${c.symbol}</span>
+          ${badge}
+          <span class="muted">₹${c.ltp} → resistance ₹${c.resistance} <span style="color:#9ca3af">(${resLabel})</span></span>
+          <span style="color:#f87171;font-weight:600">${c.pct_from_res.toFixed(2)}% away</span>
+        </div>
+        ${pats||extras?`<div style="margin-top:8px">${pats}${extras}</div>`:''}
+      </div>`;
+    }).join('');
+  }catch(e){
+    _rvLoading=false;
+    document.getElementById('rvStatus').textContent='Error: '+e;
+  }
 }
 
 // ── Radar ─────────────────────────────────────────────────────────────────────

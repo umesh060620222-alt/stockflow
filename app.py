@@ -117,6 +117,17 @@ class H(BaseHTTPRequestHandler):
         if path in ("/premarket", "/premarket.html"):
             with open(os.path.join(HERE, "web", "premarket.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
+        if path == "/api/reversal":
+            from urllib.parse import urlparse, parse_qs
+            import reversal_scanner as RS
+            q = parse_qs(urlparse(self.path).query)
+            use_kite = q.get("kite", ["0"])[0] == "1"
+            try:
+                kc = Z.kite() if use_kite else None
+                result = RS.run(kc)
+                return self._send(200, dumps({"candidates": result}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e), "candidates": []}))
         if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":
