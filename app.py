@@ -144,6 +144,9 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/mock-tokens":
+            # single fake stock matching mock_kite_ws.py TOKEN=341249
+            return self._send(200, dumps({"TEST": 341249}))
         if path == "/api/trading/resolve":
             from urllib.parse import urlparse, parse_qs
             syms_str = parse_qs(urlparse(self.path).query).get("symbols", [""])[0]
@@ -390,19 +393,44 @@ class H(BaseHTTPRequestHandler):
             LIVE.stop()
             return self._send(200, dumps(LIVE.state()))
         if path == "/api/trading/order":
-            sym, side = body.get("symbol",""), body.get("side","BUY").upper()
+            sym  = body.get("symbol", "")
+            side = body.get("side", "BUY").upper()
+            otype = body.get("order_type", "MARKET").upper()
+            trig  = body.get("trigger_price", None)
             try:
                 kc = Z.kite()
-                oid = kc.place_order(
+                price = body.get("price", None)
+                if otype == "SLM":
+                    ktype = kc.ORDER_TYPE_SLM
+                elif otype == "LIMIT":
+                    ktype = kc.ORDER_TYPE_LIMIT
+                else:
+                    ktype = kc.ORDER_TYPE_MARKET
+                kwargs = dict(
                     variety          = kc.VARIETY_REGULAR,
                     exchange         = kc.EXCHANGE_NSE,
                     tradingsymbol    = sym,
                     transaction_type = kc.TRANSACTION_TYPE_BUY if side=="BUY" else kc.TRANSACTION_TYPE_SELL,
                     quantity         = 1,
                     product          = kc.PRODUCT_MIS,
-                    order_type       = kc.ORDER_TYPE_MARKET,
+                    order_type       = ktype,
                 )
+                if otype == "SLM" and trig:
+                    kwargs["trigger_price"] = float(trig)
+                if otype == "LIMIT" and price:
+                    kwargs["price"] = float(price)
+                oid = kc.place_order(**kwargs)
                 return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/cancel":
+            oid = body.get("order_id")
+            if not oid:
+                return self._send(200, dumps({"error": "order_id required"}))
+            try:
+                kc = Z.kite()
+                kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=str(oid))
+                return self._send(200, dumps({"cancelled": oid}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/autotrader/pick":

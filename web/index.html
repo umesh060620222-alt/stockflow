@@ -344,6 +344,7 @@
       <b style="font-size:14px">Trading</b>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="tdModeBtn" onclick="tdToggleMode()" style="width:auto;margin:0;padding:4px 12px;font-size:12px;background:#1a1c20;border:1px solid #fbbf24;color:#fbbf24;border-radius:5px;cursor:pointer">TEST MODE</button>
+        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#6b7280;cursor:pointer"><input type="checkbox" id="tdMockChk"> Mock WS</label>
         <button onclick="tdConnect()" style="width:auto;margin:0;padding:5px 12px;font-size:12px">Connect</button>
         <span id="tdStatus" class="muted" style="font-size:12px">Not connected</span>
         <button id="tdStopBtn" style="width:auto;margin:0;padding:5px 12px;font-size:12px" onclick="tdDisconnect()" disabled>Stop</button>
@@ -817,17 +818,24 @@ async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
   const entry=d.ltp;
-  d.trade={side,entry,
-    sl:    side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2),
-    target:side==='BUY'?+(entry*1.005).toFixed(2):+(entry*0.995).toFixed(2),
-    time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
+  const sl    = side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2);
+  const target= side==='BUY'?+(entry*1.005).toFixed(2):+(entry*0.995).toFixed(2);
+  d.trade={side,entry,sl,target,
+    time:new Date().toLocaleTimeString('en-IN'),orderId:null,slOrderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
     try{
+      // 1. LIMIT entry order at current LTP
       const r=await (await fetch('/api/trading/order',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:d.sym,side})})).json();
+        body:JSON.stringify({symbol:d.sym,side,order_type:'LIMIT',price:entry})})).json();
       if(d.trade) d.trade.orderId=r.order_id||null;
+      // 2. SLM protective order on opposite side
+      const slSide=side==='BUY'?'SELL':'BUY';
+      const rs=await (await fetch('/api/trading/order',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:d.sym,side:slSide,order_type:'SLM',trigger_price:sl})})).json();
+      if(d.trade) d.trade.slOrderId=rs.order_id||null;
     }catch(e){ console.warn('Order failed',e); }
   }
 }
@@ -847,11 +855,16 @@ async function tdCloseTrade(token, result){
     d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
   }
   if(!t.test){
-    try{
-      await fetch('/api/trading/order',{method:'POST',
+    if(t.slOrderId){
+      // cancel the SLM — on TARGET this removes protection; on SL it may already be filled (fails gracefully)
+      try{ await fetch('/api/trading/cancel',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:d.sym,side:t.side==='BUY'?'SELL':'BUY'})});
-    }catch(e){ console.warn('Exit order failed',e); }
+        body:JSON.stringify({order_id:t.slOrderId})}); }catch(e){}
+    }
+    if(result==='TARGET'){
+      // user exits target manually — no order placed here
+    }
+    // SL case: SLM already fired on exchange, nothing more needed
   }
 }
 
@@ -934,8 +947,10 @@ function tdRender(){
 
 async function tdConnect(){
   if(tdWs&&tdWs.readyState===1) return;
+  const mock=document.getElementById('tdMockChk').checked;
   document.getElementById('tdStatus').textContent='Fetching tokens…';
-  const td=await (await fetch('/api/trading/tokens')).json();
+  const endpoint=mock?'/api/trading/mock-tokens':'/api/trading/tokens';
+  const td=await (await fetch(endpoint)).json();
   if(td.error){ document.getElementById('tdStatus').textContent='Error: '+td.error; return; }
   tdTokenMap={}; tdData={}; tdState={}; tdActivated={};
   Object.entries(td).forEach(([sym,tok])=>{
@@ -945,8 +960,10 @@ async function tdConnect(){
   });
   const tokens=Object.keys(tdTokenMap).map(Number);
   document.getElementById('tdStatus').textContent=`Connecting (${tokens.length} stocks)…`;
-  const url=`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
-  tdWs=new WebSocket(url); tdWs.binaryType='arraybuffer';
+  const wsUrl=mock
+    ?(window._MOCK_WS_URL||'ws://localhost:8765')
+    :`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
+  tdWs=new WebSocket(wsUrl); tdWs.binaryType='arraybuffer';
   tdWs.onopen=()=>{
     tdWs.send(JSON.stringify({a:'subscribe',v:tokens}));
     tdWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
