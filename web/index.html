@@ -341,9 +341,7 @@
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       <b style="font-size:14px">Resistance Reversal Scanner</b>
       <div style="display:flex;gap:8px;align-items:center">
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9ca3af">
-          <input type="checkbox" id="rvKite"> Use Kite (5-min patterns)
-        </label>
+        <span style="font-size:11px;color:#6b7280">52w high · vol &gt; 20d avg · RSI &gt; 65 · via Kite</span>
         <button style="width:auto;margin:0;padding:7px 14px" onclick="loadReversal(true)">Scan</button>
       </div>
     </div>
@@ -673,11 +671,10 @@ let _rvLoading=false;
 async function loadReversal(force){
   if(_rvLoading) return;
   _rvLoading=true;
-  const useKite=document.getElementById('rvKite').checked;
-  document.getElementById('rvStatus').textContent='Scanning… (fetches daily data via yfinance'+(useKite?' + Kite 5-min candles':'')+')';
+  document.getElementById('rvStatus').textContent='Scanning… (Kite daily data + 5-min candle patterns)';
   document.getElementById('rvBody').innerHTML='';
   try{
-    const url='/api/reversal'+(useKite?'?kite=1':'');
+    const url='/api/reversal';
     const d=await (await fetch(url)).json();
     _rvLoading=false;
     if(d.error){ document.getElementById('rvStatus').textContent='Error: '+d.error; return; }

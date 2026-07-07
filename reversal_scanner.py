@@ -40,6 +40,7 @@ except ImportError:
     HAS_PANDAS_TA = False
 
 from scanner import WATCHLIST_DAILY
+import zerodha as Z
 
 NEAR_PCT   = 0.50   # within this % of 52-week high → candidate
 SCAN_TOP   = 40     # how many stocks from WATCHLIST_DAILY to scan daily
@@ -110,27 +111,44 @@ def _nearest_resistance(ltp: float, levels: dict) -> tuple[str, float] | tuple[N
 
 # ── daily scan ────────────────────────────────────────────────────────────────
 
-def scan_near_resistance(symbols: list[str] | None = None) -> list[dict]:
-    """Return stocks near their 52w high with volume > 20d avg AND RSI(14) > 65."""
-    import yfinance as yf
+def _kite_daily(kc, symbols: list[str], days: int = 400) -> dict[str, pd.DataFrame]:
+    """Fetch daily OHLCV for each symbol via Kite historical API.
+    Returns {symbol: DataFrame(Open,High,Low,Close,Volume)}."""
+    imap   = Z.instrument_map(kc)
+    to_dt  = datetime.datetime.now()
+    from_dt = to_dt - datetime.timedelta(days=days + 5)  # pad for holidays
+    out: dict[str, pd.DataFrame] = {}
+    for sym in symbols:
+        tok = imap.get(sym)
+        if not tok:
+            log.debug("no token for %s", sym)
+            continue
+        try:
+            rows = kc.historical_data(tok, from_dt, to_dt, "day")
+            if not rows:
+                continue
+            df = pd.DataFrame(rows)
+            df = df.rename(columns={"open": "Open", "high": "High",
+                                    "low": "Low", "close": "Close", "volume": "Volume"})
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            out[sym] = df
+        except Exception as e:
+            log.debug("kite daily %s: %s", sym, e)
+    return out
+
+
+def scan_near_resistance(kc, symbols: list[str] | None = None) -> list[dict]:
+    """Return stocks near their 52w high with volume > 20d avg AND RSI(14) > 65.
+    Uses Kite historical API for accurate, real-time daily data."""
     if symbols is None:
         symbols = WATCHLIST_DAILY[:SCAN_TOP]
-    yf_syms = [s + ".NS" for s in symbols]
-    try:
-        raw = yf.download(yf_syms, period="380d", interval="1d",
-                          group_by="ticker", progress=False,
-                          threads=True, auto_adjust=True)
-    except Exception as e:
-        log.warning("yfinance download failed: %s", e)
-        return []
+
+    daily = _kite_daily(kc, symbols, days=400)
 
     out: list[dict] = []
-    for sym, yf_sym in zip(symbols, yf_syms):
+    for sym, df in daily.items():
         try:
-            df = raw[yf_sym] if len(yf_syms) > 1 else raw
-            if isinstance(df.columns, pd.MultiIndex):
-                df = df.droplevel(1, axis=1)
-            df = df.dropna(subset=["Close", "Volume"])
             if len(df) < 20:
                 continue
 
@@ -138,11 +156,9 @@ def scan_near_resistance(symbols: list[str] | None = None) -> list[dict]:
             vol_now = float(df["Volume"].iloc[-1])
             vol20   = float(df["Volume"].tail(21).iloc[:-1].mean())  # 20d avg excl. today
 
-            # volume filter
             if vol20 > 0 and vol_now < VOL_RATIO * vol20:
                 continue
 
-            # RSI filter
             rsi_val = _rsi(df["Close"].values)
             if np.isnan(rsi_val) or rsi_val < RSI_MIN:
                 continue
@@ -271,21 +287,19 @@ def _extra_signals(df: pd.DataFrame) -> list[str]:
     return sigs
 
 
-def check_reversal(symbol: str, kc, resistance: float = 0) -> dict:
+def check_reversal(symbol: str, kc, resistance: float = 0,
+                   imap: dict | None = None) -> dict:
     """Fetch 5-min candles from Kite and check for bearish reversal signals."""
     try:
-        instruments = kc.instruments("NSE")
-        inst = next(
-            (i for i in instruments
-             if i["tradingsymbol"] == symbol and i.get("instrument_type") == "EQ"),
-            None,
-        )
-        if not inst:
+        if imap is None:
+            imap = Z.instrument_map(kc)
+        tok = imap.get(symbol)
+        if not tok:
             return {"patterns": [], "extra_signals": [], "confirmed": False, "error": "instrument not found"}
 
         now  = datetime.datetime.now()
         from_ = now - datetime.timedelta(days=3)
-        candles = kc.historical_data(inst["instrument_token"], from_, now, "5minute")
+        candles = kc.historical_data(tok, from_, now, "5minute")
         if len(candles) < 6:
             return {"patterns": [], "extra_signals": [], "confirmed": False, "error": "not enough candles"}
 
@@ -320,19 +334,18 @@ def check_reversal(symbol: str, kc, resistance: float = 0) -> dict:
 
 # ── full run (called from backend endpoint) ───────────────────────────────────
 
-def run(kc=None) -> list[dict]:
-    """Scan for near-resistance stocks, then verify with Kite 5-min patterns."""
-    candidates = scan_near_resistance()
-    if kc is None:
-        return candidates          # return proximity list without pattern check
+def run(kc) -> list[dict]:
+    """Scan for near-resistance stocks via Kite daily data, then verify with
+    Kite 5-min candlestick patterns.  Always requires an authenticated kc."""
+    imap       = Z.instrument_map(kc)   # fetch once, reuse for both daily + 5-min
+    candidates = scan_near_resistance(kc, symbols=None)
 
     for c in candidates:
-        rev = check_reversal(c["symbol"], kc, resistance=c["resistance"])
+        rev = check_reversal(c["symbol"], kc, resistance=c["resistance"], imap=imap)
         c["patterns"]      = rev.get("patterns", [])
         c["extra_signals"] = rev.get("extra_signals", [])
         c["confirmed"]     = rev.get("confirmed", False)
         c["error"]         = rev.get("error")
 
-    # confirmed ones first, then sort by closeness to resistance
     candidates.sort(key=lambda x: (not x["confirmed"], x["pct_from_res"]))
     return candidates
