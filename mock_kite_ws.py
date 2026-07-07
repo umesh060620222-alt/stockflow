@@ -1,9 +1,7 @@
-"""Mock Kite WebSocket server for pre-market testing.
+"""Mock Kite WebSocket — BUY stock + SELL stock, 3 cycles each.
 
-Phases:
-  UP   (ticks 1-40):  uptrend +0.06%/tick, buy ratio 3-6  → classifies as Buying
-  PULL (ticks 41-45): dip -0.02%/tick for 5 ticks         → midpoint entry fires
-  RSME (ticks 46+):   resume +0.06%/tick                  → target hit ~9 ticks later
+BUY  stock (token 341249):  UP→PULL→RSME  ×3  (60 ticks/cycle)
+SELL stock (token 408065):  DOWN→BOUNCE→RSME_DOWN  ×3  (60 ticks/cycle)
 
 Run:  python mock_kite_ws.py [prev_close]
 """
@@ -16,7 +14,8 @@ except ImportError:
 
 HOST = "localhost"
 PORT = 8765
-TOKEN = 341249
+TOKEN_BUY  = 341249
+TOKEN_SELL = 408065
 PREV_CLOSE = float(sys.argv[1]) if len(sys.argv) > 1 else 1200.0
 
 
@@ -28,40 +27,46 @@ def make_packet(token, ltp, buy, sell, prev_close):
         100,
         i(ltp * 100),
         i(buy + sell),
-        i(buy),              # total_buy_qty  offset 20
-        i(sell),             # total_sell_qty offset 24
+        i(buy),
+        i(sell),
         i(ltp * 100),
         i(ltp * 100),
         i(ltp * 100),
-        i(prev_close * 100), # prev close     offset 40
+        i(prev_close * 100),
     )
-    return struct.pack(">h", len(data)) + data   # [int16 pkt_len][data]
+    return struct.pack(">h", len(data)) + data
 
 
-def phase_params(tick):
-    # cycle: 40 UP → 5 PULL → 15 RSME = 60 ticks per trade
+def buy_phase(tick):
     pos = (tick - 1) % 60
     if pos < 40:
-        dp   = 0.0006 + random.uniform(-0.00005, 0.00005)
-        buy  = random.randint(400_000, 700_000)
-        sell = random.randint(80_000,  160_000)
-        label = "UP  "
+        return 0.0006 + random.uniform(-0.00005, 0.00005), \
+               random.randint(400_000, 700_000), random.randint(80_000,  160_000), "BUY-UP  "
     elif pos < 45:
-        dp   = -0.0002 + random.uniform(-0.00005, 0.00005)
-        buy  = random.randint(350_000, 550_000)
-        sell = random.randint(120_000, 220_000)
-        label = "PULL"
+        return -0.0002 + random.uniform(-0.00005, 0.00005), \
+               random.randint(350_000, 550_000), random.randint(120_000, 220_000), "BUY-PULL"
     else:
-        dp   = 0.0006 + random.uniform(-0.00005, 0.00005)
-        buy  = random.randint(400_000, 650_000)
-        sell = random.randint(90_000,  170_000)
-        label = "RSME"
-    return dp, buy, sell, label
+        return 0.0006 + random.uniform(-0.00005, 0.00005), \
+               random.randint(400_000, 650_000), random.randint(90_000,  170_000), "BUY-RSME"
+
+
+def sell_phase(tick):
+    pos = (tick - 1) % 60
+    if pos < 40:
+        return -0.0006 + random.uniform(-0.00005, 0.00005), \
+               random.randint(80_000,  160_000), random.randint(400_000, 700_000), "SEL-DOWN"
+    elif pos < 45:
+        return 0.0002 + random.uniform(-0.00005, 0.00005), \
+               random.randint(120_000, 220_000), random.randint(350_000, 550_000), "SEL-BNCE"
+    else:
+        return -0.0006 + random.uniform(-0.00005, 0.00005), \
+               random.randint(90_000,  170_000), random.randint(400_000, 650_000), "SEL-RSME"
 
 
 async def stream(ws):
     print("  client connected")
-    ltp = PREV_CLOSE
+    ltp_buy  = PREV_CLOSE
+    ltp_sell = PREV_CLOSE
 
     async def drain():
         try:
@@ -73,14 +78,19 @@ async def stream(ws):
     asyncio.create_task(drain())
 
     for tick in range(1, 421):
-        dp, buy, sell, label = phase_params(tick)
-        ltp = round(ltp * (1 + dp), 2)
-        chg = (ltp - PREV_CLOSE) / PREV_CLOSE * 100
-        pkt = make_packet(TOKEN, ltp, buy, sell, PREV_CLOSE)
+        db, bb, sb, lb = buy_phase(tick)
+        ds, bs, ss, ls = sell_phase(tick)
+        ltp_buy  = round(ltp_buy  * (1 + db), 2)
+        ltp_sell = round(ltp_sell * (1 + ds), 2)
+
+        pkt = make_packet(TOKEN_BUY,  ltp_buy,  bb, sb, PREV_CLOSE) + \
+              make_packet(TOKEN_SELL, ltp_sell, bs, ss, PREV_CLOSE)
         try:
             await ws.send(pkt)
-            print(f"  [{label}] tick {tick:3d}  LTP={ltp:.2f}  chg={chg:+.2f}%  "
-                  f"buy={buy:,}  sell={sell:,}  ratio={buy/sell:.2f}")
+            chg_b = (ltp_buy  - PREV_CLOSE) / PREV_CLOSE * 100
+            chg_s = (ltp_sell - PREV_CLOSE) / PREV_CLOSE * 100
+            print(f"  [{lb}] LTP={ltp_buy:.2f} chg={chg_b:+.2f}% r={bb/sb:.2f}  "
+                  f"[{ls}] LTP={ltp_sell:.2f} chg={chg_s:+.2f}% r={bs/ss:.2f}")
         except Exception:
             break
         await asyncio.sleep(1)
@@ -89,7 +99,8 @@ async def stream(ws):
 
 async def main():
     print(f"Mock Kite WS → ws://{HOST}:{PORT}  PrevClose={PREV_CLOSE}")
-    print("UP (1-40) → PULL (41-45) → RSME (46+)\n")
+    print(f"BUY token={TOKEN_BUY}   SELL token={TOKEN_SELL}")
+    print("Each cycle 60 ticks: 40 trend → 5 pullback/bounce → 15 resume\n")
     async with websockets.serve(stream, HOST, PORT):
         await asyncio.Future()
 

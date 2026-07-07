@@ -145,8 +145,7 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/mock-tokens":
-            # single fake stock matching mock_kite_ws.py TOKEN=341249
-            return self._send(200, dumps({"TEST": 341249}))
+            return self._send(200, dumps({"TESTBUY": 341249, "TESTSELL": 408065}))
         if path == "/api/trading/resolve":
             from urllib.parse import urlparse, parse_qs
             syms_str = parse_qs(urlparse(self.path).query).get("symbols", [""])[0]
