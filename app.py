@@ -144,6 +144,19 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/resolve":
+            from urllib.parse import urlparse, parse_qs
+            syms_str = parse_qs(urlparse(self.path).query).get("symbols", [""])[0]
+            syms = [s.strip().upper() for s in syms_str.split(",") if s.strip()]
+            if not syms:
+                return self._send(200, dumps({"tokens": {}, "missing": []}))
+            try:
+                imap = Z.instrument_map(Z.kite())
+                result  = {s: imap[s] for s in syms if s in imap}
+                missing = [s for s in syms if s not in imap]
+                return self._send(200, dumps({"tokens": result, "missing": missing}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":
@@ -376,6 +389,22 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/live/stop":
             LIVE.stop()
             return self._send(200, dumps(LIVE.state()))
+        if path == "/api/trading/order":
+            sym, side = body.get("symbol",""), body.get("side","BUY").upper()
+            try:
+                kc = Z.kite()
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NSE,
+                    tradingsymbol    = sym,
+                    transaction_type = kc.TRANSACTION_TYPE_BUY if side=="BUY" else kc.TRANSACTION_TYPE_SELL,
+                    quantity         = 1,
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_MARKET,
+                )
+                return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/autotrader/pick":
             import autotrader as AT
             sym  = body.get("symbol", "").strip().upper()

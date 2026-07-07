@@ -98,7 +98,7 @@
     <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
     <button onclick="showTab('live')"      id="tab-live">Live</button>
     <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
-    <button onclick="showTab('trading');tdConnect()" id="tab-trading">Trading</button>
+    <button onclick="showTab('trading')" id="tab-trading">Trading</button>
     <button onclick="showTab('reversal');loadReversal()" id="tab-reversal">Reversal</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
@@ -341,40 +341,28 @@
   <!-- ── Trading tab ──────────────────────────────────────────────────── -->
   <div id="trading" class="tab-panel card" style="margin-top:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-      <b style="font-size:14px">Volume Delta — 25 liquid stocks</b>
-      <div style="display:flex;gap:8px;align-items:center">
+      <b style="font-size:14px">Trading</b>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="tdModeBtn" onclick="tdToggleMode()" style="width:auto;margin:0;padding:4px 12px;font-size:12px;background:#1a1c20;border:1px solid #fbbf24;color:#fbbf24;border-radius:5px;cursor:pointer">TEST MODE</button>
+        <button onclick="tdConnect()" style="width:auto;margin:0;padding:5px 12px;font-size:12px">Connect</button>
         <span id="tdStatus" class="muted" style="font-size:12px">Not connected</span>
         <button id="tdStopBtn" style="width:auto;margin:0;padding:5px 12px;font-size:12px" onclick="tdDisconnect()" disabled>Stop</button>
       </div>
     </div>
+    <div id="tdTrades" style="min-height:36px;margin-bottom:12px;padding:6px 8px;background:#111318;border-radius:8px;border:1px solid #1e2027;flex-wrap:wrap;display:flex;align-items:flex-start;gap:4px">
+      <span class="muted" style="font-size:12px">No active trades</span>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div>
-        <div style="font-size:12px;color:#4ade80;font-weight:600;margin-bottom:8px">▲ Buyers — cumulative buy volume leading</div>
-        <table id="tdBuyTbl" style="font-size:12px;width:100%">
-          <thead><tr>
-            <th style="text-align:left;padding:4px 6px;color:#6b7280">Stock</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">LTP</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Bought</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Sold</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Delta</th>
-          </tr></thead>
-          <tbody id="tdBuyBody"><tr><td colspan="5" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
-        </table>
+        <div style="font-size:12px;color:#4ade80;font-weight:600;margin-bottom:8px">▲ Buyers — tap to trade</div>
+        <div id="tdBuyList"><span class="muted" style="font-size:12px">Waiting for data…</span></div>
       </div>
       <div>
-        <div style="font-size:12px;color:#f87171;font-weight:600;margin-bottom:8px">▼ Sellers — cumulative sell volume leading</div>
-        <table id="tdSellTbl" style="font-size:12px;width:100%">
-          <thead><tr>
-            <th style="text-align:left;padding:4px 6px;color:#6b7280">Stock</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">LTP</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Bought</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Sold</th>
-            <th style="text-align:right;padding:4px 6px;color:#6b7280">Delta</th>
-          </tr></thead>
-          <tbody id="tdSellBody"><tr><td colspan="5" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
-        </table>
+        <div style="font-size:12px;color:#f87171;font-weight:600;margin-bottom:8px">▼ Sellers — tap to trade</div>
+        <div id="tdSellList"><span class="muted" style="font-size:12px">Waiting for data…</span></div>
       </div>
     </div>
+    <div id="tdIgnored" style="margin-top:10px;font-size:11px;color:#4b5563"></div>
   </div>
 
   <!-- ── Reversal tab ─────────────────────────────────────────────────── -->
@@ -695,66 +683,265 @@ async function loadBacktest(){
   }
 }
 
-// ── Reversal ──────────────────────────────────────────────────────────────────
-// ── Trading tab — volume delta via Kite ltq ───────────────────────────────────
-let tdWs=null, tdTokenMap={}, tdData={}, tdTimer=null;
+// ── Trading tab ───────────────────────────────────────────────────────────────
+// Same live-screen scoring logic; classifies stocks as consistent buyer/seller.
+// Mixed even once → ignored for the session. Entry on 0.2% pullback from peak/trough.
+const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers)
+const TD_SL     = 0.001;  // 0.1% stop loss
+const TD_TARGET = 0.002;  // 0.2% profit target
+const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
 
-function tdFmt(n){ // compact number: 1.2L, 45K
-  if(n>=100000) return (n/100000).toFixed(1)+'L';
-  if(n>=1000)   return (n/1000).toFixed(1)+'K';
-  return n;
+let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
+let tdTestMode=true, tdActivated={};
+
+function tdToggleMode(){
+  tdTestMode=!tdTestMode;
+  const btn=document.getElementById('tdModeBtn');
+  if(tdTestMode){ btn.textContent='TEST MODE'; btn.style.borderColor='#fbbf24'; btn.style.color='#fbbf24'; }
+  else           { btn.textContent='LIVE';      btn.style.borderColor='#f87171'; btn.style.color='#f87171'; }
+}
+
+function tdActivate(sym){
+  if(tdActivated[sym]) delete tdActivated[sym];
+  else tdActivated[sym]=true;
 }
 
 function tdParseBinary(buf){
   const view=new DataView(buf);
   let off=0;
-  while(off<buf.byteLength-1){
-    if(buf.byteLength-off<2) break;
+  while(off+2<=buf.byteLength){
     const len=view.getInt16(off); off+=2;
-    if(len<8){ off+=len; continue; }
+    if(len<4||off+len>buf.byteLength) break;
     const token=view.getInt32(off);
-    const ltp=view.getInt32(off+4)/100;
-    const ltq=len>=12?view.getInt32(off+8):0; // last traded quantity at offset 8
+    if(!tdTokenMap[token]){ off+=len; continue; }
+    const ltp=len>=8?view.getInt32(off+4)/100:0;
+    const buyVol=len>=24?view.getInt32(off+20):0;
+    const sellVol=len>=28?view.getInt32(off+24):0;
     const d=tdData[token];
-    if(d && ltq>0){
-      if(ltp>d.ltp)      d.cumBuy+=ltq;
-      else if(ltp<d.ltp) d.cumSell+=ltq;
-      d.delta=d.cumBuy-d.cumSell;
-      d.ltp=ltp;
-    } else if(d && ltp!==d.ltp){
-      d.ltp=ltp;
+    if(!d){ off+=len; continue; }
+    if(len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) d.prevClose=pc; }
+    if(d.prevClose&&Math.abs(ltp-d.prevClose)/d.prevClose>0.3){ off+=len; continue; }
+    const dBuy=d.prevBuy!==null?buyVol-d.prevBuy:null;
+    const dSell=d.prevSell!==null?sellVol-d.prevSell:null;
+    const chgPct=d.prevClose?((ltp-d.prevClose)/d.prevClose*100):0;
+    if(dBuy!==0||dSell!==0){
+      d.ticks.push({ltp,buyVol,sellVol,chgPct,ratio:sellVol>0?buyVol/sellVol:0,dBuy,dSell});
+      if(d.ticks.length>1800) d.ticks.shift();
     }
+    d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
+    d.prevBuy=buyVol; d.prevSell=sellVol;
+    // peak/trough: new peak resets trough (buyer); new trough resets peak (seller)
+    const cls=(tdState[d.sym]||{}).class;
+    if(cls==='buyer'){
+      if(d.peak===null)      { d.peak=ltp; d.trough=ltp; }
+      else if(ltp>d.peak)    { d.peak=ltp; d.trough=ltp; }
+      else if(ltp<d.trough)    d.trough=ltp;
+    } else if(cls==='seller'){
+      if(d.trough===null)    { d.trough=ltp; d.peak=ltp; }
+      else if(ltp<d.trough)  { d.trough=ltp; d.peak=ltp; }
+      else if(ltp>d.peak)      d.peak=ltp;
+    }
+    // check SL/target on active trade, then check entry
+    tdCheckExit(token);
+    tdCheckEntry(token);
     off+=len;
   }
 }
 
+// Exact same signal as the live screen's sig computation in scRender.
+// Returns 'Buying' | 'Selling' | null
+function tdSignal(d){
+  if(!d.ticks||d.ticks.length<3) return null;
+  const chgPct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):0;
+  const ratio=d.sellVol>0?d.buyVol/d.sellVol:0;
+  const up=chgPct>0.1, dn=chgPct<-0.1;
+  const sc=scScore(d);
+  const last20=d.ticks.slice(-21);
+  let driftUp=0,driftDn=0;
+  for(let i=1;i<last20.length;i++){
+    if(last20[i].ltp>last20[i-1].ltp) driftUp++;
+    else if(last20[i].ltp<last20[i-1].ltp) driftDn++;
+  }
+  const driftScore=driftUp-driftDn;
+  const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
+  if(up&&ratio>=1.2&&!sc.sellGrowing) return 'Buying';
+  if(dn&&ratio<=0.8) return 'Selling';
+  return null;  // no drifting — pullbacks on buy-dominant stocks stay 'buyer'
+}
+
+function tdClassify(){
+  for(const [,d] of Object.entries(tdData)){
+    const sym=d.sym;
+    if(!tdState[sym]) tdState[sym]={everBuy:false,everSell:false,class:null};
+    const st=tdState[sym];
+    if(st.class==='ignored') continue;
+    const sig=tdSignal(d);
+    if(sig==='Buying')  st.everBuy=true;
+    if(sig==='Selling') st.everSell=true;
+    if(st.everBuy&&st.everSell){
+      st.class='ignored'; d.peak=null; d.trough=null; continue;
+    }
+    if(st.everBuy&&st.class!=='buyer'){
+      st.class='buyer'; d.peak=d.ltp;
+    } else if(st.everSell&&st.class!=='seller'){
+      st.class='seller'; d.trough=d.ltp;
+    }
+  }
+}
+
+function tdCheckEntry(token){
+  const d=tdData[token];
+  if(!d||d.ltp===0||d.trade||d.stopped) return;
+  if(!tdActivated[d.sym]) return; // user must tap the card to activate trading
+  const cls=(tdState[d.sym]||{}).class;
+  if(d.peak===null||d.trough===null||d.peak===d.trough) return;
+  const mid=(d.peak+d.trough)/2;
+  if(cls==='buyer'  && d.ltp<=mid) tdEnter(token,'BUY');
+  else if(cls==='seller' && d.ltp>=mid) tdEnter(token,'SELL');
+}
+
+function tdCheckExit(token){
+  const d=tdData[token];
+  if(!d||!d.trade) return;
+  const t=d.trade;
+  if(t.side==='BUY'){
+    if(d.ltp<=t.sl)          tdCloseTrade(token,'SL');
+    else if(d.ltp>=t.target) tdCloseTrade(token,'TARGET');
+  } else {
+    if(d.ltp>=t.sl)          tdCloseTrade(token,'SL');
+    else if(d.ltp<=t.target) tdCloseTrade(token,'TARGET');
+  }
+}
+
+async function tdEnter(token, side){
+  const d=tdData[token];
+  if(!d||d.trade) return;
+  const entry=d.ltp;
+  d.trade={side,entry,
+    sl:    side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2),
+    target:side==='BUY'?+(entry*1.005).toFixed(2):+(entry*0.995).toFixed(2),
+    time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
+  d.peak=entry; d.trough=entry;
+  if(!tdTestMode){
+    try{
+      const r=await (await fetch('/api/trading/order',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:d.sym,side})})).json();
+      if(d.trade) d.trade.orderId=r.order_id||null;
+    }catch(e){ console.warn('Order failed',e); }
+  }
+}
+
+async function tdCloseTrade(token, result){
+  const d=tdData[token];
+  if(!d||!d.trade) return;
+  const t=d.trade; d.trade=null;
+  t.result=result; t.exitPrice=d.ltp;
+  t.pnlPct=((d.ltp-t.entry)/t.entry*(t.side==='BUY'?1:-1)*100).toFixed(2);
+  d.closed.push({sym:d.sym,...t,exitTime:new Date().toLocaleTimeString('en-IN')});
+  if(result==='SL'){
+    d.stopped=true; d.peak=null; d.trough=null;
+    if(tdState[d.sym]) tdState[d.sym].class='ignored';
+    delete tdActivated[d.sym]; // SL hit — remove from active trading for the session
+  } else {
+    d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
+  }
+  if(!t.test){
+    try{
+      await fetch('/api/trading/order',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:d.sym,side:t.side==='BUY'?'SELL':'BUY'})});
+    }catch(e){ console.warn('Exit order failed',e); }
+  }
+}
+
 function tdRender(){
-  const rows=Object.values(tdData);
-  if(!rows.length) return;
-  const fmt=(n,col)=>`<span style="color:${col}">${tdFmt(n)}</span>`;
-  const mkRow=r=>`<tr style="border-bottom:1px solid #1e2027">
-    <td style="padding:4px 6px;font-weight:600;color:#fbbf24">${r.sym}</td>
-    <td style="padding:4px 6px;text-align:right">₹${r.ltp.toFixed(1)}</td>
-    <td style="padding:4px 6px;text-align:right">${fmt(r.cumBuy,'#4ade80')}</td>
-    <td style="padding:4px 6px;text-align:right">${fmt(r.cumSell,'#f87171')}</td>
-    <td style="padding:4px 6px;text-align:right;font-weight:600;color:${r.delta>=0?'#4ade80':'#f87171'}">${r.delta>=0?'+':''}${tdFmt(Math.abs(r.delta))}</td>
-  </tr>`;
-  const buyers =rows.filter(r=>r.delta>0).sort((a,b)=>b.delta-a.delta).slice(0,12);
-  const sellers=rows.filter(r=>r.delta<0).sort((a,b)=>a.delta-b.delta).slice(0,12);
-  document.getElementById('tdBuyBody').innerHTML =buyers.length ?buyers.map(mkRow).join('') :'<tr><td colspan="5" style="color:#4b5563;padding:8px 6px">No buy-leading stocks yet</td></tr>';
-  document.getElementById('tdSellBody').innerHTML=sellers.length?sellers.map(mkRow).join(''):'<tr><td colspan="5" style="color:#4b5563;padding:8px 6px">No sell-leading stocks yet</td></tr>';
+  tdClassify();
+  const buyers=[], sellers=[], ignored=[];
+  for(const d of Object.values(tdData)){
+    const cls=(tdState[d.sym]||{}).class;
+    if(cls==='buyer') buyers.push(d);
+    else if(cls==='seller') sellers.push(d);
+    else if(cls==='ignored') ignored.push(d.sym);
+  }
+
+  const mkCard=(d,side)=>{
+    const col=side==='buyer'?'#4ade80':'#f87171';
+    const ref=side==='buyer'?d.peak:d.trough;
+    const pct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):null;
+    const pnl=d.trade?((d.ltp-d.trade.entry)/d.trade.entry*(d.trade.side==='BUY'?1:-1)*100).toFixed(2):null;
+    const sc=side==='buyer'?scScore(d):scScoreSell(d);
+    const hasMid=d.peak!==null&&d.trough!==null&&d.peak!==d.trough;
+    const mid=hasMid?(d.peak+d.trough)/2:null;
+    // progress bar: how far price has moved toward the midpoint trigger
+    const swing=hasMid?d.peak-d.trough:0;
+    const distToMid=hasMid?(side==='buyer'?d.ltp-mid:mid-d.ltp):0;
+    const progress=swing>0?Math.min(100,Math.round((1-distToMid/swing*2)*100)):0;
+    const barCol=progress>=100?'#fbbf24':col;
+    const active=!!tdActivated[d.sym];
+    return `<div style="padding:7px 11px;margin-bottom:6px;background:#1a1c20;border-radius:7px;border-left:3px solid ${active?'#fbbf24':col};cursor:pointer" onclick="tdActivate('${d.sym}')">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b style="color:#fbbf24;min-width:90px">${d.sym}</b>
+        <span>₹${d.ltp.toFixed(1)}</span>
+        ${pct!==null?`<span style="color:${pct>=0?'#4ade80':'#f87171'}">${pct>=0?'+':''}${pct.toFixed(2)}%</span>`:''}
+        <span style="color:#6b7280;font-size:11px">H ₹${d.peak?d.peak.toFixed(1):'-'} L ₹${d.trough?d.trough.toFixed(1):'-'}</span>
+        ${mid!==null?`<span style="color:${barCol};font-size:11px">mid ₹${mid.toFixed(1)}</span>`:''}
+        <span style="color:#6b7280;font-size:10px">${sc.total||0}/8</span>
+        ${active?`<span style="color:#fbbf24;font-size:10px;font-weight:600">● TRADING</span>`:'<span style="color:#374151;font-size:10px">tap to trade</span>'}
+        ${pnl!==null?`<span style="color:${parseFloat(pnl)>=0?'#4ade80':'#f87171'};font-weight:600">trade ${pnl>=0?'+':''}${pnl}%</span>`:''}
+      </div>
+      <div style="margin-top:4px;height:3px;background:#374151;border-radius:2px">
+        <div style="width:${progress}%;height:3px;background:${barCol};border-radius:2px;transition:width .3s"></div>
+      </div>
+    </div>`;
+  };
+
+  document.getElementById('tdBuyList').innerHTML=buyers.length
+    ?buyers.map(d=>mkCard(d,'buyer')).join('')
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent buyers yet</div>';
+  document.getElementById('tdSellList').innerHTML=sellers.length
+    ?sellers.map(d=>mkCard(d,'seller')).join('')
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>';
+
+  // active trades + closed
+  const active=Object.values(tdData).filter(d=>d.trade);
+  const allClosed=Object.values(tdData).flatMap(d=>d.closed)
+    .sort((a,b)=>b.exitTime>a.exitTime?1:-1).slice(0,8);
+  const tBox=document.getElementById('tdTrades');
+  const activeHtml=active.map(d=>{
+    const t=d.trade;
+    const pnl=((d.ltp-t.entry)/t.entry*(t.side==='BUY'?1:-1)*100).toFixed(2);
+    const pc=parseFloat(pnl)>=0?'#4ade80':'#f87171';
+    return `<div style="display:inline-flex;gap:8px;align-items:center;padding:5px 10px;margin:3px;background:${t.side==='BUY'?'#14532d':'#450a0a'};border-radius:6px;font-size:12px">
+      ${t.test?'<span style="color:#6b7280;font-size:10px">[T]</span>':''}
+      <b style="color:#fbbf24">${d.sym}</b>
+      <span style="color:${t.side==='BUY'?'#4ade80':'#f87171'}">${t.side}</span>
+      <span>@₹${t.entry.toFixed(1)}</span><span>→₹${d.ltp.toFixed(1)}</span>
+      <span style="color:${pc};font-weight:600">${pnl>=0?'+':''}${pnl}%</span>
+      <span style="color:#6b7280;font-size:10px">SL ₹${t.sl.toFixed(1)} T ₹${t.target.toFixed(1)}</span>
+    </div>`;
+  }).join('');
+  const closedHtml=allClosed.map(t=>{
+    const col=t.result==='TARGET'?'#4ade80':'#f87171';
+    return `<span style="font-size:11px;padding:2px 7px;margin:2px;border-radius:4px;background:#1a1c20;color:${col}">${t.sym} ${t.side} ${t.result} ${t.pnlPct>=0?'+':''}${t.pnlPct}% @ ${t.exitTime}</span>`;
+  }).join('');
+  tBox.innerHTML=(activeHtml||'<span class="muted" style="font-size:12px">No active trades</span>')
+    +(closedHtml?`<div style="margin-top:6px">${closedHtml}</div>`:'');
+
+  document.getElementById('tdIgnored').innerHTML=ignored.length
+    ?`<span style="color:#4b5563">Mixed (ignored): ${ignored.join(', ')}</span>`:'';
 }
 
 async function tdConnect(){
-  if(tdWs && tdWs.readyState===1) return;
+  if(tdWs&&tdWs.readyState===1) return;
   document.getElementById('tdStatus').textContent='Fetching tokens…';
   const td=await (await fetch('/api/trading/tokens')).json();
   if(td.error){ document.getElementById('tdStatus').textContent='Error: '+td.error; return; }
-  tdTokenMap={};
-  tdData={};
+  tdTokenMap={}; tdData={}; tdState={}; tdActivated={};
   Object.entries(td).forEach(([sym,tok])=>{
     tdTokenMap[tok]=sym;
-    tdData[tok]={sym,ltp:0,cumBuy:0,cumSell:0,delta:0};
+    tdData[tok]={sym,ltp:0,buyVol:0,sellVol:0,prevBuy:null,prevSell:null,prevClose:0,
+      ticks:[],peak:null,trough:null,trade:null,closed:[],stopped:false};
   });
   const tokens=Object.keys(tdTokenMap).map(Number);
   document.getElementById('tdStatus').textContent=`Connecting (${tokens.length} stocks)…`;
@@ -763,9 +950,10 @@ async function tdConnect(){
   tdWs.onopen=()=>{
     tdWs.send(JSON.stringify({a:'subscribe',v:tokens}));
     tdWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
-    document.getElementById('tdStatus').textContent='Live · '+tokens.length+' stocks · refreshing every 5s';
+    const tag=tdTestMode?'[TEST]':'[LIVE]';
+    document.getElementById('tdStatus').textContent=`${tag} · ${tokens.length} stocks`;
     document.getElementById('tdStopBtn').disabled=false;
-    tdTimer=setInterval(tdRender,5000);
+    tdTimer=setInterval(tdRender,2000);
   };
   tdWs.onmessage=e=>{ if(typeof e.data!=='string') tdParseBinary(e.data); };
   tdWs.onerror=()=>{ document.getElementById('tdStatus').textContent='WS error.'; };
