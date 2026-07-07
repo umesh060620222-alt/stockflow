@@ -128,6 +128,18 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"candidates": result}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e), "candidates": []}))
+        if path == "/api/rec/backtest":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            market = q.get("market", ["IN"])[0].upper()
+            if market not in ("IN", "US"):
+                market = "IN"
+            days = int(q.get("days", ["15"])[0])
+            try:
+                results = REC.backtest(market=market, days=days)
+                return self._send(200, dumps({"rows": results}))
+            except Exception as e:
+                return self._send(200, dumps({"error": f"{type(e).__name__}: {e}", "rows": []}))
         if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":

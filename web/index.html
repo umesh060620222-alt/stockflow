@@ -122,6 +122,16 @@
       </div>
     </div>
     <div id="recbody" class="muted" style="margin-top:10px">Loading today's pick…</div>
+
+    <div style="margin-top:22px;border-top:1px solid #2a2c30;padding-top:16px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <b style="font-size:13px">15-Day Backtest</b>
+        <span style="font-size:11px;color:#6b7280">(price/volume filters only · EPS not historical)</span>
+        <button id="btBtn" style="width:auto;margin:0;padding:5px 12px;font-size:12px" onclick="loadBacktest()">Run</button>
+      </div>
+      <div id="btStatus" class="muted" style="font-size:12px"></div>
+      <div id="btBody"></div>
+    </div>
   </div>
 
   <div id="backtest" class="tab-panel" style="margin-top:14px">
@@ -603,6 +613,59 @@ async function loadRec(refresh){
   ${sellHtml}
   ${(d.conflicts&&d.conflicts.length)?`<div class="muted" style="margin-top:8px">Skipped on conflict: ${d.conflicts.map(c=>`<b>${c.symbol}</b>`).join(", ")}</div>`:""}
   <div class="muted" style="margin-top:6px">${bn} 1m: ${sign(d.bench_1m_pct)} · ${d.date}</div>${track}`;
+}
+
+// ── Backtest ──────────────────────────────────────────────────────────────────
+let _btRunning=false;
+async function loadBacktest(){
+  if(_btRunning) return;
+  _btRunning=true;
+  const mkt=(document.getElementById("recmkt")||{}).value||"IN";
+  const btn=document.getElementById("btBtn");
+  const st=document.getElementById("btStatus");
+  const bd=document.getElementById("btBody");
+  btn.disabled=true; btn.textContent="Running…";
+  st.textContent="Downloading 5 months of data and running RS engine for last 15 days…";
+  bd.innerHTML="";
+  try{
+    const d=await (await fetch("/api/rec/backtest?market="+mkt+"&days=15")).json();
+    if(d.error){ st.textContent="Error: "+d.error; return; }
+    const rows=d.rows||[];
+    st.textContent=rows.length+" days evaluated · price/volume filters only";
+    if(!rows.length){ bd.innerHTML='<p class="muted">No picks passed the filters (need rising 3-day volume + above 50DMA + positive RS).</p>'; return; }
+    const wins=rows.filter(r=>r.ret_pct>0).length;
+    const avgRet=(rows.reduce((a,r)=>a+r.ret_pct,0)/rows.length).toFixed(2);
+    const sign=(v,dec=2)=>`<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${v.toFixed(dec)}%</span>`;
+    const cur=mkt==="US"?"$":"₹";
+    const summary=`<div style="margin-bottom:12px;font-size:12px;color:#9ca3af">
+      Wins: <b style="color:#4ade80">${wins}/${rows.length}</b> &nbsp;·&nbsp;
+      Avg next-open return: <b>${sign(parseFloat(avgRet))}</b>
+    </div>`;
+    const hdr=`<table style="font-size:12px;width:100%">
+      <thead><tr>
+        <th style="text-align:left;padding:4px 8px;color:#6b7280">Date</th>
+        <th style="text-align:left;padding:4px 8px;color:#6b7280">Stock</th>
+        <th style="text-align:right;padding:4px 8px;color:#6b7280">Entry (close)</th>
+        <th style="text-align:right;padding:4px 8px;color:#6b7280">Next Open</th>
+        <th style="text-align:right;padding:4px 8px;color:#6b7280">Next High</th>
+        <th style="text-align:right;padding:4px 8px;color:#6b7280">Gap at Open</th>
+        <th style="text-align:right;padding:4px 8px;color:#6b7280">RS</th>
+      </tr></thead><tbody>`;
+    const trows=rows.map(r=>`<tr style="border-bottom:1px solid #1e2027">
+        <td style="padding:5px 8px;color:#9ca3af">${r.date}</td>
+        <td style="padding:5px 8px;font-weight:600;color:#fbbf24">${r.symbol}</td>
+        <td style="padding:5px 8px;text-align:right">${cur}${r.entry}</td>
+        <td style="padding:5px 8px;text-align:right">${cur}${r.next_open}</td>
+        <td style="padding:5px 8px;text-align:right">${cur}${r.next_high}</td>
+        <td style="padding:5px 8px;text-align:right">${sign(r.ret_pct)}</td>
+        <td style="padding:5px 8px;text-align:right;color:#6b7280">+${r.rs}%</td>
+      </tr>`).join("");
+    bd.innerHTML=summary+hdr+trows+"</tbody></table>";
+  }catch(e){
+    st.textContent="Error: "+e;
+  }finally{
+    _btRunning=false; btn.disabled=false; btn.textContent="Run";
+  }
 }
 
 // ── Reversal ──────────────────────────────────────────────────────────────────

@@ -358,3 +358,90 @@ def record(pick, market="IN"):
 def load_history(market="IN"):
     path = _rec_file(market)
     return json.load(open(path)) if os.path.exists(path) else []
+
+
+def backtest(market="IN", days=15):
+    """Re-run the RS pick for the last N trading days (price/volume only; EPS not
+    historical so it's omitted here).  Returns list of {date, symbol, entry, next_open,
+    next_high, ret_pct, rs}."""
+    import yfinance as yf
+    m      = MARKETS.get(market, MARKETS["IN"])
+    bench  = m["bench"]
+    syms   = m["universe"] + [bench]
+
+    # need Open+High+Close+Volume — download flat then split per symbol
+    raw_all = yf.download(syms, period="150d", interval="1d", group_by="ticker",
+                          progress=False, threads=True, auto_adjust=False)
+
+    def _get(sym):
+        try:
+            df = raw_all[sym] if len(syms) > 1 else raw_all
+            # newer yfinance returns MultiIndex columns (field, ticker); flatten if needed
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.droplevel(1, axis=1)
+            return df[["Open", "High", "Close", "Volume"]].dropna()
+        except Exception:
+            return pd.DataFrame()
+
+    data = {s: _get(s) for s in syms}
+    bench_df = data.get(bench, pd.DataFrame())
+    if bench_df.empty or len(bench_df) < 25:
+        return []
+
+    # trading days to evaluate: last `days` complete days (need a "next day" after each)
+    all_dates = list(bench_df.index)
+    if len(all_dates) < days + 2:
+        return []
+    eval_dates = all_dates[-(days + 1):-1]   # each has a subsequent row
+
+    results = []
+    for date_ts in eval_dates:
+        # slice every symbol up to and including this date
+        b_s = bench_df[bench_df.index <= date_ts]["Close"]
+        if len(b_s) < 22:
+            continue
+        bret = float(b_s.iloc[-1] / b_s.iloc[-22] - 1)
+
+        best_sym, best_rs = None, -999.0
+        for sym, df in data.items():
+            if sym == bench or df.empty:
+                continue
+            sub = df[df.index <= date_ts]
+            if len(sub) < 52:
+                continue
+            c = sub["Close"]
+            v = sub["Volume"]
+            r1m = float(c.iloc[-1] / c.iloc[-22] - 1)
+            rs  = (r1m - bret) * 100
+            # same hard filters as daily_pick
+            dma50    = float(c.tail(50).mean())
+            above_50 = c.iloc[-1] > dma50
+            vseq     = [float(x) for x in v.tail(4)]
+            vol_ok   = (len(vseq) == 4 and vseq[0] < vseq[1] < vseq[2] < vseq[3])
+            if above_50 and vol_ok and rs > 0 and rs > best_rs:
+                best_sym, best_rs = sym, rs
+
+        if not best_sym:
+            continue
+
+        entry_sub  = data[best_sym][data[best_sym].index <= date_ts]
+        entry_price = round(float(entry_sub["Close"].iloc[-1]), 2)
+
+        nxt = data[best_sym][data[best_sym].index > date_ts].head(1)
+        if nxt.empty:
+            continue
+        next_open = round(float(nxt["Open"].iloc[0]), 2)
+        next_high = round(float(nxt["High"].iloc[0]), 2)
+        ret_pct   = round((next_open - entry_price) / entry_price * 100, 2)
+
+        results.append({
+            "date":      str(date_ts.date()),
+            "symbol":    best_sym.replace(".NS", ""),
+            "entry":     entry_price,
+            "next_open": next_open,
+            "next_high": next_high,
+            "ret_pct":   ret_pct,
+            "rs":        round(best_rs, 1),
+        })
+
+    return results
