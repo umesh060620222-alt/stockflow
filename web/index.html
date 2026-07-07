@@ -98,6 +98,7 @@
     <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
     <button onclick="showTab('live')"      id="tab-live">Live</button>
     <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
+    <button onclick="showTab('trading');tdConnect()" id="tab-trading">Trading</button>
     <button onclick="showTab('reversal');loadReversal()" id="tab-reversal">Reversal</button>
     <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
     <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
@@ -333,6 +334,45 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Trading tab ──────────────────────────────────────────────────── -->
+  <div id="trading" class="tab-panel card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <b style="font-size:14px">Volume Delta — 25 liquid stocks</b>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="tdStatus" class="muted" style="font-size:12px">Not connected</span>
+        <button id="tdStopBtn" style="width:auto;margin:0;padding:5px 12px;font-size:12px" onclick="tdDisconnect()" disabled>Stop</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:12px;color:#4ade80;font-weight:600;margin-bottom:8px">▲ Buyers — cumulative buy volume leading</div>
+        <table id="tdBuyTbl" style="font-size:12px;width:100%">
+          <thead><tr>
+            <th style="text-align:left;padding:4px 6px;color:#6b7280">Stock</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">LTP</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Bought</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Sold</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Delta</th>
+          </tr></thead>
+          <tbody id="tdBuyBody"><tr><td colspan="5" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
+        </table>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#f87171;font-weight:600;margin-bottom:8px">▼ Sellers — cumulative sell volume leading</div>
+        <table id="tdSellTbl" style="font-size:12px;width:100%">
+          <thead><tr>
+            <th style="text-align:left;padding:4px 6px;color:#6b7280">Stock</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">LTP</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Bought</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Sold</th>
+            <th style="text-align:right;padding:4px 6px;color:#6b7280">Delta</th>
+          </tr></thead>
+          <tbody id="tdSellBody"><tr><td colspan="5" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -656,6 +696,92 @@ async function loadBacktest(){
 }
 
 // ── Reversal ──────────────────────────────────────────────────────────────────
+// ── Trading tab — volume delta via Kite ltq ───────────────────────────────────
+let tdWs=null, tdTokenMap={}, tdData={}, tdTimer=null;
+
+function tdFmt(n){ // compact number: 1.2L, 45K
+  if(n>=100000) return (n/100000).toFixed(1)+'L';
+  if(n>=1000)   return (n/1000).toFixed(1)+'K';
+  return n;
+}
+
+function tdParseBinary(buf){
+  const view=new DataView(buf);
+  let off=0;
+  while(off<buf.byteLength-1){
+    if(buf.byteLength-off<2) break;
+    const len=view.getInt16(off); off+=2;
+    if(len<8){ off+=len; continue; }
+    const token=view.getInt32(off);
+    const ltp=view.getInt32(off+4)/100;
+    const ltq=len>=12?view.getInt32(off+8):0; // last traded quantity at offset 8
+    const d=tdData[token];
+    if(d && ltq>0){
+      if(ltp>d.ltp)      d.cumBuy+=ltq;
+      else if(ltp<d.ltp) d.cumSell+=ltq;
+      d.delta=d.cumBuy-d.cumSell;
+      d.ltp=ltp;
+    } else if(d && ltp!==d.ltp){
+      d.ltp=ltp;
+    }
+    off+=len;
+  }
+}
+
+function tdRender(){
+  const rows=Object.values(tdData);
+  if(!rows.length) return;
+  const fmt=(n,col)=>`<span style="color:${col}">${tdFmt(n)}</span>`;
+  const mkRow=r=>`<tr style="border-bottom:1px solid #1e2027">
+    <td style="padding:4px 6px;font-weight:600;color:#fbbf24">${r.sym}</td>
+    <td style="padding:4px 6px;text-align:right">₹${r.ltp.toFixed(1)}</td>
+    <td style="padding:4px 6px;text-align:right">${fmt(r.cumBuy,'#4ade80')}</td>
+    <td style="padding:4px 6px;text-align:right">${fmt(r.cumSell,'#f87171')}</td>
+    <td style="padding:4px 6px;text-align:right;font-weight:600;color:${r.delta>=0?'#4ade80':'#f87171'}">${r.delta>=0?'+':''}${tdFmt(Math.abs(r.delta))}</td>
+  </tr>`;
+  const buyers =rows.filter(r=>r.delta>0).sort((a,b)=>b.delta-a.delta).slice(0,12);
+  const sellers=rows.filter(r=>r.delta<0).sort((a,b)=>a.delta-b.delta).slice(0,12);
+  document.getElementById('tdBuyBody').innerHTML =buyers.length ?buyers.map(mkRow).join('') :'<tr><td colspan="5" style="color:#4b5563;padding:8px 6px">No buy-leading stocks yet</td></tr>';
+  document.getElementById('tdSellBody').innerHTML=sellers.length?sellers.map(mkRow).join(''):'<tr><td colspan="5" style="color:#4b5563;padding:8px 6px">No sell-leading stocks yet</td></tr>';
+}
+
+async function tdConnect(){
+  if(tdWs && tdWs.readyState===1) return;
+  document.getElementById('tdStatus').textContent='Fetching tokens…';
+  const td=await (await fetch('/api/trading/tokens')).json();
+  if(td.error){ document.getElementById('tdStatus').textContent='Error: '+td.error; return; }
+  tdTokenMap={};
+  tdData={};
+  Object.entries(td).forEach(([sym,tok])=>{
+    tdTokenMap[tok]=sym;
+    tdData[tok]={sym,ltp:0,cumBuy:0,cumSell:0,delta:0};
+  });
+  const tokens=Object.keys(tdTokenMap).map(Number);
+  document.getElementById('tdStatus').textContent=`Connecting (${tokens.length} stocks)…`;
+  const url=`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
+  tdWs=new WebSocket(url); tdWs.binaryType='arraybuffer';
+  tdWs.onopen=()=>{
+    tdWs.send(JSON.stringify({a:'subscribe',v:tokens}));
+    tdWs.send(JSON.stringify({a:'mode',v:['full',tokens]}));
+    document.getElementById('tdStatus').textContent='Live · '+tokens.length+' stocks · refreshing every 5s';
+    document.getElementById('tdStopBtn').disabled=false;
+    tdTimer=setInterval(tdRender,5000);
+  };
+  tdWs.onmessage=e=>{ if(typeof e.data!=='string') tdParseBinary(e.data); };
+  tdWs.onerror=()=>{ document.getElementById('tdStatus').textContent='WS error.'; };
+  tdWs.onclose=()=>{ document.getElementById('tdStatus').textContent='Disconnected.';
+    document.getElementById('tdStopBtn').disabled=true;
+    if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
+  };
+}
+
+function tdDisconnect(){
+  if(tdWs){ tdWs.close(); tdWs=null; }
+  if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
+  document.getElementById('tdStopBtn').disabled=true;
+  document.getElementById('tdStatus').textContent='Stopped.';
+}
+
 // ── Reversal state machine ─────────────────────────────────────────────────────
 // rvCandidates[sym] = {resistance, state:'idle'|'hovering'|'rejected',
 //                      hoverStart, touchHigh, signaled}

@@ -136,6 +136,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"rows": results}))
             except Exception as e:
                 return self._send(200, dumps({"error": f"{type(e).__name__}: {e}", "rows": []}))
+        if path == "/api/trading/tokens":
+            from scanner import TRADING_LIST
+            try:
+                imap = Z.instrument_map(Z.kite())
+                result = {s: imap[s] for s in TRADING_LIST if s in imap}
+                return self._send(200, dumps(result))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/defaults":
             return self._send(200, dumps(defaults()))
         if path == "/api/auth/status":
