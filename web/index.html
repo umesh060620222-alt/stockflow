@@ -792,7 +792,7 @@ function tdClassify(){
 function tdCheckEntry(token){
   const d=tdData[token];
   if(!d||d.ltp===0||d.trade||d.stopped) return;
-  if(!tdActivated[d.sym]) return; // user must tap the card to activate trading
+  if(!tdTestMode&&!tdActivated[d.sym]) return; // LIVE: must tap card; TEST: trade all classified
   const cls=(tdState[d.sym]||{}).class;
   if(d.peak===null||d.trough===null||d.peak===d.trough) return;
   const mid=(d.peak+d.trough)/2;
