@@ -71,12 +71,10 @@ PANDAS_TA_PATTERNS = [
 # ── resistance levels ─────────────────────────────────────────────────────────
 
 def _resistance_levels(df: pd.DataFrame) -> dict:
-    """52-week high is the only resistance we track."""
+    """2-week high (10 trading days) as resistance."""
     levels: dict[str, float] = {}
-    if len(df) >= 200:   # need ~200 trading days for a clean 52w high
-        levels["52w_high"] = float(df["High"].tail(252).max())
-    elif len(df) >= 60:  # fallback for newer listings: use whatever history we have
-        levels["52w_high"] = float(df["High"].max())
+    if len(df) >= 10:
+        levels["2w_high"] = float(df["High"].tail(10).max())
     return levels
 
 
@@ -143,7 +141,7 @@ def scan_near_resistance(kc, symbols: list[str] | None = None) -> list[dict]:
     if symbols is None:
         symbols = WATCHLIST_DAILY[:SCAN_TOP]
 
-    daily = _kite_daily(kc, symbols, days=400)
+    daily = _kite_daily(kc, symbols, days=30)
 
     out: list[dict] = []
     for sym, df in daily.items():

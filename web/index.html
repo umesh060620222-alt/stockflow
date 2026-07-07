@@ -342,7 +342,7 @@
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       <b style="font-size:14px">Resistance Reversal Scanner</b>
       <div style="display:flex;gap:8px;align-items:center">
-        <span style="font-size:11px;color:#6b7280">52w high · via Kite · signals live</span>
+        <span style="font-size:11px;color:#6b7280">2-week high · via Kite · signals live</span>
         <button style="width:auto;margin:0;padding:7px 14px" onclick="loadReversal(true)">Scan</button>
       </div>
     </div>
@@ -725,8 +725,8 @@ async function loadReversal(force){
     if(d.error){ document.getElementById('rvStatus').textContent='Error: '+d.error; return; }
     const list=d.candidates||[];
     document.getElementById('rvStatus').textContent=
-      list.length+' stocks within 0.5% of 52w high · tracking live · '+new Date().toLocaleTimeString('en-IN');
-    if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near 52w high right now.</p>'; return; }
+      list.length+' stocks within 0.5% of 2-week high · tracking live · '+new Date().toLocaleTimeString('en-IN');
+    if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near 2-week high right now.</p>'; return; }
 
     // register candidates for live tracking (preserve state if already hovering)
     list.forEach(c=>{
