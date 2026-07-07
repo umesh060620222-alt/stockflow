@@ -87,6 +87,7 @@
   .pm-empty{padding:36px;text-align:center;color:#6b7280;font-size:13px}
   .pm-log{margin-top:12px;padding:10px 12px;background:#101113;border-radius:10px;font-size:11px;color:#6b7280;max-height:68px;overflow-y:auto;font-family:monospace;line-height:1.5}
   .pm-log .err{color:#f87171}.pm-log .ok{color:#4ade80}
+  @keyframes rvPulse{0%,100%{border-color:#ef4444}50%{border-color:#fca5a5;box-shadow:0 0 18px #ef444488}}
 </style>
 </head>
 <body>
@@ -341,11 +342,12 @@
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       <b style="font-size:14px">Resistance Reversal Scanner</b>
       <div style="display:flex;gap:8px;align-items:center">
-        <span style="font-size:11px;color:#6b7280">52w high · vol &gt; 20d avg · RSI &gt; 65 · via Kite</span>
+        <span style="font-size:11px;color:#6b7280">52w high · via Kite · signals live</span>
         <button style="width:auto;margin:0;padding:7px 14px" onclick="loadReversal(true)">Scan</button>
       </div>
     </div>
     <div id="rvStatus" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+    <div id="rvSignals" style="margin-bottom:12px"></div>
     <div id="rvBody"></div>
   </div>
 
@@ -654,28 +656,111 @@ async function loadBacktest(){
 }
 
 // ── Reversal ──────────────────────────────────────────────────────────────────
+// ── Reversal state machine ─────────────────────────────────────────────────────
+// rvCandidates[sym] = {resistance, state:'idle'|'hovering'|'rejected',
+//                      hoverStart, touchHigh, signaled}
+let rvCandidates = {};
+const RV_NEAR_PCT   = 0.003;  // within 0.3% of resistance = hovering
+const RV_REJECT_PCT = 0.002;  // 0.2% drop from touchHigh = rejected
+const RV_HOVER_MS   = 120000; // must hover 2+ min before signal fires
+
+function rvCheckSignals(){
+  const now = Date.now();
+  for(const [sym, rv] of Object.entries(rvCandidates)){
+    if(rv.signaled) continue;
+    // find this symbol in scData
+    const entry = Object.values(scData).find(d=>d.sym===sym);
+    if(!entry || !entry.ticks.length) continue;
+    const ltp = entry.ticks[entry.ticks.length-1].ltp;
+    const res = rv.resistance;
+    const nearRes = ltp >= res*(1-RV_NEAR_PCT);
+
+    if(rv.state==='idle'){
+      if(nearRes){ rv.state='hovering'; rv.hoverStart=now; rv.touchHigh=ltp; }
+    } else if(rv.state==='hovering'){
+      if(ltp > rv.touchHigh) rv.touchHigh = ltp;
+      if(!nearRes && ltp < res*(1-RV_NEAR_PCT*2)){
+        // drifted well away without a signal — reset
+        rv.state='idle'; rv.hoverStart=null; rv.touchHigh=null;
+      }
+      const hoveredLong = (now - rv.hoverStart) >= RV_HOVER_MS;
+      const rejected    = ltp < rv.touchHigh*(1-RV_REJECT_PCT);
+      if(hoveredLong && rejected){
+        rv.state='rejected'; rv.signaled=true;
+        rvFlash(sym, ltp, rv.resistance, rv.touchHigh);
+      }
+    }
+  }
+}
+
+function rvFlash(sym, ltp, resistance, touchHigh){
+  const drop = ((touchHigh-ltp)/touchHigh*100).toFixed(2);
+  const ts   = new Date().toLocaleTimeString('en-IN');
+  // prepend a signal banner to the reversal tab
+  const box  = document.getElementById('rvSignals');
+  const el   = document.createElement('div');
+  el.style.cssText='padding:12px 16px;margin-bottom:10px;background:#1a0a0a;border:2px solid #ef4444;border-radius:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;animation:rvPulse 1s ease-in-out 3';
+  el.innerHTML=`
+    <span style="font-size:20px;font-weight:800;color:#ef4444">SHORT</span>
+    <span style="font-size:18px;font-weight:700;color:#fbbf24">${sym}</span>
+    <span style="color:#9ca3af">touched ₹${touchHigh} → now ₹${ltp}</span>
+    <span style="color:#ef4444;font-weight:600">↓${drop}% from resistance ₹${resistance}</span>
+    <span style="color:#6b7280;font-size:11px;margin-left:auto">${ts}</span>`;
+  box.prepend(el);
+  // also flash the tab button
+  const tabBtn=document.getElementById('tab-reversal');
+  if(tabBtn){ tabBtn.style.background='#7f1d1d'; tabBtn.style.color='#fca5a5';
+    setTimeout(()=>{ tabBtn.style.background=''; tabBtn.style.color=''; }, 8000); }
+}
+
 let _rvLoading=false;
 async function loadReversal(force){
   if(_rvLoading) return;
   _rvLoading=true;
-  document.getElementById('rvStatus').textContent='Scanning… (Kite daily data + 5-min candle patterns)';
+  document.getElementById('rvStatus').textContent='Scanning… (Kite daily data)';
   document.getElementById('rvBody').innerHTML='';
   try{
-    const url='/api/reversal';
-    const d=await (await fetch(url)).json();
+    const d=await (await fetch('/api/reversal')).json();
     _rvLoading=false;
     if(d.error){ document.getElementById('rvStatus').textContent='Error: '+d.error; return; }
     const list=d.candidates||[];
     document.getElementById('rvStatus').textContent=
-      list.length+' stocks within 0.5% of 52w high · '+new Date().toLocaleTimeString('en-IN');
+      list.length+' stocks within 0.5% of 52w high · tracking live · '+new Date().toLocaleTimeString('en-IN');
     if(!list.length){ document.getElementById('rvBody').innerHTML='<p class="muted">No stocks near 52w high right now.</p>'; return; }
-    document.getElementById('rvBody').innerHTML=list.map(c=>`
-      <div style="padding:10px 14px;margin-bottom:8px;background:#101113;border:1px solid #2a2c30;border-radius:9px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+
+    // register candidates for live tracking (preserve state if already hovering)
+    list.forEach(c=>{
+      if(!rvCandidates[c.symbol])
+        rvCandidates[c.symbol]={resistance:c.resistance,state:'idle',hoverStart:null,touchHigh:null,signaled:false};
+      else
+        rvCandidates[c.symbol].resistance=c.resistance; // update resistance in case it changed
+    });
+
+    // subscribe their tokens to scWs if scanner is connected
+    if(scWs && scWs.readyState===1){
+      const symSet=new Set(list.map(c=>c.symbol));
+      const toks=Object.entries(scTokenMap)
+        .filter(([tok,sym])=>symSet.has(sym)).map(([tok])=>Number(tok));
+      if(toks.length){
+        scWs.send(JSON.stringify({a:'subscribe',v:toks}));
+        scWs.send(JSON.stringify({a:'mode',v:['full',toks]}));
+      }
+    }
+
+    document.getElementById('rvBody').innerHTML=list.map(c=>{
+      const rv=rvCandidates[c.symbol]||{};
+      const stateTag=rv.state==='hovering'
+        ?'<span style="color:#fbbf24;font-size:11px">⚡ hovering</span>'
+        :rv.state==='rejected'
+        ?'<span style="color:#ef4444;font-size:11px">↓ rejected</span>':''
+      return `<div style="padding:10px 14px;margin-bottom:8px;background:#101113;border:1px solid #2a2c30;border-radius:9px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <span style="font-size:17px;font-weight:700;color:#fbbf24">${c.symbol}</span>
         <span class="muted">₹${c.ltp}</span>
         <span style="color:#9ca3af">→ 52w high ₹${c.resistance}</span>
         <span style="color:#f87171;font-weight:600">${c.pct_from_res.toFixed(2)}% away</span>
-      </div>`).join('');
+        ${stateTag}
+      </div>`;
+    }).join('');
   }catch(e){
     _rvLoading=false;
     document.getElementById('rvStatus').textContent='Error: '+e;
@@ -1034,6 +1119,7 @@ function scScoreSell(d){
 
 function scRender(){
   atxRenderWaitlist();
+  rvCheckSignals();
   const rows=Object.values(scData);
   if(!rows.length) return;
   rows.forEach(r=>{
