@@ -741,11 +741,12 @@ function tdParseBinary(buf){
     if(!d){ off+=len; continue; }
     if(len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) d.prevClose=pc; }
     if(d.prevClose&&Math.abs(ltp-d.prevClose)/d.prevClose>0.3){ off+=len; continue; }
+    if(d.sessionOpen===null&&ltp>0) d.sessionOpen=ltp;  // base price = first tick this session
     if(!tdFirstTickLogged&&ltp>0){ tdFirstTickLogged=true;
       console.log('[TD] first tick parsed:', d.sym, 'ltp='+ltp, 'len='+len, 'packets in msg='+n); }
     const dBuy=d.prevBuy!==null?buyVol-d.prevBuy:null;
     const dSell=d.prevSell!==null?sellVol-d.prevSell:null;
-    const chgPct=d.prevClose?((ltp-d.prevClose)/d.prevClose*100):0;
+    const chgPct=d.sessionOpen?((ltp-d.sessionOpen)/d.sessionOpen*100):0;
     if(dBuy!==0||dSell!==0){
       d.ticks.push({ltp,buyVol,sellVol,chgPct,ratio:sellVol>0?buyVol/sellVol:0,dBuy,dSell});
       if(d.ticks.length>1800) d.ticks.shift();
@@ -774,7 +775,7 @@ function tdParseBinary(buf){
 // Returns 'Buying' | 'Selling' | null
 function tdSignal(d){
   if(!d.ticks||d.ticks.length<3) return null;
-  const chgPct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):0;
+  const chgPct=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):0;
   const ratio=d.sellVol>0?d.buyVol/d.sellVol:0;
   const up=chgPct>0.1, dn=chgPct<-0.1;
   const last20=d.ticks.slice(-21);
@@ -874,7 +875,10 @@ async function tdCloseTrade(token, result){
     if(tdState[d.sym]) tdState[d.sym].class='ignored';
     delete tdActivated[d.sym]; // SL hit — remove from active trading for the session
   } else {
+    // TARGET hit — start a fresh cycle from the exit price as the new base
     d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
+    d.sessionOpen=d.ltp;
+    tdState[d.sym]={buyCount:0,sellCount:0,class:null};
   }
   if(!t.test){
     if(result==='TARGET'){
@@ -905,7 +909,7 @@ function tdRender(){
   const mkCard=(d,side)=>{
     const col=side==='buyer'?'#4ade80':'#f87171';
     const ref=side==='buyer'?d.peak:d.trough;
-    const pct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):null;
+    const pct=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):null;
     const pnl=d.trade?((d.ltp-d.trade.entry)/d.trade.entry*(d.trade.side==='BUY'?1:-1)*100).toFixed(2):null;
     const sc=side==='buyer'?scScore(d):scScoreSell(d);
     const hasTrigger=d.peak!==null&&d.trough!==null&&d.peak!==d.trough;
@@ -970,13 +974,13 @@ function tdRender(){
 
   // tick table — all stocks sorted by abs chg%
   const rows=Object.values(tdData).filter(d=>d.ltp>0).sort((a,b)=>{
-    const ca=Math.abs((a.ltp-a.prevClose)/a.prevClose||0);
-    const cb=Math.abs((b.ltp-b.prevClose)/b.prevClose||0);
+    const ca=Math.abs((a.ltp-a.sessionOpen)/a.sessionOpen||0);
+    const cb=Math.abs((b.ltp-b.sessionOpen)/b.sessionOpen||0);
     return cb-ca;
   });
   const clsColor={buyer:'#4ade80',seller:'#f87171',ignored:'#4b5563',neutral:'#6b7280'};
   document.getElementById('tdTickBody').innerHTML=rows.length?rows.map(d=>{
-    const chg=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):0;
+    const chg=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):0;
     const ratio=d.sellVol>0?(d.buyVol/d.sellVol):0;
     const st=tdState[d.sym]||{buyCount:0,sellCount:0,class:null};
     const cls=st.class||'neutral';
@@ -1012,7 +1016,7 @@ async function tdConnect(){
   tdTokenMap={}; tdData={}; tdState={}; tdActivated={};
   Object.entries(td).forEach(([sym,tok])=>{
     tdTokenMap[tok]=sym;
-    tdData[tok]={sym,ltp:0,buyVol:0,sellVol:0,prevBuy:null,prevSell:null,prevClose:0,
+    tdData[tok]={sym,ltp:0,buyVol:0,sellVol:0,prevBuy:null,prevSell:null,prevClose:0,sessionOpen:null,
       ticks:[],peak:null,trough:null,trade:null,closed:[],stopped:false};
   });
   const tokens=Object.keys(tdTokenMap).map(Number);
