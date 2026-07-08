@@ -974,8 +974,8 @@ function tdRender(){
     const st=tdState[d.sym]||{buyCount:0,sellCount:0,class:null};
     const cls=st.class||'neutral';
     const cc=clsColor[cls]||'#6b7280';
-    const statusText=cls!=='neutral'?cls.toUpperCase()
-      :(st.buyCount||st.sellCount)?`B ${st.buyCount}/${TD_MIN_SIGNALS} · S ${st.sellCount}/${TD_MIN_SIGNALS}`:'neutral';
+    const countsText=`B ${st.buyCount}/${TD_MIN_SIGNALS} · S ${st.sellCount}/${TD_MIN_SIGNALS}`;
+    const statusText=cls!=='neutral'?`${cls.toUpperCase()} (${countsText})`:countsText;
     return `<tr style="border-bottom:1px solid #1e2027">
       <td style="padding:3px 6px;font-weight:600;color:#f9fafb">${d.sym}</td>
       <td style="padding:3px 6px">₹${d.ltp.toFixed(2)}</td>
