@@ -707,10 +707,10 @@ const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
-const TD_WARMUP_MS = 2*60*1000;  // observe-only window after connect before classifying
+const TD_MIN_SIGNALS = 20;  // min buy or sell signals before a stock is classified
 
 let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
-let tdTestMode=true, tdActivated={}, tdConnectTs=null;
+let tdTestMode=true, tdActivated={};
 
 function tdToggleMode(){
   tdTestMode=!tdTestMode;
@@ -791,27 +791,21 @@ function tdSignal(d){
   return null;  // no drifting — pullbacks on buy-dominant stocks stay 'buyer'
 }
 
-function tdWarmupRemaining(){
-  if(!tdConnectTs) return 0;
-  return Math.max(0, TD_WARMUP_MS-(Date.now()-tdConnectTs));
-}
-
 function tdClassify(){
-  if(tdWarmupRemaining()>0) return;  // observe-only — no buyer/seller/ignored calls yet
   for(const [,d] of Object.entries(tdData)){
     const sym=d.sym;
-    if(!tdState[sym]) tdState[sym]={everBuy:false,everSell:false,class:null};
+    if(!tdState[sym]) tdState[sym]={buyCount:0,sellCount:0,class:null};
     const st=tdState[sym];
     if(st.class==='ignored') continue;
     const sig=tdSignal(d);
-    if(sig==='Buying')  st.everBuy=true;
-    if(sig==='Selling') st.everSell=true;
-    if(st.everBuy&&st.everSell){
+    if(sig==='Buying')  st.buyCount++;
+    if(sig==='Selling') st.sellCount++;
+    if(st.buyCount>0&&st.sellCount>0){
       st.class='ignored'; d.peak=null; d.trough=null; continue;
     }
-    if(st.everBuy&&st.class!=='buyer'){
+    if(st.buyCount>=TD_MIN_SIGNALS&&st.class!=='buyer'){
       st.class='buyer'; d.peak=d.ltp;
-    } else if(st.everSell&&st.class!=='seller'){
+    } else if(st.sellCount>=TD_MIN_SIGNALS&&st.class!=='seller'){
       st.class='seller'; d.trough=d.ltp;
     }
   }
@@ -932,15 +926,12 @@ function tdRender(){
     </div>`;
   };
 
-  const warmupLeft=tdWarmupRemaining();
-  const warmupMsg=warmupLeft>0
-    ?`<div class="muted" style="font-size:12px;padding:4px">Observing market… ${Math.ceil(warmupLeft/1000)}s before classifying</div>`:null;
-  document.getElementById('tdBuyList').innerHTML=warmupMsg||(buyers.length
+  document.getElementById('tdBuyList').innerHTML=buyers.length
     ?buyers.map(d=>mkCard(d,'buyer')).join('')
-    :'<div class="muted" style="font-size:12px;padding:4px">No consistent buyers yet</div>');
-  document.getElementById('tdSellList').innerHTML=warmupMsg||(sellers.length
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent buyers yet</div>';
+  document.getElementById('tdSellList').innerHTML=sellers.length
     ?sellers.map(d=>mkCard(d,'seller')).join('')
-    :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>');
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>';
 
   // active trades + closed
   const active=Object.values(tdData).filter(d=>d.trade);
@@ -1026,14 +1017,12 @@ async function tdConnect(){
     const tag=tdTestMode?'[TEST]':'[LIVE]';
     document.getElementById('tdStatus').textContent=`${tag} · ${tokens.length} stocks`;
     document.getElementById('tdStopBtn').disabled=false;
-    tdConnectTs=Date.now();
     tdTimer=setInterval(tdRender,2000);
   };
   tdWs.onmessage=e=>{ if(typeof e.data!=='string') tdParseBinary(e.data); };
   tdWs.onerror=()=>{ document.getElementById('tdStatus').textContent='WS error.'; };
   tdWs.onclose=()=>{ document.getElementById('tdStatus').textContent='Disconnected.';
     document.getElementById('tdStopBtn').disabled=true;
-    tdConnectTs=null;
     if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
   };
 }
@@ -1041,7 +1030,6 @@ async function tdConnect(){
 function tdDisconnect(){
   if(tdWs){ tdWs.close(); tdWs=null; }
   if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
-  tdConnectTs=null;
   document.getElementById('tdStopBtn').disabled=true;
   document.getElementById('tdStatus').textContent='Stopped.';
 }
