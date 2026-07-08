@@ -947,7 +947,7 @@ function tdRender(){
   // active trades + closed
   const active=Object.values(tdData).filter(d=>d.trade);
   const allClosed=Object.values(tdData).flatMap(d=>d.closed)
-    .sort((a,b)=>b.exitTime>a.exitTime?1:-1).slice(0,8);
+    .sort((a,b)=>b.exitTime>a.exitTime?1:-1);
   const tBox=document.getElementById('tdTrades');
   const activeHtml=active.map(d=>{
     const t=d.trade;
