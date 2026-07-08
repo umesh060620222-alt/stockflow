@@ -723,10 +723,12 @@ function tdActivate(sym){
   else tdActivated[sym]=true;
 }
 
+let tdFirstTickLogged=false;
 function tdParseBinary(buf){
-  const view=new DataView(buf);
-  let off=0;
-  while(off+2<=buf.byteLength){
+  const view=new DataView(buf); if(buf.byteLength<2) return;
+  const n=view.getInt16(0); let off=2;
+  for(let i=0;i<n;i++){
+    if(off+2>buf.byteLength) break;
     const len=view.getInt16(off); off+=2;
     if(len<4||off+len>buf.byteLength) break;
     const token=view.getInt32(off);
@@ -738,6 +740,8 @@ function tdParseBinary(buf){
     if(!d){ off+=len; continue; }
     if(len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) d.prevClose=pc; }
     if(d.prevClose&&Math.abs(ltp-d.prevClose)/d.prevClose>0.3){ off+=len; continue; }
+    if(!tdFirstTickLogged&&ltp>0){ tdFirstTickLogged=true;
+      console.log('[TD] first tick parsed:', d.sym, 'ltp='+ltp, 'len='+len, 'packets in msg='+n); }
     const dBuy=d.prevBuy!==null?buyVol-d.prevBuy:null;
     const dSell=d.prevSell!==null?sellVol-d.prevSell:null;
     const chgPct=d.prevClose?((ltp-d.prevClose)/d.prevClose*100):0;
@@ -984,6 +988,12 @@ function tdRender(){
 async function tdConnect(){
   if(tdWs&&tdWs.readyState===1) return;
   const mock=document.getElementById('tdMockChk').checked;
+  if(!mock&&!pmCreds){
+    document.getElementById('tdStatus').textContent='Fetching credentials…';
+    const d=await (await fetch('/api/auth/credentials')).json();
+    if(d.error){ document.getElementById('tdStatus').textContent='Not logged in — connect Zerodha first.'; return; }
+    pmCreds=d;
+  }
   document.getElementById('tdStatus').textContent='Fetching tokens…';
   const endpoint=mock?'/api/trading/mock-tokens':'/api/trading/tokens';
   const td=await (await fetch(endpoint)).json();
