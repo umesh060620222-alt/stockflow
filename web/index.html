@@ -707,7 +707,7 @@ const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
-const TD_MIN_SIGNALS = 20;  // min buy or sell signals before a stock is classified
+const TD_MIN_SIGNALS = 50;  // min buy or sell signals before a stock is classified
 
 let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
 let tdTestMode=true, tdActivated={};
