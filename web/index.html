@@ -792,7 +792,7 @@ function tdSignal(d){
 }
 
 function tdClassify(){
-  for(const [,d] of Object.entries(tdData)){
+  for(const [token,d] of Object.entries(tdData)){
     const sym=d.sym;
     if(!tdState[sym]) tdState[sym]={buyCount:0,sellCount:0,class:null};
     const st=tdState[sym];
@@ -801,7 +801,9 @@ function tdClassify(){
     if(sig==='Buying')  st.buyCount++;
     if(sig==='Selling') st.sellCount++;
     if(st.buyCount>0&&st.sellCount>0){
-      st.class='ignored'; d.peak=null; d.trough=null; continue;
+      st.class='ignored'; d.peak=null; d.trough=null;
+      if(d.trade) tdCloseTrade(token,'MIXED');  // square off now — don't wait for SL/target
+      continue;
     }
     if(st.buyCount>=TD_MIN_SIGNALS&&st.class!=='buyer'){
       st.class='buyer'; d.peak=d.ltp;
@@ -874,6 +876,8 @@ async function tdCloseTrade(token, result){
     d.stopped=true; d.peak=null; d.trough=null;
     if(tdState[d.sym]) tdState[d.sym].class='ignored';
     delete tdActivated[d.sym]; // SL hit — remove from active trading for the session
+  } else if(result==='MIXED'){
+    // squared off early on a mixed buy+sell signal — tdClassify already marked it ignored
   } else {
     // TARGET hit — start a fresh cycle from the exit price as the new base
     d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
@@ -881,8 +885,8 @@ async function tdCloseTrade(token, result){
     tdState[d.sym]={buyCount:0,sellCount:0,class:null};
   }
   if(!t.test){
-    if(result==='TARGET'){
-      // cancel the SL-M so it doesn't fire after manual target exit
+    if(result==='TARGET'||result==='MIXED'){
+      // cancel the SL-M so it doesn't fire after this manual exit
       try{
         const sl=await (await fetch('/api/trading/sl-order?symbol='+d.sym)).json();
         if(sl.sl_order_id){
@@ -963,7 +967,7 @@ function tdRender(){
     </div>`;
   }).join('');
   const closedHtml=allClosed.map(t=>{
-    const col=t.result==='TARGET'?'#4ade80':'#f87171';
+    const col=parseFloat(t.pnlPct)>=0?'#4ade80':'#f87171';
     return `<span style="font-size:11px;padding:2px 7px;margin:2px;border-radius:4px;background:#1a1c20;color:${col}">${t.sym} ${t.side} ${t.result} ${t.pnlPct>=0?'+':''}${t.pnlPct}% @ ${t.exitTime}</span>`;
   }).join('');
   tBox.innerHTML=(activeHtml||'<span class="muted" style="font-size:12px">No active trades</span>')
