@@ -777,7 +777,6 @@ function tdSignal(d){
   const chgPct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):0;
   const ratio=d.sellVol>0?d.buyVol/d.sellVol:0;
   const up=chgPct>0.1, dn=chgPct<-0.1;
-  const sc=scScore(d);
   const last20=d.ticks.slice(-21);
   let driftUp=0,driftDn=0;
   for(let i=1;i<last20.length;i++){
@@ -786,7 +785,7 @@ function tdSignal(d){
   }
   const driftScore=driftUp-driftDn;
   const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
-  if(up&&ratio>=1.2&&!sc.sellGrowing) return 'Buying';
+  if(up&&ratio>=1.2) return 'Buying';
   if(dn&&ratio<=0.8) return 'Selling';
   return null;  // no drifting — pullbacks on buy-dominant stocks stay 'buyer'
 }
