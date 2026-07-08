@@ -817,9 +817,13 @@ function tdCheckEntry(token){
   if(!tdTestMode&&!tdActivated[d.sym]) return; // LIVE: must tap card; TEST: trade all classified
   const cls=(tdState[d.sym]||{}).class;
   if(d.peak===null||d.trough===null||d.peak===d.trough) return;
-  const mid=(d.peak+d.trough)/2;
-  if(cls==='buyer'  && d.ltp<=mid) tdEnter(token,'BUY');
-  else if(cls==='seller' && d.ltp>=mid) tdEnter(token,'SELL');
+  if(cls==='buyer'){
+    const trigger=d.trough*(1+TD_PULL);  // low + 0.2%
+    if(d.ltp<=trigger) tdEnter(token,'BUY');
+  } else if(cls==='seller'){
+    const trigger=d.peak*(1-TD_PULL);  // high - 0.2%
+    if(d.ltp>=trigger) tdEnter(token,'SELL');
+  }
 }
 
 function tdCheckExit(token){
@@ -901,12 +905,12 @@ function tdRender(){
     const pct=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):null;
     const pnl=d.trade?((d.ltp-d.trade.entry)/d.trade.entry*(d.trade.side==='BUY'?1:-1)*100).toFixed(2):null;
     const sc=side==='buyer'?scScore(d):scScoreSell(d);
-    const hasMid=d.peak!==null&&d.trough!==null&&d.peak!==d.trough;
-    const mid=hasMid?(d.peak+d.trough)/2:null;
-    // progress bar: how far price has moved toward the midpoint trigger
-    const swing=hasMid?d.peak-d.trough:0;
-    const distToMid=hasMid?(side==='buyer'?d.ltp-mid:mid-d.ltp):0;
-    const progress=swing>0?Math.min(100,Math.round((1-distToMid/swing*2)*100)):0;
+    const hasTrigger=d.peak!==null&&d.trough!==null&&d.peak!==d.trough;
+    const trigger=hasTrigger?(side==='buyer'?d.trough*(1+TD_PULL):d.peak*(1-TD_PULL)):null;
+    // progress bar: how far price has moved from the peak/trough toward the entry trigger
+    const swing=hasTrigger?(side==='buyer'?d.peak-trigger:trigger-d.trough):0;
+    const distToTrigger=hasTrigger?(side==='buyer'?d.ltp-trigger:trigger-d.ltp):0;
+    const progress=swing>0?Math.min(100,Math.max(0,Math.round((1-distToTrigger/swing)*100))):0;
     const barCol=progress>=100?'#fbbf24':col;
     const active=!!tdActivated[d.sym];
     return `<div style="padding:7px 11px;margin-bottom:6px;background:#1a1c20;border-radius:7px;border-left:3px solid ${active?'#fbbf24':col};cursor:pointer" onclick="tdActivate('${d.sym}')">
@@ -915,7 +919,7 @@ function tdRender(){
         <span>₹${d.ltp.toFixed(1)}</span>
         ${pct!==null?`<span style="color:${pct>=0?'#4ade80':'#f87171'}">${pct>=0?'+':''}${pct.toFixed(2)}%</span>`:''}
         <span style="color:#6b7280;font-size:11px">H ₹${d.peak?d.peak.toFixed(1):'-'} L ₹${d.trough?d.trough.toFixed(1):'-'}</span>
-        ${mid!==null?`<span style="color:${barCol};font-size:11px">mid ₹${mid.toFixed(1)}</span>`:''}
+        ${trigger!==null?`<span style="color:${barCol};font-size:11px">entry ₹${trigger.toFixed(1)}</span>`:''}
         <span style="color:#6b7280;font-size:10px">${sc.total||0}/8</span>
         ${active?`<span style="color:#fbbf24;font-size:10px;font-weight:600">● TRADING</span>`:'<span style="color:#374151;font-size:10px">tap to trade</span>'}
         ${pnl!==null?`<span style="color:${parseFloat(pnl)>=0?'#4ade80':'#f87171'};font-weight:600">trade ${pnl>=0?'+':''}${pnl}%</span>`:''}
