@@ -971,8 +971,11 @@ function tdRender(){
   document.getElementById('tdTickBody').innerHTML=rows.length?rows.map(d=>{
     const chg=d.prevClose?((d.ltp-d.prevClose)/d.prevClose*100):0;
     const ratio=d.sellVol>0?(d.buyVol/d.sellVol):0;
-    const cls=(tdState[d.sym]||{}).class||'neutral';
+    const st=tdState[d.sym]||{buyCount:0,sellCount:0,class:null};
+    const cls=st.class||'neutral';
     const cc=clsColor[cls]||'#6b7280';
+    const statusText=cls!=='neutral'?cls.toUpperCase()
+      :(st.buyCount||st.sellCount)?`B ${st.buyCount}/${TD_MIN_SIGNALS} · S ${st.sellCount}/${TD_MIN_SIGNALS}`:'neutral';
     return `<tr style="border-bottom:1px solid #1e2027">
       <td style="padding:3px 6px;font-weight:600;color:#f9fafb">${d.sym}</td>
       <td style="padding:3px 6px">₹${d.ltp.toFixed(2)}</td>
@@ -981,7 +984,7 @@ function tdRender(){
       <td style="padding:3px 6px">${d.sellVol>0?(d.sellVol/1000).toFixed(0)+'K':'-'}</td>
       <td style="padding:3px 6px">${ratio>0?ratio.toFixed(2):'-'}</td>
       <td style="padding:3px 6px;color:#6b7280">${d.ticks.length}</td>
-      <td style="padding:3px 6px;color:${cc};font-weight:600;text-transform:uppercase">${cls}</td>
+      <td style="padding:3px 6px;color:${cc};font-weight:600;text-transform:uppercase">${statusText}</td>
     </tr>`;
   }).join(''):'<tr><td colspan="8" style="color:#4b5563;padding:8px 6px">No data yet…</td></tr>';
 }
