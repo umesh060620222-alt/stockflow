@@ -707,9 +707,10 @@ const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
+const TD_WARMUP_MS = 2*60*1000;  // observe-only window after connect before classifying
 
 let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
-let tdTestMode=true, tdActivated={};
+let tdTestMode=true, tdActivated={}, tdConnectTs=null;
 
 function tdToggleMode(){
   tdTestMode=!tdTestMode;
@@ -790,7 +791,13 @@ function tdSignal(d){
   return null;  // no drifting — pullbacks on buy-dominant stocks stay 'buyer'
 }
 
+function tdWarmupRemaining(){
+  if(!tdConnectTs) return 0;
+  return Math.max(0, TD_WARMUP_MS-(Date.now()-tdConnectTs));
+}
+
 function tdClassify(){
+  if(tdWarmupRemaining()>0) return;  // observe-only — no buyer/seller/ignored calls yet
   for(const [,d] of Object.entries(tdData)){
     const sym=d.sym;
     if(!tdState[sym]) tdState[sym]={everBuy:false,everSell:false,class:null};
@@ -925,12 +932,15 @@ function tdRender(){
     </div>`;
   };
 
-  document.getElementById('tdBuyList').innerHTML=buyers.length
+  const warmupLeft=tdWarmupRemaining();
+  const warmupMsg=warmupLeft>0
+    ?`<div class="muted" style="font-size:12px;padding:4px">Observing market… ${Math.ceil(warmupLeft/1000)}s before classifying</div>`:null;
+  document.getElementById('tdBuyList').innerHTML=warmupMsg||(buyers.length
     ?buyers.map(d=>mkCard(d,'buyer')).join('')
-    :'<div class="muted" style="font-size:12px;padding:4px">No consistent buyers yet</div>';
-  document.getElementById('tdSellList').innerHTML=sellers.length
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent buyers yet</div>');
+  document.getElementById('tdSellList').innerHTML=warmupMsg||(sellers.length
     ?sellers.map(d=>mkCard(d,'seller')).join('')
-    :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>';
+    :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>');
 
   // active trades + closed
   const active=Object.values(tdData).filter(d=>d.trade);
@@ -1016,12 +1026,14 @@ async function tdConnect(){
     const tag=tdTestMode?'[TEST]':'[LIVE]';
     document.getElementById('tdStatus').textContent=`${tag} · ${tokens.length} stocks`;
     document.getElementById('tdStopBtn').disabled=false;
+    tdConnectTs=Date.now();
     tdTimer=setInterval(tdRender,2000);
   };
   tdWs.onmessage=e=>{ if(typeof e.data!=='string') tdParseBinary(e.data); };
   tdWs.onerror=()=>{ document.getElementById('tdStatus').textContent='WS error.'; };
   tdWs.onclose=()=>{ document.getElementById('tdStatus').textContent='Disconnected.';
     document.getElementById('tdStopBtn').disabled=true;
+    tdConnectTs=null;
     if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
   };
 }
@@ -1029,6 +1041,7 @@ async function tdConnect(){
 function tdDisconnect(){
   if(tdWs){ tdWs.close(); tdWs=null; }
   if(tdTimer){ clearInterval(tdTimer); tdTimer=null; }
+  tdConnectTs=null;
   document.getElementById('tdStopBtn').disabled=true;
   document.getElementById('tdStatus').textContent='Stopped.';
 }
