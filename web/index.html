@@ -708,8 +708,13 @@ const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
-const TD_MIN_SIGNALS = 50;  // min buy or sell signals before a stock is classified
+const TD_SIGNALS_PER_100 = 10;  // min signals scale with price: this many per ₹100
 const TD_MAX_TRADES = 10;   // hard cap on concurrent open trades
+
+function tdMinSignals(price){
+  // e.g. a ₹1200 stock needs round(1200/100)*10 = 120 signals before classifying
+  return Math.max(1, Math.round(price/100)*TD_SIGNALS_PER_100);
+}
 
 let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
 let tdTestMode=true, tdAutoMode=true, tdActivated={};
@@ -814,9 +819,10 @@ function tdClassify(){
       if(d.trade) tdCloseTrade(token,'MIXED');  // square off now — don't wait for SL/target
       continue;
     }
-    if(st.buyCount>=TD_MIN_SIGNALS&&st.class!=='buyer'){
+    const minSignals=tdMinSignals(d.ltp);
+    if(st.buyCount>=minSignals&&st.class!=='buyer'){
       st.class='buyer'; d.peak=d.ltp;
-    } else if(st.sellCount>=TD_MIN_SIGNALS&&st.class!=='seller'){
+    } else if(st.sellCount>=minSignals&&st.class!=='seller'){
       st.class='seller'; d.trough=d.ltp;
     }
   }
@@ -998,7 +1004,8 @@ function tdRender(){
     const st=tdState[d.sym]||{buyCount:0,sellCount:0,class:null};
     const cls=st.class||'neutral';
     const cc=clsColor[cls]||'#6b7280';
-    const countsText=`B ${st.buyCount}/${TD_MIN_SIGNALS} · S ${st.sellCount}/${TD_MIN_SIGNALS}`;
+    const minSignals=tdMinSignals(d.ltp);
+    const countsText=`B ${st.buyCount}/${minSignals} · S ${st.sellCount}/${minSignals}`;
     const statusText=cls!=='neutral'?`${cls.toUpperCase()} (${countsText})`:countsText;
     return `<tr style="border-bottom:1px solid #1e2027">
       <td style="padding:3px 6px;font-weight:600;color:#f9fafb">${d.sym}</td>
