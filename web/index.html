@@ -703,8 +703,8 @@ async function loadBacktest(){
 
 // ── Trading tab ───────────────────────────────────────────────────────────────
 // Same live-screen scoring logic; classifies stocks as consistent buyer/seller.
-// Mixed even once → ignored for the session. Entry on 0.2% pullback from peak/trough.
-const TD_PULL   = 0.002;  // 0.2% pullback from peak (buyers) or trough (sellers)
+// Mixed even once → ignored for the session. Entry on 0.1% pullback from peak/trough.
+const TD_PULL   = 0.001;  // 0.1% pullback from peak (buyers) or trough (sellers)
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
@@ -840,10 +840,10 @@ function tdCheckEntry(token){
   // (a % below/above that same value) passes trivially on the very next tick.
   if(d.peak-d.trough<d.trough*TD_PULL) return;
   if(cls==='buyer'){
-    const trigger=d.trough*(1+TD_PULL);  // low + 0.2%
+    const trigger=d.trough*(1+TD_PULL);  // bottom + 0.1%
     if(d.ltp<=trigger) tdEnter(token,'BUY');
   } else if(cls==='seller'){
-    const trigger=d.peak*(1-TD_PULL);  // high - 0.2%
+    const trigger=d.peak*(1-TD_PULL);  // top - 0.1%
     if(d.ltp>=trigger) tdEnter(token,'SELL');
   }
 }
