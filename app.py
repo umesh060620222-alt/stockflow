@@ -15,40 +15,154 @@ import newsflash as NF
 from live import ENGINE as LIVE
 
 _REC_CACHE = {}   # market -> {"date": ..., "data": ...}
-_SL_ORDERS = {}   # sym -> sl_order_id (set by background thread after fill)
+_BRACKET = {}     # key (symbol) -> bracket state, see _place_bracket_after_fill
+_TICK_CACHE = {}  # (exchange, tradingsymbol) -> tick_size
 
 
-def _wait_and_place_sl(kc, entry_oid, sym, sl_side, sl_trigger):
-    """Poll until LIMIT entry fills, then place SL-M on opposite side."""
-    for _ in range(240):          # up to 2 min (240 × 0.5s)
+def _get_tick_size(kc, exchange, tradingsymbol):
+    """Tick size varies per instrument (0.05, 0.10, ...) — fetch the real value
+    instead of assuming, since Zerodha rejects any price that isn't an exact
+    multiple of it (confirmed: TATACONSUM is 0.10, not the usual 0.05)."""
+    key = (exchange, tradingsymbol)
+    if key in _TICK_CACHE:
+        return _TICK_CACHE[key]
+    tick = 0.05
+    try:
+        instruments = kc.instruments(exchange)
+        m = next((i for i in instruments if i.get("tradingsymbol") == tradingsymbol), None)
+        if m and m.get("tick_size"):
+            tick = float(m["tick_size"])
+    except Exception as e:
+        print(f"[trading] tick_size lookup failed for {tradingsymbol}, defaulting to 0.05: {e}", flush=True)
+    _TICK_CACHE[key] = tick
+    return tick
+
+
+def _round_tick(price, tick=0.05):
+    """Snap a price to the exchange's tick-size grid. Naive percentage-based prices
+    (e.g. entry*0.995) almost never land on a valid multiple, and Zerodha rejects
+    orders that don't."""
+    return round(round(price / tick) * tick, 2)
+
+
+def _place_bracket(kc, key, exchange, tradingsymbol, exit_side, quantity, product,
+                    sl_trigger, target_price, entry_price=None):
+    """Rest an SL (stop-loss limit) + a LIMIT target on the exchange for an already-
+    filled position (a manual OCO bracket) and start polling for either to fill.
+    Uses SL (limit), not SL-M (market) — SL-M requires "market protection" that
+    isn't enabled for API orders on this account and gets rejected outright."""
+    tick = _get_tick_size(kc, exchange, tradingsymbol)
+    sl_trigger = _round_tick(sl_trigger, tick)
+    target_price = _round_tick(target_price, tick)
+    tt = kc.TRANSACTION_TYPE_SELL if exit_side == "SELL" else kc.TRANSACTION_TYPE_BUY
+    # SL-limit needs a limit price past the trigger so it's still marketable once hit
+    sl_limit = _round_tick(sl_trigger * (1.005 if exit_side == "BUY" else 0.995), tick)
+    sl_oid = kc.place_order(
+        variety=kc.VARIETY_REGULAR, exchange=exchange, tradingsymbol=tradingsymbol,
+        transaction_type=tt, quantity=quantity, product=product,
+        order_type=kc.ORDER_TYPE_SL, trigger_price=sl_trigger, price=sl_limit,
+    )
+    target_oid = kc.place_order(
+        variety=kc.VARIETY_REGULAR, exchange=exchange, tradingsymbol=tradingsymbol,
+        transaction_type=tt, quantity=quantity, product=product,
+        order_type=kc.ORDER_TYPE_LIMIT, price=target_price,
+    )
+    _BRACKET[key] = {
+        "sl_id": sl_oid, "target_id": target_oid, "exchange": exchange,
+        "tradingsymbol": tradingsymbol, "product": product, "quantity": quantity,
+        "exit_side": exit_side, "entry_price": entry_price,
+        "closed": False, "result": None, "exit_price": None,
+    }
+    print(f"[trading] {tradingsymbol} bracket armed → "
+          f"SL {sl_oid} trigger={sl_trigger}/limit={sl_limit} / target {target_oid}@{target_price}", flush=True)
+    threading.Thread(target=_poll_bracket, args=(kc, key), daemon=True).start()
+    return _BRACKET[key]
+
+
+def _poll_bracket(kc, key):
+    """Poll a resting bracket until one side fills, cancelling the other, or force
+    square off past 15:20 IST if still open."""
+    for _ in range(7200):   # up to 4 hours (7200 × 2s)
+        time.sleep(2)
+        b = _BRACKET.get(key)
+        if not b or b["closed"]:
+            return
+        try:
+            orders = kc.orders()
+            sl_o = next((x for x in orders if str(x["order_id"]) == str(b["sl_id"])), None)
+            tg_o = next((x for x in orders if str(x["order_id"]) == str(b["target_id"])), None)
+            if sl_o and sl_o["status"] == "COMPLETE":
+                _try_cancel(kc, b["target_id"])
+                b.update(closed=True, result="SL", exit_price=sl_o.get("average_price"))
+                return
+            if tg_o and tg_o["status"] == "COMPLETE":
+                _try_cancel(kc, b["sl_id"])
+                b.update(closed=True, result="TARGET", exit_price=tg_o.get("average_price"))
+                return
+            now_ist = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+            if now_ist.hour * 60 + now_ist.minute >= 15 * 60 + 20:   # >= 15:20 IST
+                _force_square_off(kc, key, "EOD")
+                return
+        except Exception as e:
+            print(f"[trading] bracket poll error {key}: {e}", flush=True)
+
+
+def _place_bracket_after_fill(kc, entry_oid, key, exchange, tradingsymbol, exit_side,
+                               quantity, product, sl_trigger, target_price):
+    """Poll (read-only status checks) until the entry order fills, then arm the exit
+    bracket exactly once — if that fails, stop and report instead of retrying on
+    every subsequent poll tick (a prior version did that and hammered the API with
+    ~160 rejected orders in one incident)."""
+    for _ in range(240):          # up to 2 min (240 × 0.5s) waiting for entry fill
         time.sleep(0.5)
         try:
             orders = kc.orders()
             o = next((x for x in orders if str(x["order_id"]) == str(entry_oid)), None)
-            if not o:
-                continue
-            if o["status"] == "COMPLETE":
-                tt = (kc.TRANSACTION_TYPE_SELL if sl_side == "SELL"
-                      else kc.TRANSACTION_TYPE_BUY)
-                sl_oid = kc.place_order(
-                    variety          = kc.VARIETY_REGULAR,
-                    exchange         = kc.EXCHANGE_NSE,
-                    tradingsymbol    = sym,
-                    transaction_type = tt,
-                    quantity         = int(o.get("filled_quantity") or o.get("quantity") or 1),
-                    product          = kc.PRODUCT_MIS,
-                    order_type       = kc.ORDER_TYPE_SLM,
-                    trigger_price    = sl_trigger,
-                )
-                _SL_ORDERS[sym] = sl_oid
-                print(f"[trading] {sym} filled @ {o.get('average_price')} → SL-M {sl_oid} trigger={sl_trigger}", flush=True)
-                return
-            if o["status"] in ("CANCELLED", "REJECTED"):
-                print(f"[trading] {sym} entry {o['status']} — no SL placed", flush=True)
-                return
         except Exception as e:
-            print(f"[trading] poll error {sym}: {e}", flush=True)
+            print(f"[trading] poll error {tradingsymbol}: {e}", flush=True)
+            continue
+        if not o:
+            continue
+        if o["status"] == "COMPLETE":
+            filled_qty = int(o.get("filled_quantity") or o.get("quantity") or quantity)
+            try:
+                _place_bracket(kc, key, exchange, tradingsymbol, exit_side, filled_qty,
+                                product, sl_trigger, target_price, entry_price=o.get("average_price"))
+            except Exception as e:
+                print(f"[trading] FAILED to place bracket for {tradingsymbol} — "
+                      f"position is UNPROTECTED, not retrying: {e}", flush=True)
+            return
+        if o["status"] in ("CANCELLED", "REJECTED"):
+            print(f"[trading] {tradingsymbol} entry {o['status']} — no bracket placed", flush=True)
+            return
     print(f"[trading] timed out waiting for fill on {entry_oid}", flush=True)
+
+
+def _try_cancel(kc, order_id):
+    try:
+        kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=str(order_id))
+    except Exception as e:
+        print(f"[trading] cancel {order_id} failed (likely already filled/cancelled): {e}", flush=True)
+
+
+def _force_square_off(kc, key, result):
+    b = _BRACKET.get(key)
+    if not b or b["closed"]:
+        return
+    if b.get("sl_id"):
+        _try_cancel(kc, b["sl_id"])
+    if b.get("target_id"):
+        _try_cancel(kc, b["target_id"])
+    try:
+        tt = kc.TRANSACTION_TYPE_SELL if b["exit_side"] == "SELL" else kc.TRANSACTION_TYPE_BUY
+        oid = kc.place_order(
+            variety=kc.VARIETY_REGULAR, exchange=b["exchange"], tradingsymbol=b["tradingsymbol"],
+            transaction_type=tt, quantity=b["quantity"], product=b["product"],
+            order_type=kc.ORDER_TYPE_MARKET,
+        )
+        b.update(closed=True, result=result, exit_price=None, square_off_order_id=oid)
+    except Exception as e:
+        print(f"[trading] force square-off failed {key}: {e}", flush=True)
 
 HERE = os.path.dirname(__file__)
 
@@ -178,11 +292,17 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps(result))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
-        if path == "/api/trading/sl-order":
+        if path == "/api/trading/status":
             from urllib.parse import urlparse, parse_qs
             sym = parse_qs(urlparse(self.path).query).get("symbol", [""])[0].upper()
-            oid = _SL_ORDERS.get(sym)
-            return self._send(200, dumps({"symbol": sym, "sl_order_id": oid}))
+            b = _BRACKET.get(sym)
+            if not b:
+                return self._send(200, dumps({"symbol": sym, "open": False}))
+            return self._send(200, dumps({
+                "symbol": sym, "open": not b["closed"], "result": b["result"],
+                "exit_price": b["exit_price"], "entry_price": b["entry_price"],
+                "tradingsymbol": b["tradingsymbol"], "quantity": b["quantity"],
+            }))
         if path == "/api/trading/mock-tokens":
             return self._send(200, dumps({"TESTBUY": 341249, "TESTSELL": 408065}))
         if path == "/api/trading/resolve":
@@ -462,13 +582,14 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/entry":
-            sym  = body.get("symbol", "")
-            side = body.get("side", "BUY").upper()
-            price = body.get("price")
-            sl    = body.get("sl")
-            qty   = int(body.get("quantity", 1))
-            if not sym or not price or not sl:
-                return self._send(200, dumps({"error": "symbol, price, sl required"}))
+            sym    = body.get("symbol", "")
+            side   = body.get("side", "BUY").upper()
+            price  = body.get("price")
+            sl     = body.get("sl")
+            target = body.get("target")
+            qty    = int(body.get("quantity", 1))
+            if not sym or not price or not sl or not target:
+                return self._send(200, dumps({"error": "symbol, price, sl, target required"}))
             try:
                 kc = Z.kite()
                 tt = kc.TRANSACTION_TYPE_BUY if side == "BUY" else kc.TRANSACTION_TYPE_SELL
@@ -482,14 +603,26 @@ class H(BaseHTTPRequestHandler):
                     order_type       = kc.ORDER_TYPE_LIMIT,
                     price            = float(price),
                 )
-                sl_side = "SELL" if side == "BUY" else "BUY"
-                _SL_ORDERS.pop(sym, None)
+                exit_side = "SELL" if side == "BUY" else "BUY"
+                _BRACKET.pop(sym, None)
                 threading.Thread(
-                    target=_wait_and_place_sl,
-                    args=(kc, oid, sym, sl_side, float(sl)),
+                    target=_place_bracket_after_fill,
+                    args=(kc, oid, sym, kc.EXCHANGE_NSE, sym, exit_side, qty,
+                          kc.PRODUCT_MIS, float(sl), float(target)),
                     daemon=True
                 ).start()
                 return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/square-off":
+            sym = body.get("symbol", "").strip().upper()
+            b = _BRACKET.get(sym)
+            if not b or b["closed"]:
+                return self._send(200, dumps({"error": "no open bracket for " + sym}))
+            try:
+                kc = Z.kite()
+                _force_square_off(kc, sym, "MANUAL")
+                return self._send(200, dumps({"squared_off": sym}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/cancel":

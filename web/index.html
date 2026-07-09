@@ -862,16 +862,19 @@ async function tdEnter(token, side){
   const sl    = side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2);
   const target= side==='BUY'?+(entry*1.005).toFixed(2):+(entry*0.995).toFixed(2);
   d.trade={side,entry,sl,target,
-    time:new Date().toLocaleTimeString('en-IN'),orderId:null,slOrderId:null,test:tdTestMode};
+    time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
     try{
-      // single call — server places LIMIT entry, then polls for fill, then places SL-M
+      // single call — server places LIMIT entry, then polls for fill, then rests an
+      // SL-limit + LIMIT target bracket on the exchange (auto-cancelling whichever
+      // doesn't fill).
       const r=await (await fetch('/api/trading/entry',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol:d.sym,side,price:entry,sl})})).json();
+        body:JSON.stringify({symbol:d.sym,side,price:entry,sl,target})})).json();
+      if(r.error){ console.warn('Order failed',r.error); if(d.trade)d.trade=null; return; }
       if(d.trade) d.trade.orderId=r.order_id||null;
-    }catch(e){ console.warn('Order failed',e); }
+    }catch(e){ console.warn('Order failed',e); if(d.trade)d.trade=null; }
   }
 }
 
@@ -887,26 +890,25 @@ async function tdCloseTrade(token, result){
     if(tdState[d.sym]) tdState[d.sym].class='ignored';
     delete tdActivated[d.sym]; // SL hit — remove from active trading for the session
   } else if(result==='MIXED'){
-    // squared off early on a mixed buy+sell signal — tdClassify already marked it ignored
+    // tdClassify already marked this ignored for the rest of the session — don't
+    // reset it back to a fresh cycle, that would undo the ignore.
+    delete tdActivated[d.sym];
   } else {
-    // TARGET hit — start a fresh cycle from the exit price as the new base
+    // TARGET — start a fresh cycle from the exit price as the new base
     d.ticks=[]; d.peak=d.ltp; d.trough=d.ltp;
     d.sessionOpen=d.ltp;
     tdState[d.sym]={buyCount:0,sellCount:0,class:null};
   }
-  if(!t.test){
-    if(result==='TARGET'||result==='MIXED'){
-      // cancel the SL-M so it doesn't fire after this manual exit
-      try{
-        const sl=await (await fetch('/api/trading/sl-order?symbol='+d.sym)).json();
-        if(sl.sl_order_id){
-          await fetch('/api/trading/cancel',{method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({order_id:sl.sl_order_id})});
-        }
-      }catch(e){ console.warn('SL cancel failed',e); }
-    }
-    // SL case: SL-M already fired on exchange, nothing more needed
+  if(!t.test&&result==='MIXED'){
+    // TARGET/SL for a real trade resolve on their own via the resting bracket orders
+    // on the exchange (see _place_bracket_after_fill) — only an early MIXED exit
+    // needs an explicit square-off call to close the position before either side
+    // fires naturally.
+    try{
+      await fetch('/api/trading/square-off',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:d.sym})});
+    }catch(e){ console.warn('square-off failed',e); }
   }
 }
 
@@ -987,12 +989,8 @@ function tdRender(){
   document.getElementById('tdIgnored').innerHTML=ignored.length
     ?`<span style="color:#4b5563">Mixed (ignored): ${ignored.join(', ')}</span>`:'';
 
-  // tick table — all stocks sorted by abs chg%
-  const rows=Object.values(tdData).filter(d=>d.ltp>0).sort((a,b)=>{
-    const ca=Math.abs((a.ltp-a.sessionOpen)/a.sessionOpen||0);
-    const cb=Math.abs((b.ltp-b.sessionOpen)/b.sessionOpen||0);
-    return cb-ca;
-  });
+  // tick table — fixed order (no per-tick re-sort, rows shouldn't jump around)
+  const rows=Object.values(tdData).filter(d=>d.ltp>0);
   const clsColor={buyer:'#4ade80',seller:'#f87171',ignored:'#4b5563',neutral:'#6b7280'};
   document.getElementById('tdTickBody').innerHTML=rows.length?rows.map(d=>{
     const chg=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):0;
