@@ -868,10 +868,10 @@ async function tdEnter(token, side){
   // marketable enough to actually catch the fill, instead of sitting unfilled at the
   // exact tick price if the market moves a touch before the order reaches the exchange.
   const entry = side==='BUY'
-    ? +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(2)
-    : +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(2);
-  const sl    = side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2);
-  const target= side==='BUY'?+(entry*1.003).toFixed(2):+(entry*0.997).toFixed(2);
+    ? +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(1)
+    : +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1);
+  const sl    = side==='BUY'?+(entry*0.995).toFixed(1):+(entry*1.005).toFixed(1);
+  const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
   d.trade={side,entry,sl,target,
     time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
@@ -1006,10 +1006,10 @@ function tdRender(){
     const statusText=cls!=='neutral'?`${cls.toUpperCase()} (${countsText})`:countsText;
     const hl=`${d.peak!=null?'H ₹'+d.peak.toFixed(1):'-'} / ${d.trough!=null?'L ₹'+d.trough.toFixed(1):'-'}`;
     const entryPrice=cls==='buyer'?d.trough:cls==='seller'?d.peak:null;
-    const entryText=entryPrice!=null?'₹'+entryPrice.toFixed(2):'-';
+    const entryText=entryPrice!=null?'₹'+entryPrice.toFixed(1):'-';
     return `<tr style="border-bottom:1px solid #1e2027">
       <td style="padding:3px 6px;font-weight:600;color:#f9fafb">${d.sym}</td>
-      <td style="padding:3px 6px">₹${d.ltp.toFixed(2)}</td>
+      <td style="padding:3px 6px">₹${d.ltp.toFixed(1)}</td>
       <td style="padding:3px 6px;color:${chg>=0?'#4ade80':'#f87171'}">${chg>=0?'+':''}${chg.toFixed(2)}%</td>
       <td style="padding:3px 6px">${d.buyVol>0?(d.buyVol/1000).toFixed(0)+'K':'-'}</td>
       <td style="padding:3px 6px">${d.sellVol>0?(d.sellVol/1000).toFixed(0)+'K':'-'}</td>
