@@ -866,7 +866,7 @@ async function tdEnter(token, side){
   if(!d||d.trade) return;
   const entry=d.ltp;
   const sl    = side==='BUY'?+(entry*0.995).toFixed(2):+(entry*1.005).toFixed(2);
-  const target= side==='BUY'?+(entry*1.005).toFixed(2):+(entry*0.995).toFixed(2);
+  const target= side==='BUY'?+(entry*1.003).toFixed(2):+(entry*0.997).toFixed(2);
   d.trade={side,entry,sl,target,
     time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
