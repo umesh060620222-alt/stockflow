@@ -769,13 +769,18 @@ function tdParseBinary(buf){
     }
     d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
     d.prevBuy=buyVol; d.prevSell=sellVol;
-    // trough (buyer) / peak (seller): running low/high since classification — entry
-    // fires directly at this extreme, no pullback/buffer considered.
-    const cls=(tdState[d.sym]||{}).class;
-    if(cls==='buyer'){
-      if(d.trough===null||ltp<d.trough) d.trough=ltp;
-    } else if(cls==='seller'){
-      if(d.peak===null||ltp>d.peak) d.peak=ltp;
+    // peak/trough: running high/low since signal-counting started (not since
+    // classification) — tracked continuously so that by the time a stock actually
+    // classifies, the entry reference already reflects the true low/high seen during
+    // the whole counting run, not just the price at the instant of classification
+    // (which is otherwise biased toward a local high for buyers/low for sellers, since
+    // that's what the signal itself requires).
+    {
+      const st=tdState[d.sym];
+      if(st&&st.class!=='ignored'){
+        if(d.peak===null||ltp>d.peak) d.peak=ltp;
+        if(d.trough===null||ltp<d.trough) d.trough=ltp;
+      }
     }
     // check SL/target on active trade, then check entry
     tdCheckExit(token);
@@ -820,9 +825,9 @@ function tdClassify(){
     }
     const minSignals=tdMinSignals(d.ltp);
     if(st.buyCount>=minSignals&&st.class!=='buyer'){
-      st.class='buyer'; d.trough=d.ltp;
+      st.class='buyer';  // d.trough already reflects the true low since counting began
     } else if(st.sellCount>=minSignals&&st.class!=='seller'){
-      st.class='seller'; d.peak=d.ltp;
+      st.class='seller';  // d.peak already reflects the true high since counting began
     }
   }
 }
