@@ -376,9 +376,11 @@
           <th style="padding:4px 6px">Sell Vol</th>
           <th style="padding:4px 6px">Ratio</th>
           <th style="padding:4px 6px">Ticks</th>
+          <th style="padding:4px 6px">H / L</th>
+          <th style="padding:4px 6px">Entry</th>
           <th style="padding:4px 6px">Status</th>
         </tr></thead>
-        <tbody id="tdTickBody"><tr><td colspan="8" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
+        <tbody id="tdTickBody"><tr><td colspan="10" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -703,8 +705,8 @@ async function loadBacktest(){
 
 // ── Trading tab ───────────────────────────────────────────────────────────────
 // Same live-screen scoring logic; classifies stocks as consistent buyer/seller.
-// Mixed even once → ignored for the session. Entry on 0.1% pullback from peak/trough.
-const TD_PULL   = 0.001;  // 0.1% pullback from peak (buyers) or trough (sellers)
+// Mixed even once → ignored for the session. Entry fires directly at the tracked
+// trough (buyers) or peak (sellers) — no pullback/buffer considered.
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
@@ -767,16 +769,13 @@ function tdParseBinary(buf){
     }
     d.ltp=ltp; d.buyVol=buyVol; d.sellVol=sellVol;
     d.prevBuy=buyVol; d.prevSell=sellVol;
-    // peak/trough: new peak resets trough (buyer); new trough resets peak (seller)
+    // trough (buyer) / peak (seller): running low/high since classification — entry
+    // fires directly at this extreme, no pullback/buffer considered.
     const cls=(tdState[d.sym]||{}).class;
     if(cls==='buyer'){
-      if(d.peak===null)      { d.peak=ltp; d.trough=ltp; }
-      else if(ltp>d.peak)    { d.peak=ltp; d.trough=ltp; }
-      else if(ltp<d.trough)    d.trough=ltp;
+      if(d.trough===null||ltp<d.trough) d.trough=ltp;
     } else if(cls==='seller'){
-      if(d.trough===null)    { d.trough=ltp; d.peak=ltp; }
-      else if(ltp<d.trough)  { d.trough=ltp; d.peak=ltp; }
-      else if(ltp>d.peak)      d.peak=ltp;
+      if(d.peak===null||ltp>d.peak) d.peak=ltp;
     }
     // check SL/target on active trade, then check entry
     tdCheckExit(token);
@@ -821,9 +820,9 @@ function tdClassify(){
     }
     const minSignals=tdMinSignals(d.ltp);
     if(st.buyCount>=minSignals&&st.class!=='buyer'){
-      st.class='buyer'; d.peak=d.ltp;
+      st.class='buyer'; d.trough=d.ltp;
     } else if(st.sellCount>=minSignals&&st.class!=='seller'){
-      st.class='seller'; d.trough=d.ltp;
+      st.class='seller'; d.peak=d.ltp;
     }
   }
 }
@@ -834,17 +833,11 @@ function tdCheckEntry(token){
   if(!tdAutoMode&&!tdActivated[d.sym]) return; // AUTO OFF: must tap card; AUTO ON: trade all classified
   if(Object.values(tdData).filter(x=>x.trade).length>=TD_MAX_TRADES) return; // cap concurrent trades
   const cls=(tdState[d.sym]||{}).class;
-  if(d.peak===null||d.trough===null||d.peak===d.trough) return;
-  // require a genuine bounce/pullback of at least TD_PULL before the trigger can fire —
-  // otherwise peak/trough get reset to the same tick's price and the trigger check
-  // (a % below/above that same value) passes trivially on the very next tick.
-  if(d.peak-d.trough<d.trough*TD_PULL) return;
-  if(cls==='buyer'){
-    const trigger=d.trough*(1+TD_PULL);  // bottom + 0.1%
-    if(d.ltp<=trigger) tdEnter(token,'BUY');
-  } else if(cls==='seller'){
-    const trigger=d.peak*(1-TD_PULL);  // top - 0.1%
-    if(d.ltp>=trigger) tdEnter(token,'SELL');
+  // enter directly at the tracked extreme — no pullback/buffer considered.
+  if(cls==='buyer'&&d.trough!==null&&d.ltp<=d.trough){
+    tdEnter(token,'BUY');
+  } else if(cls==='seller'&&d.peak!==null&&d.ltp>=d.peak){
+    tdEnter(token,'SELL');
   }
 }
 
@@ -930,17 +923,12 @@ function tdRender(){
 
   const mkCard=(d,side)=>{
     const col=side==='buyer'?'#4ade80':'#f87171';
-    const ref=side==='buyer'?d.peak:d.trough;
     const pct=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):null;
     const pnl=d.trade?((d.ltp-d.trade.entry)/d.trade.entry*(d.trade.side==='BUY'?1:-1)*100).toFixed(2):null;
     const sc=side==='buyer'?scScore(d):scScoreSell(d);
-    const hasTrigger=d.peak!==null&&d.trough!==null&&d.peak!==d.trough;
-    const trigger=hasTrigger?(side==='buyer'?d.trough*(1+TD_PULL):d.peak*(1-TD_PULL)):null;
-    // progress bar: how far price has moved from the peak/trough toward the entry trigger
-    const swing=hasTrigger?(side==='buyer'?d.peak-trigger:trigger-d.trough):0;
-    const distToTrigger=hasTrigger?(side==='buyer'?d.ltp-trigger:trigger-d.ltp):0;
-    const progress=swing>0?Math.min(100,Math.max(0,Math.round((1-distToTrigger/swing)*100))):0;
-    const barCol=progress>=100?'#fbbf24':col;
+    // entry is the tracked extreme itself — no buffer, no pullback considered
+    const trigger=side==='buyer'?d.trough:d.peak;
+    const barCol=col;
     const active=!!tdActivated[d.sym];
     return `<div style="padding:7px 11px;margin-bottom:6px;background:#1a1c20;border-radius:7px;border-left:3px solid ${active?'#fbbf24':col};cursor:pointer" onclick="tdActivate('${d.sym}')">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -952,9 +940,6 @@ function tdRender(){
         <span style="color:#6b7280;font-size:10px">${sc.total||0}/8</span>
         ${active?`<span style="color:#fbbf24;font-size:10px;font-weight:600">● TRADING</span>`:'<span style="color:#374151;font-size:10px">tap to trade</span>'}
         ${pnl!==null?`<span style="color:${parseFloat(pnl)>=0?'#4ade80':'#f87171'};font-weight:600">trade ${pnl>=0?'+':''}${pnl}%</span>`:''}
-      </div>
-      <div style="margin-top:4px;height:3px;background:#374151;border-radius:2px">
-        <div style="width:${progress}%;height:3px;background:${barCol};border-radius:2px;transition:width .3s"></div>
       </div>
     </div>`;
   };
@@ -1007,6 +992,9 @@ function tdRender(){
     const minSignals=tdMinSignals(d.ltp);
     const countsText=`B ${st.buyCount}/${minSignals} · S ${st.sellCount}/${minSignals}`;
     const statusText=cls!=='neutral'?`${cls.toUpperCase()} (${countsText})`:countsText;
+    const hl=`${d.peak!=null?'H ₹'+d.peak.toFixed(1):'-'} / ${d.trough!=null?'L ₹'+d.trough.toFixed(1):'-'}`;
+    const entryPrice=cls==='buyer'?d.trough:cls==='seller'?d.peak:null;
+    const entryText=entryPrice!=null?'₹'+entryPrice.toFixed(2):'-';
     return `<tr style="border-bottom:1px solid #1e2027">
       <td style="padding:3px 6px;font-weight:600;color:#f9fafb">${d.sym}</td>
       <td style="padding:3px 6px">₹${d.ltp.toFixed(2)}</td>
@@ -1015,9 +1003,11 @@ function tdRender(){
       <td style="padding:3px 6px">${d.sellVol>0?(d.sellVol/1000).toFixed(0)+'K':'-'}</td>
       <td style="padding:3px 6px">${ratio>0?ratio.toFixed(2):'-'}</td>
       <td style="padding:3px 6px;color:#6b7280">${d.ticks.length}</td>
+      <td style="padding:3px 6px;color:#6b7280;font-size:10px">${hl}</td>
+      <td style="padding:3px 6px;color:${cc};font-weight:600">${entryText}</td>
       <td style="padding:3px 6px;color:${cc};font-weight:600;text-transform:uppercase">${statusText}</td>
     </tr>`;
-  }).join(''):'<tr><td colspan="8" style="color:#4b5563;padding:8px 6px">No data yet…</td></tr>';
+  }).join(''):'<tr><td colspan="10" style="color:#4b5563;padding:8px 6px">No data yet…</td></tr>';
 }
 
 async function tdConnect(){
