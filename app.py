@@ -257,13 +257,11 @@ def run_options_algo(overrides: dict) -> dict:
     import yfinance as yf
     # Retrieve options params
     capital = float(overrides.get("capital", 40000.0))
-    premium = float(overrides.get("premium", 83.0))
-    lot_size = int(overrides.get("lot_size", 75))
-    delta = float(overrides.get("delta", 0.50))
-    target_pct = float(overrides.get("target_pct", 0.0030))
-    stop_pct = float(overrides.get("stop_pct", 0.0015))
+    lot_size = 75
+    delta = 0.50
+    target_pct = 0.0030
+    stop_pct = 0.0015
     period = overrides.get("period", "7d")
-    expiry = overrides.get("expiry", "14 JUL")
     
     # Download Nifty spot data
     raw = pd.DataFrame()
@@ -314,6 +312,10 @@ def run_options_algo(overrides: dict) -> dict:
         days_until_tuesday = (1 - d.weekday() + 7) % 7
         expiry_date = d + datetime.timedelta(days=days_until_tuesday)
         expiry_str = expiry_date.strftime("%d %b").upper()
+        
+        # Estimate premium decay based on days to Tuesday expiry
+        days_to_expiry = days_until_tuesday
+        decay_factor = 0.005 if days_to_expiry <= 1 else 0.007 if days_to_expiry == 2 else 0.010 if days_to_expiry == 3 else 0.013 if days_to_expiry <= 5 else 0.016
         
         df_session = df[df.index.date == d].copy()
         if isinstance(df_session.columns, pd.MultiIndex):
@@ -460,6 +462,7 @@ def run_options_algo(overrides: dict) -> dict:
                                     duration = int((w["date"] - ts).total_seconds() / 60)
                                     break
                                     
+                        premium = entry * decay_factor
                         lot_cost = premium * lot_size
                         lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                         total_shares = lots * lot_size
@@ -582,6 +585,7 @@ def run_options_algo(overrides: dict) -> dict:
                                         duration = int((w["date"] - ts).total_seconds() / 60)
                                         break
                                         
+                            premium = entry * decay_factor
                             lot_cost = premium * lot_size
                             lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                             total_shares = lots * lot_size
