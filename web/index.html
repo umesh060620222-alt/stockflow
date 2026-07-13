@@ -1074,7 +1074,7 @@ function tdRender(){
   const closedHtml=allClosed.map(t=>{
     const col=parseFloat(t.pnlPct)>=0?'#4ade80':'#f87171';
     const exitTxt=t.exitPrice!=null?'₹'+t.exitPrice.toFixed(1):'n/a';
-    return `<span style="font-size:11px;padding:2px 7px;margin:2px;border-radius:4px;background:#1a1c20;color:${col}">${t.sym} ${t.side} ${t.result} ₹${t.entry.toFixed(1)}→${exitTxt} ${t.pnlPct>=0?'+':''}${t.pnlPct}% @ ${t.exitTime}</span>`;
+    return `<span style="font-size:11px;padding:2px 7px;margin:2px;border-radius:4px;background:#1a1c20;color:${col}">${t.sym} ₹${t.entry.toFixed(1)}→${exitTxt}</span>`;
   }).join('');
   const countHtml=`<span style="font-size:11px;color:#6b7280;padding:2px 0">Active: ${active.length}/${TD_MAX_TRADES}</span>`;
   tBox.innerHTML=countHtml+(activeHtml||'<span class="muted" style="font-size:12px">No active trades</span>')
