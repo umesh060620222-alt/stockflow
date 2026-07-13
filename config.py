@@ -12,26 +12,29 @@ BENCHMARK = "^NSEI"          # Nifty 50 — relative-strength reference
 
 # --- data ---
 SOURCE = "yfinance"          # deploy-safe default (no creds). Pick "zerodha" in the UI when a token exists.
-INTERVAL = "5m"              # "1m" (last 7 days only, finer) or "5m" (robust)
+INTERVAL = "1m"              # "1m" (last 7 days only, finer) or "5m" (robust)
 PERIOD = "1d"                # how much history to pull ("1d","5d", up to "7d" for 1m)
 TZ = "Asia/Kolkata"
 
 # --- entry mode ---
-MODE = "momentum"          # "momentum" (chase the move) or "meanrev" (fade extension to VWAP)
+MODE = "atr_pullback"          # "momentum", "meanrev", "streak", "atr_pullback"
 DEVIATION_PCT = 0.003      # meanrev: how far from VWAP (fraction) counts as over-extended
+ATR_DROP_MULT = 1.5         # atr_pullback: price must drop by this x ATR from peak
+ATR_BOUNCE_MULT = 0.5       # atr_pullback: price must bounce by this x ATR from trough
+USE_NIFTY_FILTER = True     # atr_pullback: check if Nifty is green today
 
 # --- entry signal thresholds ---
-VOL_MULT = 2.0              # bar volume must exceed this x the rolling average
+VOL_MULT = 1.5              # bar volume must exceed this x the rolling average
 VOL_AVG_BARS = 12          # bars used for the rolling average volume
 MOM_LOOKBACK = 3           # bars for rate-of-change momentum
 RS_MIN = 0.0               # stock must outperform Nifty since open by this (fraction)
 SKIP_OPEN_BARS = 3         # ignore the first N bars (opening auction noise)
 
 # --- exit / risk (percentages as fractions: 0.008 = 0.8%) ---
-TARGET_PCT = 0.008
-STOP_PCT = 0.004
-TIME_STOP_MIN = 10         # exit if the move hasn't happened in ~10 min
-USE_VWAP_STALL_EXIT = True # exit early if price falls back across VWAP
+TARGET_PCT = 0.003
+STOP_PCT = 0.003
+TIME_STOP_MIN = 390         # exit if the move hasn't happened in ~10 min
+USE_VWAP_STALL_EXIT = False # exit early if price falls back across VWAP
 
 # --- portfolio risk gates ---
 MAX_POSITIONS = 5

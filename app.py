@@ -198,6 +198,9 @@ PARAMS = {
     "target_pct": ("TARGET_PCT", float), "stop_pct": ("STOP_PCT", float),
     "time_stop_min": ("TIME_STOP_MIN", int), "max_positions": ("MAX_POSITIONS", int),
     "cost_pct": ("COST_PCT", float), "slippage_pct": ("SLIPPAGE_PCT", float),
+    "atr_drop_mult": ("ATR_DROP_MULT", float),
+    "atr_bounce_mult": ("ATR_BOUNCE_MULT", float),
+    "use_nifty_filter": ("USE_NIFTY_FILTER", lambda x: x is True or str(x).lower() in ("true", "1", "yes", "on")),
 }
 
 
@@ -246,6 +249,391 @@ def run_algo(overrides: dict) -> dict:
         trades.append(t)
     return {"summary": result["summary"], "trades": trades,
             "sessions": sessions, "n_symbols": len(prepared), "params": defaults()}
+
+
+def run_options_algo(overrides: dict) -> dict:
+    import math
+    import pandas as pd
+    import yfinance as yf
+    # Retrieve options params
+    capital = float(overrides.get("capital", 40000.0))
+    premium = float(overrides.get("premium", 83.0))
+    lot_size = int(overrides.get("lot_size", 75))
+    delta = float(overrides.get("delta", 0.50))
+    target_pct = float(overrides.get("target_pct", 0.0030))
+    stop_pct = float(overrides.get("stop_pct", 0.0015))
+    period = overrides.get("period", "7d")
+    expiry = overrides.get("expiry", "14 JUL")
+    
+    # Download Nifty spot data
+    raw = yf.download("^NSEI", period=period, interval="1m", progress=False)
+    if raw.empty:
+        return {"error": "Failed to retrieve Nifty 50 data."}
+    
+    df = raw.copy()
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.index = df.index.tz_convert("Asia/Kolkata")
+    
+    dates = sorted(list(set(df.index.date)))
+    
+    daily_summaries = []
+    trades = []
+    
+    for d in dates:
+        df_session = df[df.index.date == d].copy()
+        if isinstance(df_session.columns, pd.MultiIndex):
+            df_session.columns = [col[0].lower() for col in df_session.columns]
+        else:
+            df_session.columns = df_session.columns.str.lower()
+        df_session = df_session[["open", "high", "low", "close"]]
+        df_session = df_session.dropna(how="any")
+        if df_session.empty:
+            continue
+            
+        df_session["date"] = df_session.index
+        candles = df_session.to_dict("records")
+        nifty_open = float(df_session["open"].iloc[0])
+        
+        # Calculate Indicators
+        prev_close = None
+        tr_history = []
+        for c in candles:
+            high = float(c["high"])
+            low = float(c["low"])
+            close = float(c["close"])
+            if prev_close is None:
+                tr = high - low
+            else:
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            prev_close = close
+            tr_history.append(tr)
+            if len(tr_history) > 14:
+                tr_history.pop(0)
+            c["atr"] = sum(tr_history) / len(tr_history) if len(tr_history) >= 7 else (high - low)
+            
+        closes_s = pd.Series([float(c["close"]) for c in candles])
+        ema_series = closes_s.ewm(span=15, adjust=False).mean().tolist()
+        for idx, c in enumerate(candles):
+            c["nifty_ema"] = ema_series[idx]
+            
+        # Run state machine
+        l_peak = None
+        l_trough = None
+        l_peak_atr = None
+        l_stage = 1
+        
+        s_trough = None
+        s_peak = None
+        s_trough_atr = None
+        s_stage = 1
+        
+        locked_until_idx = -1
+        session_trades = []
+        
+        for i, c in enumerate(candles):
+            high = float(c["high"])
+            low = float(c["low"])
+            close = float(c["close"])
+            atr = float(c["atr"])
+            ts = c["date"]
+            nifty_ema = float(c["nifty_ema"])
+            
+            if i <= locked_until_idx:
+                continue
+                
+            is_nifty_above_ema = close > nifty_ema
+            is_nifty_below_ema = close < nifty_ema
+            is_nifty_green_today = close > nifty_open
+            is_nifty_red_today = close < nifty_open
+            
+            time_str = ts.strftime("%H:%M")
+            is_valid_time = ("10:00" <= time_str < "11:00") or ("14:00" <= time_str < "15:30")
+            
+            # LONG SETUP
+            long_triggered = False
+            if l_stage == 1:
+                if l_peak is None or high > l_peak:
+                    l_peak = high
+                    l_peak_atr = atr
+                else:
+                    l_trough = low
+                    l_stage = 2
+            elif l_stage == 2:
+                if high > l_peak:
+                    l_peak = high
+                    l_peak_atr = atr
+                    l_trough = low
+                    l_stage = 1
+                else:
+                    l_trough = min(l_trough, low)
+                    drop_required = 2.5 * (l_peak_atr if l_peak_atr else atr)
+                    if l_trough <= l_peak - drop_required:
+                        l_stage = 3
+            elif l_stage == 3:
+                if low < l_trough:
+                    l_trough = low
+                bounce_required = 0.7 * atr
+                bounce_level = l_trough + bounce_required
+                if high >= bounce_level:
+                    if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
+                        entry = bounce_level
+                        raw_sl_pct = (1.0 * atr) / entry
+                        raw_target_pct = (2.0 * atr) / entry
+                        actual_sl_pct = max(raw_sl_pct, stop_pct)
+                        actual_target_pct = max(raw_target_pct, target_pct)
+                        
+                        sl = entry * (1 - actual_sl_pct)
+                        target = entry * (1 + actual_target_pct)
+                        
+                        trade_result = "OPEN"
+                        exit_price_val = None
+                        exit_time = "-"
+                        duration = 0
+                        
+                        if low <= sl:
+                            trade_result = "LOSS"
+                            exit_price_val = sl
+                            locked_until_idx = i
+                            exit_time = time_str
+                        elif high >= target:
+                            trade_result = "WIN"
+                            exit_price_val = target
+                            locked_until_idx = i
+                            exit_time = time_str
+                        else:
+                            reached_halfway = False
+                            current_sl = sl
+                            for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                w_low = float(w["low"])
+                                w_high = float(w["high"])
+                                halfway_level = entry + 0.5 * (target - entry)
+                                if w_high >= halfway_level:
+                                    reached_halfway = True
+                                    current_sl = entry
+                                if w_low <= current_sl:
+                                    trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
+                                    exit_price_val = current_sl
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if w_high >= target:
+                                    trade_result = "WIN"
+                                    exit_price_val = target
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                    
+                        lot_cost = premium * lot_size
+                        lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
+                        total_shares = lots * lot_size
+                        
+                        options_brokerage = 40.0
+                        options_slippage = 2.0
+                        
+                        if trade_result == "WIN":
+                            spot_change = target - entry
+                            premium_change = spot_change * delta
+                            pnl_gross = premium_change * total_shares
+                            pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                        elif trade_result == "LOSS":
+                            spot_change = sl - entry
+                            premium_change = spot_change * delta
+                            pnl_gross = premium_change * total_shares
+                            pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                        elif trade_result == "BREAKEVEN":
+                            pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                        else:
+                            pnl_net = 0.0
+                            
+                        strike_rounded = int(round(entry / 50.0) * 50.0)
+                        symbol_str = f"NIFTY {expiry} {strike_rounded} CE"
+                        
+                        session_trades.append({
+                            "date": str(d),
+                            "side": "BUY CALL (CE)",
+                            "symbol": symbol_str,
+                            "entry_time": time_str,
+                            "exit_time": exit_time,
+                            "duration": f"{duration}m" if trade_result != "OPEN" else "-",
+                            "entry_spot": entry,
+                            "exit_spot": exit_price_val,
+                            "entry_premium": premium,
+                            "exit_premium": premium + (premium_change if trade_result in ("WIN", "LOSS") else 0.0),
+                            "result": trade_result,
+                            "pnl": pnl_net,
+                            "lots": lots
+                        })
+                        long_triggered = True
+                        l_peak = None
+                        l_trough = None
+                        l_peak_atr = None
+                        l_stage = 1
+                        
+            # SHORT SETUP
+            if not long_triggered:
+                if s_stage == 1:
+                    if s_trough is None or low < s_trough:
+                        s_trough = low
+                        s_trough_atr = atr
+                    else:
+                        s_peak = high
+                        s_stage = 2
+                elif s_stage == 2:
+                    if low < s_trough:
+                        s_trough = low
+                        s_trough_atr = atr
+                        s_peak = high
+                        s_stage = 1
+                    else:
+                        s_peak = max(s_peak, high)
+                        rally_required = 2.5 * (s_trough_atr if s_trough_atr else atr)
+                        if s_peak >= s_trough + rally_required:
+                            s_stage = 3
+                elif s_stage == 3:
+                    if high > s_peak:
+                        s_peak = high
+                    drop_required = 0.7 * atr
+                    short_trigger_level = s_peak - drop_required
+                    if low <= short_trigger_level:
+                        if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
+                            entry = short_trigger_level
+                            raw_sl_pct = (1.0 * atr) / entry
+                            raw_target_pct = (2.0 * atr) / entry
+                            actual_sl_pct = max(raw_sl_pct, stop_pct)
+                            actual_target_pct = max(raw_target_pct, target_pct)
+                            
+                            sl = entry * (1 + actual_sl_pct)
+                            target = entry * (1 - actual_target_pct)
+                            
+                            trade_result = "OPEN"
+                            exit_price_val = None
+                            exit_time = "-"
+                            duration = 0
+                            
+                            if high >= sl:
+                                trade_result = "LOSS"
+                                exit_price_val = sl
+                                locked_until_idx = i
+                                exit_time = time_str
+                            elif low <= target:
+                                trade_result = "WIN"
+                                exit_price_val = target
+                                locked_until_idx = i
+                                exit_time = time_str
+                            else:
+                                reached_halfway = False
+                                current_sl = sl
+                                for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                    w_low = float(w["low"])
+                                    w_high = float(w["high"])
+                                    halfway_level = entry - 0.5 * (entry - target)
+                                    if w_low <= halfway_level:
+                                        reached_halfway = True
+                                        current_sl = entry
+                                    if w_high >= current_sl:
+                                        trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
+                                        exit_price_val = current_sl
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if w_low <= target:
+                                        trade_result = "WIN"
+                                        exit_price_val = target
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                        
+                            lot_cost = premium * lot_size
+                            lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
+                            total_shares = lots * lot_size
+                            
+                            options_brokerage = 40.0
+                            options_slippage = 2.0
+                            
+                            if trade_result == "WIN":
+                                spot_change = entry - target
+                                premium_change = spot_change * delta
+                                pnl_gross = premium_change * total_shares
+                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                            elif trade_result == "LOSS":
+                                spot_change = entry - sl
+                                premium_change = spot_change * delta
+                                pnl_gross = premium_change * total_shares
+                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                            elif trade_result == "BREAKEVEN":
+                                pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                            else:
+                                pnl_net = 0.0
+                                
+                            strike_rounded = int(round(entry / 50.0) * 50.0)
+                            symbol_str = f"NIFTY {expiry} {strike_rounded} PE"
+                            
+                            session_trades.append({
+                                "date": str(d),
+                                "side": "BUY PUT (PE)",
+                                "symbol": symbol_str,
+                                "entry_time": time_str,
+                                "exit_time": exit_time,
+                                "duration": f"{duration}m" if trade_result != "OPEN" else "-",
+                                "entry_spot": entry,
+                                "exit_spot": exit_price_val,
+                                "entry_premium": premium,
+                                "exit_premium": premium + (premium_change if trade_result in ("WIN", "LOSS") else 0.0),
+                                "result": trade_result,
+                                "pnl": pnl_net,
+                                "lots": lots
+                            })
+                            s_trough = None
+                            s_peak = None
+                            s_trough_atr = None
+                            s_stage = 1
+                            
+        # Compute daily stats
+        wins = sum(1 for t in session_trades if t["result"] == "WIN")
+        losses = sum(1 for t in session_trades if t["result"] == "LOSS")
+        be = sum(1 for t in session_trades if t["result"] == "BREAKEVEN")
+        opens = sum(1 for t in session_trades if t["result"] == "OPEN")
+        total_pnl = sum(t["pnl"] for t in session_trades)
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+        
+        daily_summaries.append({
+            "date": str(d),
+            "trades": len(session_trades),
+            "wins": wins,
+            "losses": losses,
+            "be": be,
+            "open": opens,
+            "win_rate": round(win_rate, 1),
+            "pnl": round(total_pnl)
+        })
+        trades.extend(session_trades)
+        
+    # Compute overall summary
+    total_wins = sum(s["wins"] for s in daily_summaries)
+    total_losses = sum(s["losses"] for s in daily_summaries)
+    total_be = sum(s["be"] for s in daily_summaries)
+    total_pnl_all = sum(s["pnl"] for s in daily_summaries)
+    overall_win_rate = (total_wins / (total_wins + total_losses) * 100) if (total_wins + total_losses) > 0 else 0.0
+    
+    summary = {
+        "total_trades": sum(s["trades"] for s in daily_summaries),
+        "wins": total_wins,
+        "losses": total_losses,
+        "be": total_be,
+        "win_rate": round(overall_win_rate, 1),
+        "total_pnl": round(total_pnl_all)
+    }
+    
+    return {
+        "summary": summary,
+        "daily": daily_summaries,
+        "trades": trades
+    }
 
 
 class H(BaseHTTPRequestHandler):
@@ -780,6 +1168,14 @@ class H(BaseHTTPRequestHandler):
             else:
                 result = DS.save_premarket(date_str, body)
             return self._send(200, dumps(result))
+        if path == "/api/options/run":
+            try:
+                out = run_options_algo(body)
+                self._send(200, dumps(out))
+            except Exception as e:
+                traceback.print_exc()
+                self._send(500, dumps({"error": f"{type(e).__name__}: {e}"}))
+            return
         if path != "/api/run":
             return self._send(404, dumps({"error": "not found"}))
         try:
