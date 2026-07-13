@@ -1,12 +1,16 @@
 """Scanner watchlists — pre-market uses 10 curated stocks, daily scan uses top 100."""
 
-# 24 highly liquid mid-to-large caps in ₹400–₹2000 range for the Trading screen
+# 44 highly liquid mid-to-large caps in ₹100–₹6000 range for the Trading screen
 TRADING_LIST = [
     "ICICIBANK","AXISBANK","SBIN","HCLTECH","WIPRO",
     "TECHM","DRREDDY","CIPLA","SUNPHARMA","TATAMOTORS",
     "HDFCBANK","BHARTIARTL","BAJFINANCE","HINDALCO","ADANIPORTS",
     "JSWSTEEL","INDUSINDBK","SHRIRAMFIN","TATACONSUM","COALINDIA",
     "VEDL","PIDILITIND","DLF","IRCTC",
+    "KOTAKBANK","TITAN","BAJAJFINSV","NTPC","POWERGRID",
+    "ADANIENT","TATASTEEL","HDFCLIFE","SBILIFE","HEROMOTOCO",
+    "UPL","BANKBARODA","CHOLAFIN","GAIL","PNB",
+    "TATAPOWER","SAIL","PFC","M&M","RECLTD",
 ]
 
 # Pre-market auction (9:00–9:08): liquid F&O stocks in ₹1000–₹2500 range
