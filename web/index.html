@@ -871,13 +871,10 @@ function tdCheckExit(token){
 async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
-  // buy slightly below / sell slightly above the signal price — a better entry price,
-  // accepting the order may not fill if price doesn't come back to it.
-  const entry = side==='BUY'
-    ? +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1)
-    : +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(1);
-  const sl    = side==='BUY'?+(entry*0.995).toFixed(1):+(entry*1.005).toFixed(1);
-  const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
+  // entry = the tracked extreme itself — no buffer.
+  const entry = +d.ltp.toFixed(1);
+  const sl    = side==='BUY'?+(entry*0.997).toFixed(1):+(entry*1.003).toFixed(1);
+  const target= side==='BUY'?+(entry*1.001).toFixed(1):+(entry*0.999).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
   // filled=true immediately for test-mode trades (no real order exists to confirm);
   // real trades stay unfilled until tdConfirmFill verifies the exchange fill —
