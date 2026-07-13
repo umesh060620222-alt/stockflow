@@ -862,8 +862,15 @@ function tdCheckEntry(token){
 
 function tdCheckExit(token){
   const d=tdData[token];
-  if(!d||!d.trade||!d.trade.filled) return; // don't evaluate SL/target until the real entry order is confirmed filled
+  if(!d||!d.trade) return;
   const t=d.trade;
+  if(!t.filled){
+    // test trades: only "fill" once ltp actually reaches the entry price, same as a
+    // real limit order would need — don't just assume an instant fill.
+    // live trades: filled is set by tdConfirmFill once Zerodha confirms COMPLETE.
+    if(t.test&&(t.side==='BUY'?d.ltp<=t.entry:d.ltp>=t.entry)) t.filled=true;
+    return;
+  }
   if(t.side==='BUY'){
     if(d.ltp<=t.sl)          tdCloseTrade(token,'SL');
     else if(d.ltp>=t.target) tdCloseTrade(token,'TARGET');
@@ -876,19 +883,20 @@ function tdCheckExit(token){
 async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
-  // entry = 0.5% off the tracked peak/trough — discount on BUY, premium on SELL
-  // (pullback is only used to time the trigger, not to change this price).
+  // entry = TD_ENTRY_OFFSET off the tracked peak/trough — discount on BUY, premium
+  // on SELL (pullback is only used to time the trigger, not to change this price).
   const entry = side==='BUY'
     ? +(d.trough*(1-TD_ENTRY_OFFSET)).toFixed(1)
     : +(d.peak*(1+TD_ENTRY_OFFSET)).toFixed(1);
   const sl    = side==='BUY'?+(entry*(1-TD_SL)).toFixed(1):+(entry*(1+TD_SL)).toFixed(1);
   const target= side==='BUY'?+(entry*(1+TD_TARGET)).toFixed(1):+(entry*(1-TD_TARGET)).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
-  // filled=true immediately for test-mode trades (no real order exists to confirm);
-  // real trades stay unfilled until tdConfirmFill verifies the exchange fill —
-  // tdCheckExit refuses to evaluate SL/target before that, so a fast price move
-  // right after trigger can't fire TARGET/SL against an order that never filled.
-  d.trade={side,entry,sl,target,isOption,filled:tdTestMode,
+  // filled starts false for every trade, test or real — test trades fill once ltp
+  // actually reaches the entry price (tdCheckExit), real trades once tdConfirmFill
+  // verifies the exchange fill. tdCheckExit refuses to evaluate SL/target before
+  // that, so a fast price move right after trigger can't fire TARGET/SL against an
+  // order that never filled — and test mode can't fake a fill price never touched.
+  d.trade={side,entry,sl,target,isOption,filled:false,
     time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
