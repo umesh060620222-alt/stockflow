@@ -766,7 +766,7 @@ function tdParseBinary(buf){
     if(!d){ off+=len; continue; }
     if(len>=44){ const pc=view.getInt32(off+40)/100; if(pc>0) d.prevClose=pc; }
     if(d.prevClose&&Math.abs(ltp-d.prevClose)/d.prevClose>0.3){ off+=len; continue; }
-    if(d.sessionOpen===null&&ltp>0) d.sessionOpen=ltp;  // base price = first tick this session
+    if(d.sessionOpen===null&&d.prevClose) d.sessionOpen=d.prevClose;  // base price = prev day close, not connect-time ltp
     if(!tdFirstTickLogged&&ltp>0){ tdFirstTickLogged=true;
       console.log('[TD] first tick parsed:', d.sym, 'ltp='+ltp, 'len='+len, 'packets in msg='+n); }
     const dBuy=d.prevBuy!==null?buyVol-d.prevBuy:null;
