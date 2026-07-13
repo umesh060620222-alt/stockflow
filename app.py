@@ -638,6 +638,23 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"order_id": oid, "symbol": sym, "side": side}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/order-status":
+            # read-only status poll — used by the client to confirm an entry order
+            # actually filled before it starts treating the trade as live for
+            # SL/target purposes. Never places or modifies an order.
+            oid = str(body.get("order_id", "")).strip()
+            if not oid:
+                return self._send(200, dumps({"error": "order_id required"}))
+            try:
+                kc = Z.kite()
+                hist = kc.order_history(oid)
+                last = hist[-1] if hist else {}
+                return self._send(200, dumps({
+                    "status": last.get("status", "UNKNOWN"),
+                    "average_price": last.get("average_price"),
+                }))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/square-off":
             sym = body.get("symbol", "").strip().upper()
             b = _BRACKET.get(sym)

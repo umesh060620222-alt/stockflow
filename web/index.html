@@ -857,7 +857,7 @@ function tdCheckEntry(token){
 
 function tdCheckExit(token){
   const d=tdData[token];
-  if(!d||!d.trade) return;
+  if(!d||!d.trade||!d.trade.filled) return; // don't evaluate SL/target until the real entry order is confirmed filled
   const t=d.trade;
   if(t.side==='BUY'){
     if(d.ltp<=t.sl)          tdCloseTrade(token,'SL');
@@ -879,7 +879,11 @@ async function tdEnter(token, side){
   const sl    = side==='BUY'?+(entry*0.997).toFixed(1):+(entry*1.003).toFixed(1);
   const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
-  d.trade={side,entry,sl,target,isOption,
+  // filled=true immediately for test-mode trades (no real order exists to confirm);
+  // real trades stay unfilled until tdConfirmFill verifies the exchange fill —
+  // tdCheckExit refuses to evaluate SL/target before that, so a fast price move
+  // right after trigger can't fire TARGET/SL against an order that never filled.
+  d.trade={side,entry,sl,target,isOption,filled:tdTestMode,
     time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
@@ -898,7 +902,8 @@ async function tdEnter(token, side){
           d.trade.optLotSize=r.lot_size;
           d.trade.optEntryPremium=r.entry_premium;
         }
-      }catch(e){ tdLogErr(`${d.sym} ${side} option order FAILED — ${e}`); if(d.trade)d.trade=null; }
+      }catch(e){ tdLogErr(`${d.sym} ${side} option order FAILED — ${e}`); if(d.trade)d.trade=null; return; }
+      tdConfirmFill(token);
       return;
     }
     try{
@@ -910,8 +915,31 @@ async function tdEnter(token, side){
         body:JSON.stringify({symbol:d.sym,side,price:entry,sl,target})})).json();
       if(r.error){ tdLogErr(`${d.sym} ${side} order FAILED — ${r.error}`); if(d.trade)d.trade=null; return; }
       if(d.trade) d.trade.orderId=r.order_id||null;
-    }catch(e){ tdLogErr(`${d.sym} ${side} order FAILED — ${e}`); if(d.trade)d.trade=null; }
+    }catch(e){ tdLogErr(`${d.sym} ${side} order FAILED — ${e}`); if(d.trade)d.trade=null; return; }
+    tdConfirmFill(token);
   }
+}
+
+async function tdConfirmFill(token){
+  const d=tdData[token];
+  if(!d||!d.trade||!d.trade.orderId) return;
+  const t=d.trade;
+  for(let i=0;i<20;i++){
+    await new Promise(r=>setTimeout(r,1500));
+    if(d.trade!==t) return; // already closed/replaced in the meantime
+    try{
+      const r=await (await fetch('/api/trading/order-status',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({order_id:t.orderId})})).json();
+      if(r.status==='COMPLETE'){ t.filled=true; return; }
+      if(r.status==='REJECTED'||r.status==='CANCELLED'){
+        tdLogErr(`${d.sym} ${t.side} entry ${r.status} — never filled, clearing trade`);
+        if(d.trade===t) d.trade=null;
+        return;
+      }
+    }catch(e){ /* transient — keep polling */ }
+  }
+  tdLogErr(`${d.sym} ${t.side} entry fill not confirmed after 30s — exit checks held until it is`);
 }
 
 function tdLogErr(msg){
