@@ -212,8 +212,6 @@
         <div><label>Data Source</label><select id="opt_source"><option value="yfinance">yfinance (free)</option><option value="zerodha">zerodha (live)</option></select></div>
         <div><label>Data Period</label><select id="opt_period"><option>7d</option><option>5d</option></select></div>
       </div>
-      <label>Nifty Expiry Date</label>
-      <input id="opt_expiry" type="text" value="14 JUL">
       
       <button id="opt_run_btn" onclick="runOptionsAlgo()">Run options simulator</button>
       <div id="opt_status" class="muted" style="margin-top:10px;font-size:12px"></div>
@@ -3122,7 +3120,7 @@ async function runOptionsAlgo() {
         <div class="stat"><div class="k">Net P&L</div><div class="v ${isProfitable?'pos':'neg'}">₹${s.total_pnl.toLocaleString()}</div></div>
       </div>
       
-      <b style="font-size:13px;display:block;margin-top:20px;margin-bottom:6px">Daily Summaries</b>
+      <b style="font-size:13px;display:block;margin-top:20px;margin-bottom:6px">Daily Summaries <span class="muted" style="font-weight:normal;font-size:11px">(Click any day to filter trades below)</span></b>
       <div style="max-height: 180px; overflow-y: auto; border: 1px solid #2a2c30; border-radius: 8px; margin-bottom: 16px;">
         <table>
           <thead>
@@ -3136,9 +3134,9 @@ async function runOptionsAlgo() {
               <th>Net P&L</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="opt_daily_body">
             ${d.daily.map(day => `
-              <tr>
+              <tr style="cursor:pointer" onclick="filterOptTrades('${day.date}', this)">
                 <td><b>${day.date}</b></td>
                 <td>${day.trades}</td>
                 <td>${day.wins}</td>
@@ -3169,34 +3167,63 @@ async function runOptionsAlgo() {
               <th>PnL</th>
             </tr>
           </thead>
-          <tbody>
-            ${d.trades.map(t => {
-              const resColor = t.result === 'WIN' ? 'pos' : t.result === 'LOSS' ? 'neg' : 'muted';
-              return `
-                <tr>
-                  <td class="muted">${t.entry_time} - ${t.exit_time}</td>
-                  <td><b>${t.symbol}</b></td>
-                  <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
-                  <td>${t.duration}</td>
-                  <td>${t.entry_spot.toFixed(2)}</td>
-                  <td>${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
-                  <td>${t.entry_premium.toFixed(2)}</td>
-                  <td>${t.exit_premium ? t.exit_premium.toFixed(2) : '-'}</td>
-                  <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
-                  <td class="${t.pnl>=0?'pos':'neg'}">₹${Math.round(t.pnl).toLocaleString()}</td>
-                </tr>
-              `;
-            }).join('')}
+          <tbody id="opt_log_body">
           </tbody>
         </table>
       </div>
     `;
     results.innerHTML = html;
+    
+    // Store globally and render initial detailed log
+    window._optTrades = d.trades;
+    window._optActiveDate = null;
+    renderOptTradesLog(d.trades);
   } catch(e) {
     btn.disabled = false;
     status.textContent = '';
     results.innerHTML = `<span class="neg">Error: ${e}</span>`;
   }
+}
+
+let _optActiveDate = null;
+function filterOptTrades(dateStr, rowEl) {
+  const tableRows = document.querySelectorAll('#opt_daily_body tr');
+  tableRows.forEach(r => r.style.background = '');
+  
+  if (window._optActiveDate === dateStr) {
+    window._optActiveDate = null;
+    renderOptTradesLog(window._optTrades);
+  } else {
+    window._optActiveDate = dateStr;
+    rowEl.style.background = '#23252a';
+    const filtered = window._optTrades.filter(t => t.date === dateStr);
+    renderOptTradesLog(filtered);
+  }
+}
+
+function renderOptTradesLog(trades) {
+  const body = document.getElementById('opt_log_body');
+  if (!body) return;
+  if (!trades || !trades.length) {
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#6b7280;padding:20px">No trades found</td></tr>';
+    return;
+  }
+  body.innerHTML = trades.map(t => {
+    return `
+      <tr>
+        <td class="muted">${t.entry_time} - ${t.exit_time}</td>
+        <td><b>${t.symbol}</b></td>
+        <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
+        <td>${t.duration}</td>
+        <td>${t.entry_spot.toFixed(2)}</td>
+        <td>${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
+        <td>${t.entry_premium.toFixed(2)}</td>
+        <td>${t.exit_premium ? t.exit_premium.toFixed(2) : '-'}</td>
+        <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
+        <td class="${t.pnl>=0?'pos':'neg'}">₹${Math.round(t.pnl).toLocaleString()}</td>
+      </tr>
+    `;
+  }).join('');
 }
 </script>
 </body>

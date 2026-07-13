@@ -310,6 +310,11 @@ def run_options_algo(overrides: dict) -> dict:
     trades = []
     
     for d in dates:
+        # Tuesday is weekday index 1
+        days_until_tuesday = (1 - d.weekday() + 7) % 7
+        expiry_date = d + datetime.timedelta(days=days_until_tuesday)
+        expiry_str = expiry_date.strftime("%d %b").upper()
+        
         df_session = df[df.index.date == d].copy()
         if isinstance(df_session.columns, pd.MultiIndex):
             df_session.columns = [col[0].lower() for col in df_session.columns]
@@ -478,7 +483,7 @@ def run_options_algo(overrides: dict) -> dict:
                             pnl_net = 0.0
                             
                         strike_rounded = int(round(entry / 50.0) * 50.0)
-                        symbol_str = f"NIFTY {expiry} {strike_rounded} CE"
+                        symbol_str = f"NIFTY {expiry_str} {strike_rounded} CE"
                         
                         session_trades.append({
                             "date": str(d),
@@ -600,7 +605,7 @@ def run_options_algo(overrides: dict) -> dict:
                                 pnl_net = 0.0
                                 
                             strike_rounded = int(round(entry / 50.0) * 50.0)
-                            symbol_str = f"NIFTY {expiry} {strike_rounded} PE"
+                            symbol_str = f"NIFTY {expiry_str} {strike_rounded} PE"
                             
                             session_trades.append({
                                 "date": str(d),
