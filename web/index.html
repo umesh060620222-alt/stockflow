@@ -871,12 +871,11 @@ function tdCheckExit(token){
 async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
-  // buy slightly above / sell slightly below the signal price so the LIMIT order is
-  // marketable enough to actually catch the fill, instead of sitting unfilled at the
-  // exact tick price if the market moves a touch before the order reaches the exchange.
+  // buy slightly below / sell slightly above the signal price — a better entry price,
+  // accepting the order may not fill if price doesn't come back to it.
   const entry = side==='BUY'
-    ? +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(1)
-    : +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1);
+    ? +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1)
+    : +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(1);
   const sl    = side==='BUY'?+(entry*0.997).toFixed(1):+(entry*1.003).toFixed(1);
   const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
