@@ -709,8 +709,9 @@ async function loadBacktest(){
 // Same live-screen scoring logic; classifies stocks as consistent buyer/seller.
 // Mixed even once → ignored for the session. Entry fires directly at the tracked
 // trough (buyers) or peak (sellers) — no buffer, no pullback considered.
-const TD_SL     = 0.003;  // 0.3% stop loss
-const TD_TARGET = 0.001;  // 0.1% profit target
+const TD_SL     = 0.005;  // 0.5% stop loss
+const TD_TARGET = 0.003;  // 0.3% profit target
+const TD_ENTRY_OFFSET = 0.005;  // 0.5% off peak/trough — discount on BUY, premium on SELL
 const TD_PULLBACK = 0.001;  // 0.1% retrace off the tracked peak/trough required before entry confirms
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
 const TD_SIGNALS_PER_100 = 10;  // min signals scale with price: this many per ₹100
@@ -875,9 +876,11 @@ function tdCheckExit(token){
 async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
-  // entry = midpoint of the tracked peak and trough (pullback is only used to time
-  // the trigger, not to change this price).
-  const entry = +((d.peak+d.trough)/2).toFixed(1);
+  // entry = 0.5% off the tracked peak/trough — discount on BUY, premium on SELL
+  // (pullback is only used to time the trigger, not to change this price).
+  const entry = side==='BUY'
+    ? +(d.trough*(1-TD_ENTRY_OFFSET)).toFixed(1)
+    : +(d.peak*(1+TD_ENTRY_OFFSET)).toFixed(1);
   const sl    = side==='BUY'?+(entry*(1-TD_SL)).toFixed(1):+(entry*(1+TD_SL)).toFixed(1);
   const target= side==='BUY'?+(entry*(1+TD_TARGET)).toFixed(1):+(entry*(1-TD_TARGET)).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
