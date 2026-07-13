@@ -797,12 +797,15 @@ function tdParseBinary(buf){
   }
 }
 
-// Exact same signal as the live screen's sig computation in scRender.
+// Tick-rule signal: buyVol/sellVol is resting order-book depth, not executed trade
+// direction (price can rally while that ratio stays sell-heavy — seen live on
+// HCLTECH). Classify each print by whether ltp ticked up or down from the prior
+// print instead, and use the ratio of upticks/downticks over the last 20 ticks as
+// the real buying/selling-pressure signal.
 // Returns 'Buying' | 'Selling' | null
 function tdSignal(d){
   if(!d.ticks||d.ticks.length<3) return null;
   const chgPct=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):0;
-  const ratio=d.sellVol>0?d.buyVol/d.sellVol:0;
   const up=chgPct>0.1, dn=chgPct<-0.1;
   const last20=d.ticks.slice(-21);
   let driftUp=0,driftDn=0;
@@ -810,11 +813,10 @@ function tdSignal(d){
     if(last20[i].ltp>last20[i-1].ltp) driftUp++;
     else if(last20[i].ltp<last20[i-1].ltp) driftDn++;
   }
-  const driftScore=driftUp-driftDn;
-  const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
+  const ratio=driftDn>0?driftUp/driftDn:(driftUp>0?999:0);
   if(up&&ratio>=1.2) return 'Buying';
   if(dn&&ratio<=0.8) return 'Selling';
-  return null;  // no drifting — pullbacks on buy-dominant stocks stay 'buyer'
+  return null;
 }
 
 function tdClassify(){
