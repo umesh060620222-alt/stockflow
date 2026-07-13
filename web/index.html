@@ -711,7 +711,7 @@ async function loadBacktest(){
 // trough (buyers) or peak (sellers) — no buffer, no pullback considered.
 const TD_SL     = 0.005;  // 0.5% stop loss
 const TD_TARGET = 0.003;  // 0.3% profit target
-const TD_ENTRY_OFFSET = 0.005;  // 0.5% off peak/trough — discount on BUY, premium on SELL
+const TD_ENTRY_OFFSET = 0.003;  // 0.3% off peak/trough — discount on BUY, premium on SELL
 const TD_PULLBACK = 0.001;  // 0.1% retrace off the tracked peak/trough required before entry confirms
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
 const TD_SIGNALS_PER_100 = 10;  // min signals scale with price: this many per ₹100
