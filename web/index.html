@@ -710,7 +710,7 @@ async function loadBacktest(){
 // Mixed even once → ignored for the session. Entry fires directly at the tracked
 // trough (buyers) or peak (sellers) — no pullback considered beyond a small order
 // buffer to actually get filled (see TD_ORDER_BUFFER).
-const TD_ORDER_BUFFER = 0.0003;  // 0.03% — makes the LIMIT entry price marketable
+const TD_ORDER_BUFFER = 0.001;  // 0.1% — discount on BUY, premium on SELL entry price
 const TD_SL     = 0.001;  // 0.1% stop loss
 const TD_TARGET = 0.002;  // 0.2% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
