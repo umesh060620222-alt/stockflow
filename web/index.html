@@ -195,18 +195,6 @@
       <label>Capital Pool (INR)</label>
       <input id="opt_capital" type="number" value="40000" step="1000">
       
-      <label>Option Entry Premium (Points)</label>
-      <input id="opt_premium" type="number" value="83" step="1">
-      
-      <div class="row">
-        <div><label>Lot Size</label><input id="opt_lot_size" type="number" value="75"></div>
-        <div><label>Option Delta</label><input id="opt_delta" type="number" value="0.50" step="0.05"></div>
-      </div>
-      
-      <div class="row">
-        <div><label>Target % (Spot)</label><input id="opt_target_pct" type="number" value="0.0030" step="0.0005"></div>
-        <div><label>Stop % (Spot)</label><input id="opt_stop_pct" type="number" value="0.0015" step="0.0005"></div>
-      </div>
       
       <div class="row">
         <div><label>Data Source</label><select id="opt_source"><option value="yfinance">yfinance (free)</option><option value="zerodha">zerodha (live)</option></select></div>
@@ -3078,13 +3066,7 @@ async function runOptionsAlgo() {
   const payload = {
     source: document.getElementById('opt_source').value,
     capital: parseFloat(document.getElementById('opt_capital').value),
-    premium: parseFloat(document.getElementById('opt_premium').value),
-    lot_size: parseInt(document.getElementById('opt_lot_size').value),
-    delta: parseFloat(document.getElementById('opt_delta').value),
-    target_pct: parseFloat(document.getElementById('opt_target_pct').value),
-    stop_pct: parseFloat(document.getElementById('opt_stop_pct').value),
-    period: document.getElementById('opt_period').value,
-    expiry: document.getElementById('opt_expiry').value
+    period: document.getElementById('opt_period').value
   };
   
   try {
