@@ -105,7 +105,8 @@ def fetch(symbols=None, interval=None, period=None) -> dict:
 
     kc = kite()
     imap = instrument_map(kc)
-    to_d = dt.datetime.now()
+    ist_now = pd.Timestamp.now(tz="Asia/Kolkata")
+    to_d = dt.datetime(ist_now.year, ist_now.month, ist_now.day, ist_now.hour, ist_now.minute, ist_now.second)
     from_d = to_d - dt.timedelta(days=days + 3)   # pad for weekends/holidays
 
     out = {}
