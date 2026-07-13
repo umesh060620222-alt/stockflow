@@ -355,6 +355,7 @@
     <div id="tdTrades" style="min-height:36px;margin-bottom:12px;padding:6px 8px;background:#111318;border-radius:8px;border:1px solid #1e2027;flex-wrap:wrap;display:flex;align-items:flex-start;gap:4px">
       <span class="muted" style="font-size:12px">No active trades</span>
     </div>
+    <div id="tdErrLog" style="display:none;margin-bottom:12px;padding:6px 8px;background:#2a1215;border-radius:8px;border:1px solid #7f1d1d;font-size:11px;color:#fca5a5;max-height:80px;overflow-y:auto;white-space:pre-wrap"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div>
         <div style="font-size:12px;color:#4ade80;font-weight:600;margin-bottom:8px">▲ Buyers — tap to trade</div>
@@ -891,14 +892,14 @@ async function tdEnter(token, side){
         const r=await (await fetch('/api/trading/option-entry',{method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({symbol:d.sym,side})})).json();
-        if(r.error){ console.warn('Option order failed',r.error); if(d.trade)d.trade=null; return; }
+        if(r.error){ tdLogErr(`${d.sym} ${side} option order FAILED — ${r.error}`); if(d.trade)d.trade=null; return; }
         if(d.trade){
           d.trade.orderId=r.order_id||null;
           d.trade.optTradingsymbol=r.tradingsymbol;
           d.trade.optLotSize=r.lot_size;
           d.trade.optEntryPremium=r.entry_premium;
         }
-      }catch(e){ console.warn('Option order failed',e); if(d.trade)d.trade=null; }
+      }catch(e){ tdLogErr(`${d.sym} ${side} option order FAILED — ${e}`); if(d.trade)d.trade=null; }
       return;
     }
     try{
@@ -908,10 +909,16 @@ async function tdEnter(token, side){
       const r=await (await fetch('/api/trading/entry',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({symbol:d.sym,side,price:entry,sl,target})})).json();
-      if(r.error){ console.warn('Order failed',r.error); if(d.trade)d.trade=null; return; }
+      if(r.error){ tdLogErr(`${d.sym} ${side} order FAILED — ${r.error}`); if(d.trade)d.trade=null; return; }
       if(d.trade) d.trade.orderId=r.order_id||null;
-    }catch(e){ console.warn('Order failed',e); if(d.trade)d.trade=null; }
+    }catch(e){ tdLogErr(`${d.sym} ${side} order FAILED — ${e}`); if(d.trade)d.trade=null; }
   }
+}
+
+function tdLogErr(msg){
+  const el=document.getElementById('tdErrLog');
+  el.style.display='block';
+  el.textContent=new Date().toLocaleTimeString('en-IN')+' — '+msg+'\n'+el.textContent;
 }
 
 function tdManualSquareOff(token){
