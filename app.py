@@ -45,6 +45,30 @@ def _round_tick(price, tick=0.05):
     return round(round(price / tick) * tick, 2)
 
 
+def _resolve_option(kc, symbol, ltp, opt_type):
+    """Nearest-expiry NFO instrument for symbol/type, at whichever listed strike is
+    closest to ltp — real listed strikes, not a guessed interval (strike spacing
+    varies per stock). Returns {token, tradingsymbol, expiry, strike, lot_size} or None."""
+    instruments = kc.instruments("NFO")
+    today = datetime.date.today()
+    candidates = [i for i in instruments
+                  if i.get("name") == symbol
+                  and i.get("instrument_type") == opt_type
+                  and i.get("expiry") and i["expiry"] >= today]
+    if not candidates:
+        return None
+    nearest_expiry = min(i["expiry"] for i in candidates)
+    same_expiry = [i for i in candidates if i["expiry"] == nearest_expiry]
+    m = min(same_expiry, key=lambda i: abs(float(i["strike"] or 0) - ltp))
+    return {
+        "token":         m["instrument_token"],
+        "tradingsymbol": m["tradingsymbol"],
+        "expiry":        str(m["expiry"]),
+        "strike":        float(m["strike"]),
+        "lot_size":      int(m.get("lot_size") or 500),
+    }
+
+
 def _place_bracket(kc, key, exchange, tradingsymbol, exit_side, quantity, product,
                     sl_trigger, target_price, entry_price=None):
     """Rest an SL (stop-loss limit) + a LIMIT target on the exchange for an already-
@@ -623,6 +647,73 @@ class H(BaseHTTPRequestHandler):
                 kc = Z.kite()
                 _force_square_off(kc, sym, "MANUAL")
                 return self._send(200, dumps({"squared_off": sym}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/option-entry":
+            # OPTION mode: no options-chain subscription anywhere — equity ticks
+            # (already streaming) are what drive entry/exit. This just buys the ATM
+            # CE/PE at its current premium (fetched via REST, one-shot) — no resting
+            # bracket, no polling. Exit is triggered later by /api/trading/option-exit
+            # once the equity side hits its own SL/target.
+            sym  = body.get("symbol", "").strip().upper()
+            side = body.get("side", "BUY").upper()   # underlying equity signal direction
+            if not sym:
+                return self._send(200, dumps({"error": "symbol required"}))
+            try:
+                kc = Z.kite()
+                stock_ltp = kc.ltp(f"NSE:{sym}")[f"NSE:{sym}"]["last_price"]
+                opt_type = "CE" if side == "BUY" else "PE"   # never a naked sell — always buy CE or PE
+                opt = _resolve_option(kc, sym, stock_ltp, opt_type)
+                if not opt:
+                    return self._send(200, dumps({"error": f"no {opt_type} option found for {sym}"}))
+                tradingsymbol = opt["tradingsymbol"]
+                lot_size = opt["lot_size"]
+                opt_ltp = kc.ltp(f"NFO:{tradingsymbol}")[f"NFO:{tradingsymbol}"]["last_price"]
+                required = opt_ltp * lot_size
+                margins = kc.margins("equity")
+                available = margins.get("available", {}).get("live_balance", margins.get("net", 0))
+                if available < required:
+                    return self._send(200, dumps({
+                        "error": f"Insufficient funds: need ₹{required:.2f}, available ₹{available:.2f}"
+                    }))
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NFO,
+                    tradingsymbol    = tradingsymbol,
+                    transaction_type = kc.TRANSACTION_TYPE_BUY,   # always buy the option — no naked sells
+                    quantity         = lot_size,
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = opt_ltp,
+                )
+                return self._send(200, dumps({
+                    "order_id": oid, "symbol": sym, "tradingsymbol": tradingsymbol,
+                    "strike": opt["strike"], "type": opt_type, "lot_size": lot_size,
+                    "entry_premium": opt_ltp,
+                }))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/trading/option-exit":
+            # Called once the underlying equity hits its own SL/target — closes the
+            # option position at its current premium via a plain LIMIT sell.
+            tradingsymbol = body.get("tradingsymbol", "").strip().upper()
+            qty = int(body.get("quantity", 0))
+            if not tradingsymbol or qty <= 0:
+                return self._send(200, dumps({"error": "tradingsymbol, quantity required"}))
+            try:
+                kc = Z.kite()
+                opt_ltp = kc.ltp(f"NFO:{tradingsymbol}")[f"NFO:{tradingsymbol}"]["last_price"]
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NFO,
+                    tradingsymbol    = tradingsymbol,
+                    transaction_type = kc.TRANSACTION_TYPE_SELL,  # closing a long — not a fresh short
+                    quantity         = qty,
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = opt_ltp,
+                )
+                return self._send(200, dumps({"order_id": oid, "tradingsymbol": tradingsymbol, "exit_price": opt_ltp}))
             except Exception as e:
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/cancel":

@@ -345,6 +345,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="tdModeBtn" onclick="tdToggleMode()" style="width:auto;margin:0;padding:4px 12px;font-size:12px;background:#1a1c20;border:1px solid #fbbf24;color:#fbbf24;border-radius:5px;cursor:pointer">TEST MODE</button>
         <button id="tdAutoBtn" onclick="tdToggleAuto()" style="width:auto;margin:0;padding:4px 12px;font-size:12px;background:#1a1c20;border:1px solid #4ade80;color:#4ade80;border-radius:5px;cursor:pointer">AUTO ON</button>
+        <button id="tdInstrBtn" onclick="tdToggleInstrument()" style="width:auto;margin:0;padding:4px 12px;font-size:12px;background:#1a1c20;border:1px solid #a78bfa;color:#a78bfa;border-radius:5px;cursor:pointer">EQUITY</button>
         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#6b7280;cursor:pointer"><input type="checkbox" id="tdMockChk"> Mock WS</label>
         <button onclick="tdConnect()" style="width:auto;margin:0;padding:5px 12px;font-size:12px">Connect</button>
         <span id="tdStatus" class="muted" style="font-size:12px">Not connected</span>
@@ -721,7 +722,7 @@ function tdMinSignals(price){
 }
 
 let tdWs=null, tdTokenMap={}, tdData={}, tdState={}, tdTimer=null;
-let tdTestMode=true, tdAutoMode=true, tdActivated={};
+let tdTestMode=true, tdAutoMode=true, tdInstrumentMode='EQUITY', tdActivated={};
 
 function tdToggleMode(){
   tdTestMode=!tdTestMode;
@@ -735,6 +736,11 @@ function tdToggleAuto(){
   const btn=document.getElementById('tdAutoBtn');
   if(tdAutoMode){ btn.textContent='AUTO ON';  btn.style.borderColor='#4ade80'; btn.style.color='#4ade80'; }
   else          { btn.textContent='AUTO OFF'; btn.style.borderColor='#6b7280'; btn.style.color='#6b7280'; }
+}
+
+function tdToggleInstrument(){
+  tdInstrumentMode=tdInstrumentMode==='EQUITY'?'OPTION':'EQUITY';
+  document.getElementById('tdInstrBtn').textContent=tdInstrumentMode;
 }
 
 function tdActivate(sym){
@@ -872,10 +878,29 @@ async function tdEnter(token, side){
     : +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1);
   const sl    = side==='BUY'?+(entry*0.995).toFixed(1):+(entry*1.005).toFixed(1);
   const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
-  d.trade={side,entry,sl,target,
+  const isOption=tdInstrumentMode==='OPTION';
+  d.trade={side,entry,sl,target,isOption,
     time:new Date().toLocaleTimeString('en-IN'),orderId:null,test:tdTestMode};
   d.peak=entry; d.trough=entry;
   if(!tdTestMode){
+    if(isOption){
+      // OPTION mode: no options-chain subscription — equity ticks (unchanged) still
+      // drive entry/exit. Buy the ATM CE/PE at its current premium; exit is fired
+      // later by tdCloseTrade once the equity side hits its own SL/target.
+      try{
+        const r=await (await fetch('/api/trading/option-entry',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({symbol:d.sym,side})})).json();
+        if(r.error){ console.warn('Option order failed',r.error); if(d.trade)d.trade=null; return; }
+        if(d.trade){
+          d.trade.orderId=r.order_id||null;
+          d.trade.optTradingsymbol=r.tradingsymbol;
+          d.trade.optLotSize=r.lot_size;
+          d.trade.optEntryPremium=r.entry_premium;
+        }
+      }catch(e){ console.warn('Option order failed',e); if(d.trade)d.trade=null; }
+      return;
+    }
     try{
       // single call — server places LIMIT entry, then polls for fill, then rests an
       // SL-limit + LIMIT target bracket on the exchange (auto-cancelling whichever
@@ -893,8 +918,16 @@ async function tdCloseTrade(token, result){
   const d=tdData[token];
   if(!d||!d.trade) return;
   const t=d.trade; d.trade=null;
-  t.result=result; t.exitPrice=d.ltp;
-  t.pnlPct=((d.ltp-t.entry)/t.entry*(t.side==='BUY'?1:-1)*100).toFixed(2);
+  t.result=result;
+  if(t.isOption){
+    // real fill price/PnL for the option comes from Zerodha's own order book, not
+    // d.ltp (the equity's price, which moves very differently from the premium) —
+    // leave it unset rather than show a misleading number.
+    t.exitPrice=null; t.pnlPct='n/a';
+  } else {
+    t.exitPrice=d.ltp;
+    t.pnlPct=((d.ltp-t.entry)/t.entry*(t.side==='BUY'?1:-1)*100).toFixed(2);
+  }
   d.closed.push({sym:d.sym,...t,exitTime:new Date().toLocaleTimeString('en-IN')});
   if(result==='SL'){
     d.stopped=true; d.peak=null; d.trough=null;
@@ -910,11 +943,23 @@ async function tdCloseTrade(token, result){
     d.sessionOpen=d.ltp;
     tdState[d.sym]={buyCount:0,sellCount:0,class:null};
   }
-  if(!t.test&&result==='MIXED'){
-    // TARGET/SL for a real trade resolve on their own via the resting bracket orders
-    // on the exchange (see _place_bracket_after_fill) — only an early MIXED exit
-    // needs an explicit square-off call to close the position before either side
-    // fires naturally.
+  if(t.test) return;
+  if(t.isOption){
+    // OPTION mode: there's no resting bracket on the option at all — every exit
+    // (SL, TARGET, or MIXED) has to be actively closed here, driven purely by the
+    // equity side just having hit its own SL/target/mixed condition above.
+    try{
+      await fetch('/api/trading/option-exit',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({tradingsymbol:t.optTradingsymbol,quantity:t.optLotSize})});
+    }catch(e){ console.warn('option exit failed',e); }
+    return;
+  }
+  if(result==='MIXED'){
+    // TARGET/SL for a real equity trade resolve on their own via the resting bracket
+    // orders on the exchange (see _place_bracket_after_fill) — only an early MIXED
+    // exit needs an explicit square-off call to close the position before either
+    // side fires naturally.
     try{
       await fetch('/api/trading/square-off',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -974,11 +1019,12 @@ function tdRender(){
     const pc=parseFloat(pnl)>=0?'#4ade80':'#f87171';
     return `<div style="display:inline-flex;gap:8px;align-items:center;padding:5px 10px;margin:3px;background:${t.side==='BUY'?'#14532d':'#450a0a'};border-radius:6px;font-size:12px">
       ${t.test?'<span style="color:#6b7280;font-size:10px">[T]</span>':''}
+      ${t.isOption?'<span style="color:#a78bfa;font-size:10px">[OPT '+(t.optTradingsymbol||'')+']</span>':''}
       <b style="color:#fbbf24">${d.sym}</b>
       <span style="color:${t.side==='BUY'?'#4ade80':'#f87171'}">${t.side}</span>
       <span>@₹${t.entry.toFixed(1)}</span><span>→₹${d.ltp.toFixed(1)}</span>
       <span style="color:${pc};font-weight:600">${pnl>=0?'+':''}${pnl}%</span>
-      <span style="color:#6b7280;font-size:10px">SL ₹${t.sl.toFixed(1)} T ₹${t.target.toFixed(1)}</span>
+      <span style="color:#6b7280;font-size:10px">SL ₹${t.sl.toFixed(1)} T ₹${t.target.toFixed(1)} (equity levels)</span>
     </div>`;
   }).join('');
   const closedHtml=allClosed.map(t=>{
