@@ -1065,7 +1065,9 @@ function tdRender(){
     :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>';
 
   // active trades + closed
-  const active=Object.entries(tdData).filter(([tok,d])=>d.trade);
+  // live trades only show as "entered" once Zerodha confirms the fill — placing the
+  // order isn't enough. Test trades still show immediately (nothing to confirm).
+  const active=Object.entries(tdData).filter(([tok,d])=>d.trade&&(d.trade.test||d.trade.filled));
   const allClosed=Object.values(tdData).flatMap(d=>d.closed)
     .sort((a,b)=>b.exitTime>a.exitTime?1:-1);
   const tBox=document.getElementById('tdTrades');
