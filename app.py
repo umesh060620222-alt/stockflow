@@ -266,9 +266,38 @@ def run_options_algo(overrides: dict) -> dict:
     expiry = overrides.get("expiry", "14 JUL")
     
     # Download Nifty spot data
-    raw = yf.download("^NSEI", period=period, interval="1m", progress=False)
+    raw = pd.DataFrame()
+    source = overrides.get("source", config.SOURCE)
+    
+    if source == "zerodha":
+        try:
+            import zerodha
+            z_res = zerodha.fetch(["^NSEI"], interval="1m", period=period)
+            if "^NSEI" in z_res and not z_res["^NSEI"].empty:
+                raw = z_res["^NSEI"]
+                print("Successfully loaded Nifty Spot index from Zerodha Connect!")
+        except Exception as e:
+            print(f"Zerodha fetch failed: {e}. Trying yfinance...")
+            
     if raw.empty:
-        return {"error": "Failed to retrieve Nifty 50 data."}
+        try:
+            raw = yf.download("^NSEI", period=period, interval="1m", progress=False)
+        except Exception as e:
+            print(f"yfinance download failed: {e}")
+            
+    if raw.empty:
+        if source != "zerodha":
+            try:
+                import zerodha
+                z_res = zerodha.fetch(["^NSEI"], interval="1m", period=period)
+                if "^NSEI" in z_res and not z_res["^NSEI"].empty:
+                    raw = z_res["^NSEI"]
+                    print("Successfully loaded Nifty Spot index from Zerodha Connect fallback!")
+            except Exception as e:
+                print(f"Zerodha fallback fetch failed: {e}")
+                
+    if raw.empty:
+        return {"error": "Failed to retrieve Nifty 50 data from both Yahoo Finance and Zerodha."}
     
     df = raw.copy()
     if df.index.tz is None:

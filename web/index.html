@@ -209,9 +209,11 @@
       </div>
       
       <div class="row">
+        <div><label>Data Source</label><select id="opt_source"><option value="yfinance">yfinance (free)</option><option value="zerodha">zerodha (live)</option></select></div>
         <div><label>Data Period</label><select id="opt_period"><option>7d</option><option>5d</option></select></div>
-        <div><label>Nifty Expiry Date</label><input id="opt_expiry" type="text" value="14 JUL"></div>
       </div>
+      <label>Nifty Expiry Date</label>
+      <input id="opt_expiry" type="text" value="14 JUL">
       
       <button id="opt_run_btn" onclick="runOptionsAlgo()">Run options simulator</button>
       <div id="opt_status" class="muted" style="margin-top:10px;font-size:12px"></div>
@@ -3076,6 +3078,7 @@ async function runOptionsAlgo() {
   status.textContent = 'Running simulation...';
   
   const payload = {
+    source: document.getElementById('opt_source').value,
     capital: parseFloat(document.getElementById('opt_capital').value),
     premium: parseFloat(document.getElementById('opt_premium').value),
     lot_size: parseInt(document.getElementById('opt_lot_size').value),
