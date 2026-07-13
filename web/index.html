@@ -711,6 +711,7 @@ async function loadBacktest(){
 // trough (buyers) or peak (sellers) — no buffer, no pullback considered.
 const TD_SL     = 0.003;  // 0.3% stop loss
 const TD_TARGET = 0.001;  // 0.1% profit target
+const TD_PULLBACK = 0.001;  // 0.1% retrace off the tracked peak/trough required before entry confirms
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
 const TD_SIGNALS_PER_100 = 10;  // min signals scale with price: this many per ₹100
 const TD_MAX_TRADES = 10;   // hard cap on concurrent open trades
@@ -845,10 +846,13 @@ function tdCheckEntry(token){
   if(!tdAutoMode&&!tdActivated[d.sym]) return; // AUTO OFF: must tap card; AUTO ON: trade all classified
   if(Object.values(tdData).filter(x=>x.trade).length>=TD_MAX_TRADES) return; // cap concurrent trades
   const cls=(tdState[d.sym]||{}).class;
-  // enter directly at the tracked extreme — no pullback/buffer considered.
-  if(cls==='buyer'&&d.trough!==null&&d.ltp<=d.trough){
+  // wait for price to retrace off the tracked extreme before entering — confirms the
+  // extreme actually held instead of entering blindly at the raw touch. Peak/trough
+  // keep tracking the true high/low throughout, so a fresh higher peak (or lower
+  // trough) just raises the bar for what counts as a confirmed pullback.
+  if(cls==='buyer'&&d.trough!==null&&d.ltp>=d.trough*(1+TD_PULLBACK)){
     tdEnter(token,'BUY');
-  } else if(cls==='seller'&&d.peak!==null&&d.ltp>=d.peak){
+  } else if(cls==='seller'&&d.peak!==null&&d.ltp<=d.peak*(1-TD_PULLBACK)){
     tdEnter(token,'SELL');
   }
 }
