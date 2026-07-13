@@ -708,11 +708,9 @@ async function loadBacktest(){
 // ── Trading tab ───────────────────────────────────────────────────────────────
 // Same live-screen scoring logic; classifies stocks as consistent buyer/seller.
 // Mixed even once → ignored for the session. Entry fires directly at the tracked
-// trough (buyers) or peak (sellers) — no pullback considered beyond a small order
-// buffer to actually get filled (see TD_ORDER_BUFFER).
-const TD_ORDER_BUFFER = 0.005;  // 0.5% — discount on BUY, premium on SELL entry price
-const TD_SL     = 0.001;  // 0.1% stop loss
-const TD_TARGET = 0.002;  // 0.2% profit target
+// trough (buyers) or peak (sellers) — no buffer, no pullback considered.
+const TD_SL     = 0.003;  // 0.3% stop loss
+const TD_TARGET = 0.001;  // 0.1% profit target
 const TD_SCORE  = 4;      // min score/8 to register as buy or sell signal
 const TD_SIGNALS_PER_100 = 10;  // min signals scale with price: this many per ₹100
 const TD_MAX_TRADES = 10;   // hard cap on concurrent open trades
@@ -873,8 +871,8 @@ async function tdEnter(token, side){
   if(!d||d.trade) return;
   // entry = the tracked extreme itself — no buffer.
   const entry = +d.ltp.toFixed(1);
-  const sl    = side==='BUY'?+(entry*0.997).toFixed(1):+(entry*1.003).toFixed(1);
-  const target= side==='BUY'?+(entry*1.001).toFixed(1):+(entry*0.999).toFixed(1);
+  const sl    = side==='BUY'?+(entry*(1-TD_SL)).toFixed(1):+(entry*(1+TD_SL)).toFixed(1);
+  const target= side==='BUY'?+(entry*(1+TD_TARGET)).toFixed(1):+(entry*(1-TD_TARGET)).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
   // filled=true immediately for test-mode trades (no real order exists to confirm);
   // real trades stay unfilled until tdConfirmFill verifies the exchange fill —
