@@ -873,9 +873,9 @@ function tdCheckExit(token){
 async function tdEnter(token, side){
   const d=tdData[token];
   if(!d||d.trade) return;
-  // entry = the tracked extreme itself (pullback is only used to time the trigger,
-  // not to change this price).
-  const entry = +(side==='BUY'?d.trough:d.peak).toFixed(1);
+  // entry = midpoint of the tracked peak and trough (pullback is only used to time
+  // the trigger, not to change this price).
+  const entry = +((d.peak+d.trough)/2).toFixed(1);
   const sl    = side==='BUY'?+(entry*(1-TD_SL)).toFixed(1):+(entry*(1+TD_SL)).toFixed(1);
   const target= side==='BUY'?+(entry*(1+TD_TARGET)).toFixed(1):+(entry*(1-TD_TARGET)).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
