@@ -876,8 +876,8 @@ async function tdEnter(token, side){
   const entry = side==='BUY'
     ? +(d.ltp*(1-TD_ORDER_BUFFER)).toFixed(1)
     : +(d.ltp*(1+TD_ORDER_BUFFER)).toFixed(1);
-  const sl    = side==='BUY'?+(entry*0.997).toFixed(1):+(entry*1.003).toFixed(1);
-  const target= side==='BUY'?+(entry*1.003).toFixed(1):+(entry*0.997).toFixed(1);
+  const sl    = side==='BUY'?+(entry*0.995).toFixed(1):+(entry*1.005).toFixed(1);
+  const target= side==='BUY'?+(entry*1.05).toFixed(1):+(entry*0.95).toFixed(1);
   const isOption=tdInstrumentMode==='OPTION';
   // filled=true immediately for test-mode trades (no real order exists to confirm);
   // real trades stay unfilled until tdConfirmFill verifies the exchange fill —
