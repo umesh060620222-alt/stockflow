@@ -914,6 +914,13 @@ async function tdEnter(token, side){
   }
 }
 
+function tdManualSquareOff(token){
+  const d=tdData[token];
+  if(!d||!d.trade) return;
+  if(!confirm(`Square off ${d.sym} ${d.trade.side} now at current price?`)) return;
+  tdCloseTrade(token,'MANUAL');
+}
+
 async function tdCloseTrade(token, result){
   const d=tdData[token];
   if(!d||!d.trade) return;
@@ -933,9 +940,11 @@ async function tdCloseTrade(token, result){
     d.stopped=true; d.peak=null; d.trough=null;
     if(tdState[d.sym]) tdState[d.sym].class='ignored';
     delete tdActivated[d.sym]; // SL hit — remove from active trading for the session
-  } else if(result==='MIXED'){
-    // tdClassify already marked this ignored for the rest of the session — don't
+  } else if(result==='MIXED'||result==='MANUAL'){
+    // MIXED: tdClassify already marked this ignored for the rest of the session — don't
     // reset it back to a fresh cycle, that would undo the ignore.
+    // MANUAL: user overrode the trade — don't let automation immediately re-enter.
+    if(tdState[d.sym]) tdState[d.sym].class='ignored';
     delete tdActivated[d.sym];
   } else {
     // TARGET — start a fresh cycle from the exit price as the new base
@@ -955,11 +964,11 @@ async function tdCloseTrade(token, result){
     }catch(e){ console.warn('option exit failed',e); }
     return;
   }
-  if(result==='MIXED'){
+  if(result==='MIXED'||result==='MANUAL'){
     // TARGET/SL for a real equity trade resolve on their own via the resting bracket
-    // orders on the exchange (see _place_bracket_after_fill) — only an early MIXED
-    // exit needs an explicit square-off call to close the position before either
-    // side fires naturally.
+    // orders on the exchange (see _place_bracket_after_fill) — an early MIXED or
+    // MANUAL exit needs an explicit square-off call to close the position before
+    // either side fires naturally.
     try{
       await fetch('/api/trading/square-off',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -1009,11 +1018,11 @@ function tdRender(){
     :'<div class="muted" style="font-size:12px;padding:4px">No consistent sellers yet</div>';
 
   // active trades + closed
-  const active=Object.values(tdData).filter(d=>d.trade);
+  const active=Object.entries(tdData).filter(([tok,d])=>d.trade);
   const allClosed=Object.values(tdData).flatMap(d=>d.closed)
     .sort((a,b)=>b.exitTime>a.exitTime?1:-1);
   const tBox=document.getElementById('tdTrades');
-  const activeHtml=active.map(d=>{
+  const activeHtml=active.map(([tok,d])=>{
     const t=d.trade;
     const pnl=((d.ltp-t.entry)/t.entry*(t.side==='BUY'?1:-1)*100).toFixed(2);
     const pc=parseFloat(pnl)>=0?'#4ade80':'#f87171';
@@ -1025,6 +1034,7 @@ function tdRender(){
       <span>@₹${t.entry.toFixed(1)}</span><span>→₹${d.ltp.toFixed(1)}</span>
       <span style="color:${pc};font-weight:600">${pnl>=0?'+':''}${pnl}%</span>
       <span style="color:#6b7280;font-size:10px">SL ₹${t.sl.toFixed(1)} T ₹${t.target.toFixed(1)} (equity levels)</span>
+      <button onclick="tdManualSquareOff('${tok}')" style="background:#7f1d1d;color:#fecaca;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Square Off</button>
     </div>`;
   }).join('');
   const closedHtml=allClosed.map(t=>{
