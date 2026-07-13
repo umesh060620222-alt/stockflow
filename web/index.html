@@ -805,6 +805,8 @@ function tdParseBinary(buf){
 // Returns 'Buying' | 'Selling' | null
 function tdSignal(d){
   if(!d.ticks||d.ticks.length<3) return null;
+  const chgPct=d.sessionOpen?((d.ltp-d.sessionOpen)/d.sessionOpen*100):0;
+  const up=chgPct>0.1, dn=chgPct<-0.1;
   const last20=d.ticks.slice(-21);
   let driftUp=0,driftDn=0;
   for(let i=1;i<last20.length;i++){
@@ -812,11 +814,6 @@ function tdSignal(d){
     else if(last20[i].ltp<last20[i-1].ltp) driftDn++;
   }
   const ratio=driftDn>0?driftUp/driftDn:(driftUp>0?999:0);
-  // direction off the SAME recent window, not vs. prevClose — a stock that ran up
-  // all morning but has been sliding for the last 20 ticks should register 'dn' now,
-  // not stay stuck 'up' just because it hasn't round-tripped below prevClose yet.
-  const recentChgPct=(d.ltp-last20[0].ltp)/last20[0].ltp*100;
-  const up=recentChgPct>0.1, dn=recentChgPct<-0.1;
   if(up&&ratio>=1.2) return 'Buying';
   if(dn&&ratio<=0.8) return 'Selling';
   return null;
