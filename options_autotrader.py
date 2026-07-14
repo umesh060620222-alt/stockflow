@@ -167,8 +167,13 @@ class OptionsAutoTrader:
         while not self._stop:
             t0 = time.time()
             try:
-                # Fetch Nifty Spot LTP
-                q = kc.quote(["NSE:NIFTY 50"])
+                # Combine Spot and Option quotes to reduce request count
+                symbols_to_quote = ["NSE:NIFTY 50"]
+                with self.lock:
+                    if self.active_trade and self.mode == "live" and self.active_trade.get("tradingsymbol"):
+                        symbols_to_quote.append(f"NFO:{self.active_trade['tradingsymbol']}")
+                
+                q = kc.quote(symbols_to_quote)
                 d_q = q.get("NSE:NIFTY 50")
                 if not d_q:
                     time.sleep(1)
@@ -316,7 +321,7 @@ class OptionsAutoTrader:
 
                 # If in position, manage exits at 1-second resolution
                 if self.active_trade:
-                    self._manage_active_position(kc, ltp)
+                    self._manage_active_position(kc, ltp, quote_data=q)
 
             except Exception as e:
                 self._log(f"Loop error: {e}")
@@ -438,7 +443,7 @@ class OptionsAutoTrader:
                 "started_at": time.time()
             }
 
-    def _manage_active_position(self, kc, spot_ltp):
+    def _manage_active_position(self, kc, spot_ltp, quote_data=None):
         t = self.active_trade
         if not t:
             return
@@ -454,8 +459,13 @@ class OptionsAutoTrader:
         # Update option LTP for floating P&L display
         if self.mode == "live" and t["tradingsymbol"]:
             try:
-                quote = kc.quote([f"NFO:{t['tradingsymbol']}"])
-                opt_q = quote.get(f"NFO:{t['tradingsymbol']}")
+                opt_key = f"NFO:{t['tradingsymbol']}"
+                if quote_data and opt_key in quote_data:
+                    opt_q = quote_data[opt_key]
+                else:
+                    quote = kc.quote([opt_key])
+                    opt_q = quote.get(opt_key)
+                
                 if opt_q:
                     t["current_premium"] = float(opt_q.get("last_price") or t["current_premium"])
             except Exception:
