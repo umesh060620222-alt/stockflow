@@ -554,6 +554,12 @@ class OptionsAutoTrader:
             spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
             t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
 
+        # Check premium-based stop-loss safety floor (max 50% loss on option premium)
+        if t["current_premium"] <= 0.50 * t["entry_premium"]:
+            self._log(f"Premium Max Loss Trigger: Option premium lost 50% of its value (Current: Rs. {t['current_premium']:.2f}, Entry: Rs. {t['entry_premium']:.2f}). Exiting trade.")
+            self._exit_position(kc, "LOSS", spot_ltp)
+            return
+
         # Check time-decay timeout (45 minutes max hold)
         elapsed_mins = (time.time() - t["started_at"]) / 60.0
         if elapsed_mins >= 45.0:
