@@ -19,7 +19,7 @@ log = logging.getLogger("options_autotrader")
 
 class OptionsAutoTrader:
     def __init__(self):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.running = False
         self.mode = "paper"  # "paper" | "live"
         self.capital = 40000.0
