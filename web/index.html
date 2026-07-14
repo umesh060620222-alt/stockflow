@@ -283,9 +283,6 @@
               <th>Time</th>
               <th>Symbol</th>
               <th>Side</th>
-              <th>Entry/Exit Spot</th>
-              <th>Target Spot</th>
-              <th>SL Spot</th>
               <th>Result</th>
               <th>P&L</th>
             </tr>
@@ -3232,8 +3229,6 @@ async function runOptionsAlgo() {
               <th>Side</th>
               <th>Duration</th>
               <th>Spot Entry</th>
-              <th>Spot Target</th>
-              <th>Spot SL</th>
               <th>Spot Exit</th>
               <th>Entry Prem</th>
               <th>Exit Prem</th>
@@ -3290,8 +3285,6 @@ function renderOptTradesLog(trades) {
         <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
         <td>${t.duration}</td>
         <td>${t.entry_spot.toFixed(2)}</td>
-        <td>${t.spot_target ? t.spot_target.toFixed(2) : '-'}</td>
-        <td>${t.spot_sl ? t.spot_sl.toFixed(2) : '-'}</td>
         <td>${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
         <td>${t.entry_premium.toFixed(2)}</td>
         <td>${t.exit_premium ? t.exit_premium.toFixed(2) : '-'}</td>
@@ -3427,16 +3420,13 @@ function updateOptAutoTraderUI(d) {
           <td class="muted">${t.entry_time} - ${t.exit_time}</td>
           <td><b>${t.symbol}</b></td>
           <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
-          <td>${t.entry_spot.toFixed(2)} / ${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
-          <td>${t.spot_target ? t.spot_target.toFixed(2) : '-'}</td>
-          <td>${t.spot_sl ? t.spot_sl.toFixed(2) : '-'}</td>
           <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
           <td class="${pnlClass}">${pnlSign}₹${t.pnl}</td>
         </tr>
       `;
     }).join('');
   } else {
-    tradesBody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center">No trades completed today</td></tr>';
+    tradesBody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center">No trades completed today</td></tr>';
   }
 }
 

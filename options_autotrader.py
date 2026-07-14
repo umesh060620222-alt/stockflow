@@ -602,8 +602,6 @@ class OptionsAutoTrader:
             "duration": f"{int((time.time() - t['started_at']) / 60)}m",
             "entry_spot": t["entry_spot"],
             "exit_spot": exit_spot,
-            "spot_target": t["spot_target"],
-            "spot_sl": t["spot_sl"],
             "entry_premium": t["entry_premium"],
             "exit_premium": exit_premium,
             "result": verdict,
