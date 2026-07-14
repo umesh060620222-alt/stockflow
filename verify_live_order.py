@@ -27,19 +27,20 @@ def test_live_order():
         print(f"Failed to fetch LTP: {e}. Defaulting to Rs. 2400 limit price.")
         limit_price = 2400.0
 
-    print(f"Attempting to place a test MIS LIMIT BUY order for 1 share of {symbol} at Rs. {limit_price}...")
+    print(f"Attempting to place a test CNC LIMIT BUY AMO order for 1 share of {symbol} at Rs. {limit_price}...")
     try:
         order_id = kc.place_order(
-            variety          = kc.VARIETY_REGULAR,
+            variety          = kc.VARIETY_AMO,
             exchange         = kc.EXCHANGE_NSE,
             tradingsymbol    = symbol,
             transaction_type = kc.TRANSACTION_TYPE_BUY,
             quantity         = 1,
-            product          = kc.PRODUCT_MIS,
+            product          = kc.PRODUCT_CNC,
             order_type       = kc.ORDER_TYPE_LIMIT,
             price            = limit_price,
         )
-        print(f"SUCCESS! Order placed. Order ID: {order_id}")
+        print(f"SUCCESS! AMO Order placed. Order ID: {order_id}")
+        print("You can see this pending order in your Kite orders tab now!")
     except Exception as e:
         print("API Call communicated with Zerodha successfully, but was rejected by exchange/RMS:")
         print(f"Error Message: {e}")
