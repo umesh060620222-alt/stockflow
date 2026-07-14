@@ -538,13 +538,13 @@ def run_options_algo(overrides: dict) -> dict:
                         if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
                             if trade_result == "BREAKEVEN":
                                 exit_premium = premium
-                                pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                                pnl_net = - options_brokerage - (options_slippage * total_shares)
                             else:
                                 spot_change = exit_price_val - entry
                                 fallback_exit = premium + (spot_change * delta)
                                 exit_premium = get_opt_price(exit_time, fallback_exit)
                                 pnl_gross = (exit_premium - premium) * total_shares
-                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                                pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                         else:
                             exit_premium = None
                             pnl_net = 0.0
@@ -712,13 +712,13 @@ def run_options_algo(overrides: dict) -> dict:
                             if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
                                 if trade_result == "BREAKEVEN":
                                     exit_premium = premium
-                                    pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                                    pnl_net = - options_brokerage - (options_slippage * total_shares)
                                 else:
                                     spot_change = entry - exit_price_val
                                     fallback_exit = premium + (spot_change * delta)
                                     exit_premium = get_opt_price(exit_time, fallback_exit)
                                     pnl_gross = (exit_premium - premium) * total_shares
-                                    pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
+                                    pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                             else:
                                 exit_premium = None
                                 pnl_net = 0.0
