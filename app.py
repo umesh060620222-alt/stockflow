@@ -320,13 +320,35 @@ def run_options_algo(overrides: dict) -> dict:
     trades = []
     
     def get_trade_expiry_and_decay(dt_val, t_str):
-        days_until_tuesday = (1 - dt_val.weekday() + 7) % 7
-        exp_date = dt_val + datetime.timedelta(days=days_until_tuesday)
-        if dt_val.weekday() == 1: # Tuesday
+        try:
+            import zerodha
+            kc = zerodha.kite()
+            exp_date = zerodha.get_expiry_date(kc, dt_val)
+        except Exception:
+            days_until_tuesday = (1 - dt_val.weekday() + 7) % 7
+            exp_date = dt_val + datetime.timedelta(days=days_until_tuesday)
+            
+        if dt_val == exp_date:
             try:
                 h, m = map(int, t_str.split(":"))
                 if h > 12 or (h == 12 and m >= 30):
-                    exp_date = dt_val + datetime.timedelta(days=7)
+                    next_exp = None
+                    try:
+                        import zerodha
+                        kc = zerodha.kite()
+                        insts = zerodha.get_nfo_instruments(kc)
+                        if insts:
+                            expiries = sorted(list({
+                                datetime.datetime.strptime(i["expiry"], "%Y-%m-%d").date()
+                                for i in insts
+                                if i.get("name") == "NIFTY" and i.get("expiry")
+                            }))
+                            future_exp = [e for e in expiries if e > dt_val]
+                            if future_exp:
+                                next_exp = future_exp[0]
+                    except Exception:
+                        pass
+                    exp_date = next_exp or (dt_val + datetime.timedelta(days=7))
             except Exception:
                 pass
         days_to_exp = (exp_date - dt_val).days

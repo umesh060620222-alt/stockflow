@@ -180,3 +180,46 @@ def fetch(symbols=None, interval=None, period=None) -> dict:
         df["date"] = df.index.date
         out[sym] = df
     return out
+
+
+def get_expiry_date(kc, today_date):
+    """Find the nearest Nifty weekly expiry date from NFO instruments database, with fallback."""
+    insts = get_nfo_instruments(kc)
+    if not insts:
+        # Fallback to standard Tuesday calculations if instruments database is empty
+        days_until_tuesday = (1 - today_date.weekday() + 7) % 7
+        return today_date + dt.timedelta(days=days_until_tuesday)
+        
+    expiries = set()
+    for inst in insts:
+        if inst.get("name") == "NIFTY":
+            inst_expiry = inst.get("expiry")
+            if isinstance(inst_expiry, str) and inst_expiry:
+                try:
+                    exp_date = dt.datetime.strptime(inst_expiry, "%Y-%m-%d").date()
+                    if exp_date >= today_date:
+                        expiries.add(exp_date)
+                except ValueError:
+                    pass
+            elif isinstance(inst_expiry, dt.datetime):
+                exp_date = inst_expiry.date()
+                if exp_date >= today_date:
+                    expiries.add(exp_date)
+            elif isinstance(inst_expiry, dt.date):
+                if inst_expiry >= today_date:
+                    expiries.add(inst_expiry)
+                    
+    if expiries:
+        sorted_expiries = sorted(list(expiries))
+        # If the nearest expiry found is more than 7 days in the future (e.g. backtesting past dates),
+        # then the instruments database (which only has active future contracts) is not valid.
+        # Fall back to Tuesday logic.
+        nearest = sorted_expiries[0]
+        if (nearest - today_date).days > 7:
+            days_until_tuesday = (1 - today_date.weekday() + 7) % 7
+            return today_date + dt.timedelta(days=days_until_tuesday)
+        return nearest
+        
+    days_until_tuesday = (1 - today_date.weekday() + 7) % 7
+    return today_date + dt.timedelta(days=days_until_tuesday)
+

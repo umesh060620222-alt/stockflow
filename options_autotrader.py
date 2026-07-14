@@ -397,15 +397,28 @@ class OptionsAutoTrader:
         opt_type = "CE" if "CALL" in side else "PE"
         today_date = self._ist().date()
         
-        # Calculate dynamic Tuesday expiry
-        days_until_tuesday = (1 - today_date.weekday() + 7) % 7
-        expiry_date = today_date + dt.timedelta(days=days_until_tuesday)
+        # Calculate dynamic Nifty expiry date from instruments list
+        expiry_date = Z.get_expiry_date(kc, today_date)
         
-        # Next-Week Expiry Roll-Over: If today is Tuesday (expiry day) and it is after 12:30 PM, roll over to next week
-        if today_date.weekday() == 1:
+        # Next-Week Expiry Roll-Over: If today is the actual expiry day and it is after 12:30 PM, roll over to the next expiry
+        if today_date == expiry_date:
             now_ist = self._ist()
             if now_ist.hour > 12 or (now_ist.hour == 12 and now_ist.minute >= 30):
-                expiry_date = today_date + dt.timedelta(days=7)
+                insts = Z.get_nfo_instruments(kc)
+                next_exp = None
+                if insts:
+                    try:
+                        expiries = sorted(list({
+                            dt.datetime.strptime(i["expiry"], "%Y-%m-%d").date()
+                            for i in insts
+                            if i.get("name") == "NIFTY" and i.get("expiry")
+                        }))
+                        future_exp = [e for e in expiries if e > today_date]
+                        if future_exp:
+                            next_exp = future_exp[0]
+                    except Exception:
+                        pass
+                expiry_date = next_exp or (today_date + dt.timedelta(days=7))
                 self._log(f"Expiry Day Afternoon Roll-over active. Selected next week's contract expiry: {expiry_date.strftime('%Y-%m-%d')}")
                 
         expiry_str = expiry_date.strftime("%d %b").upper()
