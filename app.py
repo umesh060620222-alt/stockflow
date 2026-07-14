@@ -550,7 +550,7 @@ def run_options_algo(overrides: dict) -> dict:
                             else:
                                 spot_change = exit_price_val - entry
                                 fallback_exit = premium + (spot_change * delta)
-                                exit_premium = get_opt_price(exit_time, fallback_exit)
+                                exit_premium = fallback_exit if exit_time == time_str else get_opt_price(exit_time, fallback_exit)
                                 pnl_gross = (exit_premium - premium) * total_shares
                                 pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                         else:
@@ -726,7 +726,7 @@ def run_options_algo(overrides: dict) -> dict:
                                 else:
                                     spot_change = entry - exit_price_val
                                     fallback_exit = premium + (spot_change * delta)
-                                    exit_premium = get_opt_price(exit_time, fallback_exit)
+                                    exit_premium = fallback_exit if exit_time == time_str else get_opt_price(exit_time, fallback_exit)
                                     pnl_gross = (exit_premium - premium) * total_shares
                                     pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                             else:
