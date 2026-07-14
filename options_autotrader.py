@@ -23,6 +23,8 @@ class OptionsAutoTrader:
         self.running = False
         self.mode = "paper"  # "paper" | "live"
         self.capital = 40000.0
+        self.lot_size_mode = "auto" # "auto" | "fixed"
+        self.fixed_lots = 1
         self.state = "idle"  # idle | warmup | scanning | in-trade | error
         self.logs = []
         self.candles = []    # list of dicts: {"open", "high", "low", "close", "atr", "nifty_ema", "date"}
@@ -44,20 +46,23 @@ class OptionsAutoTrader:
                 self.logs.pop(0)
         log.info(entry)
 
-    def start(self, capital=40000.0, mode="paper"):
+    def start(self, capital=40000.0, mode="paper", lot_size_mode="auto", fixed_lots=1):
         with self.lock:
             if self.running:
                 return False
             self.running = True
             self.mode = mode.lower()
             self.capital = float(capital)
+            self.lot_size_mode = lot_size_mode.lower()
+            self.fixed_lots = int(fixed_lots)
             self.state = "warmup"
             self._stop = False
             self.candles = []
             self.active_trade = None
             self.nifty_open = None
             self.logs = []
-            self._log(f"Starting Options Auto-Trader in {self.mode.upper()} mode with Rs. {self.capital} capital...")
+            lot_mode_str = "AUTO (Capital-based)" if self.lot_size_mode == "auto" else f"FIXED ({self.fixed_lots} lots)"
+            self._log(f"Starting Options Auto-Trader in {self.mode.upper()} mode with Rs. {self.capital} capital (Lot Sizing: {lot_mode_str})...")
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
             return True
@@ -365,7 +370,14 @@ class OptionsAutoTrader:
         entry_premium = fallback_premium
         tradingsymbol = ""
         lot_size = 75
-        lots = 1
+        
+        if self.lot_size_mode == "fixed":
+            lots = self.fixed_lots
+        else:
+            lot_cost = entry_premium * lot_size
+            lots = math.floor(self.capital / lot_cost) if lot_cost > 0 else 0
+            if lots == 0:
+                lots = 1
         
         if self.mode == "live":
             try:
@@ -386,10 +398,17 @@ class OptionsAutoTrader:
                 if opt_q:
                     entry_premium = float(opt_q.get("last_price") or entry_premium)
 
-                lot_cost = entry_premium * lot_size
-                lots = math.floor(self.capital / lot_cost) if lot_cost > 0 else 0
+                if self.lot_size_mode == "fixed":
+                    lots = self.fixed_lots
+                else:
+                    lot_cost = entry_premium * lot_size
+                    lots = math.floor(self.capital / lot_cost) if lot_cost > 0 else 0
+                
+                required_capital = lots * entry_premium * lot_size
+                if self.capital < required_capital:
+                    raise ValueError(f"Insufficient capital. Required: Rs. {required_capital}, Available: Rs. {self.capital}")
                 if lots == 0:
-                    raise ValueError(f"Insufficient capital to trade 1 lot. Cost: Rs. {lot_cost}, Capital: Rs. {self.capital}")
+                    raise ValueError(f"Trade lot size evaluated to 0. Mode: {self.lot_size_mode}")
 
                 # To simulate a market buy with protection: set limit price 2% above current premium
                 limit_price = round(entry_premium * 1.02, 1)

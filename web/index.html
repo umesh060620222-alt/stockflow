@@ -192,16 +192,27 @@
     <div class="card">
       <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Nifty Options Replay</h3>
       
-      <label>Capital Pool (INR)</label>
-      <input id="opt_capital" type="number" value="40000" step="1000">
-      
-      
       <div class="row">
+        <div><label>Capital Pool (INR)</label><input id="opt_capital" type="number" value="40000" step="1000"></div>
+        <div>
+          <label>Lot Size Mode</label>
+          <select id="opt_lot_mode" onchange="document.getElementById('opt_fixed_lots_div').style.display = this.value === 'fixed' ? 'block' : 'none'">
+            <option value="auto">Auto (Capital-based)</option>
+            <option value="fixed">Fixed Lots</option>
+          </select>
+        </div>
+      </div>
+      <div id="opt_fixed_lots_div" style="display:none;margin-top:10px">
+        <label>Fixed Lots Count</label>
+        <input id="opt_fixed_lots" type="number" value="1" min="1" step="1">
+      </div>
+      
+      <div class="row" style="margin-top:10px">
         <div><label>Data Source</label><select id="opt_source"><option value="yfinance">yfinance (free)</option><option value="zerodha">zerodha (live)</option></select></div>
         <div><label>Data Period</label><select id="opt_period"><option>7d</option><option>5d</option></select></div>
       </div>
       
-      <button id="opt_run_btn" onclick="runOptionsAlgo()">Run options simulator</button>
+      <button id="opt_run_btn" onclick="runOptionsAlgo()" style="margin-top:14px">Run options simulator</button>
       <div id="opt_status" class="muted" style="margin-top:10px;font-size:12px"></div>
     </div>
     
@@ -222,6 +233,20 @@
             <option value="paper">Paper Trading (Simulated)</option>
             <option value="live">Live Trading (Zerodha NFO)</option>
           </select>
+        </div>
+      </div>
+      
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Lot Size Mode</label>
+          <select id="at_opt_lot_mode" onchange="document.getElementById('at_opt_fixed_lots_div').style.display = this.value === 'fixed' ? 'block' : 'none'">
+            <option value="auto">Auto (Capital-based)</option>
+            <option value="fixed">Fixed Lots</option>
+          </select>
+        </div>
+        <div id="at_opt_fixed_lots_div" style="display:none">
+          <label>Fixed Lots Count</label>
+          <input id="at_opt_fixed_lots" type="number" value="1" min="1" step="1">
         </div>
       </div>
       
@@ -3126,7 +3151,9 @@ async function runOptionsAlgo() {
   const payload = {
     source: document.getElementById('opt_source').value,
     capital: parseFloat(document.getElementById('opt_capital').value),
-    period: document.getElementById('opt_period').value
+    period: document.getElementById('opt_period').value,
+    lot_size_mode: document.getElementById('opt_lot_mode').value,
+    fixed_lots: parseInt(document.getElementById('opt_fixed_lots').value) || 1
   };
   
   try {
@@ -3273,6 +3300,8 @@ let optAutoTraderPollInterval = null;
 async function startOptAutoTrader() {
   const cap = parseFloat(document.getElementById('at_opt_capital').value) || 40000;
   const mode = document.getElementById('at_opt_mode').value;
+  const lotMode = document.getElementById('at_opt_lot_mode').value;
+  const fixedLots = parseInt(document.getElementById('at_opt_fixed_lots').value) || 1;
   const startBtn = document.getElementById('at_opt_start_btn');
   const stopBtn = document.getElementById('at_opt_stop_btn');
   
@@ -3281,7 +3310,12 @@ async function startOptAutoTrader() {
     const res = await fetch('/api/options/autotrader/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({capital: cap, mode: mode})
+      body: JSON.stringify({
+        capital: cap,
+        mode: mode,
+        lot_size_mode: lotMode,
+        fixed_lots: fixedLots
+      })
     });
     const d = await res.json();
     stopBtn.disabled = false;

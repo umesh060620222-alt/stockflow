@@ -524,8 +524,11 @@ def run_options_algo(overrides: dict) -> dict:
                         # Set actual/fallback entry premium
                         premium = get_opt_price(time_str, fallback_premium)
                         
-                        lot_cost = premium * lot_size
-                        lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
+                        if lot_size_mode == "fixed":
+                            lots = fixed_lots
+                        else:
+                            lot_cost = premium * lot_size
+                            lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                         total_shares = lots * lot_size
                         
                         options_brokerage = 40.0
@@ -697,8 +700,11 @@ def run_options_algo(overrides: dict) -> dict:
                             # Set actual/fallback entry premium
                             premium = get_opt_price(time_str, fallback_premium)
                             
-                            lot_cost = premium * lot_size
-                            lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
+                            if lot_size_mode == "fixed":
+                                lots = fixed_lots
+                            else:
+                                lot_cost = premium * lot_size
+                                lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                             total_shares = lots * lot_size
                             
                             options_brokerage = 40.0
@@ -1321,7 +1327,9 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/options/autotrader/start":
             capital = float(body.get("capital", 40000.0))
             mode = body.get("mode", "paper").strip().lower()
-            options_trader.start(capital=capital, mode=mode)
+            lot_size_mode = body.get("lot_size_mode", "auto").strip().lower()
+            fixed_lots = int(body.get("fixed_lots", 1))
+            options_trader.start(capital=capital, mode=mode, lot_size_mode=lot_size_mode, fixed_lots=fixed_lots)
             return self._send(200, dumps(options_trader.status()))
         if path == "/api/options/autotrader/stop":
             options_trader.stop()
