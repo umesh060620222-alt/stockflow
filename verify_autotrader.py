@@ -11,6 +11,8 @@ from options_autotrader import OptionsAutoTrader
 def test_autotrader():
     print("Initializing OptionsAutoTrader test...")
     trader = OptionsAutoTrader()
+    trader.completed_trades = []
+    trader.logs = []
     trader.mode = "paper"
     trader.capital = 40000.0
     trader.nifty_open = 24000.0

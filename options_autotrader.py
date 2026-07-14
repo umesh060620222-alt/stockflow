@@ -110,17 +110,41 @@ class OptionsAutoTrader:
             return True
 
     def _warmup(self, kc):
-        """Fetch the last 2 hours of Nifty Spot candles to warm up EMA and ATR."""
+        """Fetch the last 2 hours of Nifty Spot candles to warm up EMA and ATR. Fallback to yfinance if Zerodha fails."""
         self._log("Fetching warmup historical Nifty index candles...")
-        imap = Z.instrument_map(kc)
-        tok = imap.get("NIFTY 50")
-        if not tok:
-            raise RuntimeError("Could not find Nifty 50 instrument token.")
-        
-        to_d = self._ist().replace(tzinfo=None)
-        from_d = to_d - dt.timedelta(hours=4)
-        
-        rows = kc.historical_data(tok, from_d, to_d, "minute")
+        rows = []
+        try:
+            imap = Z.instrument_map(kc)
+            tok = imap.get("NIFTY 50")
+            if tok:
+                to_d = self._ist().replace(tzinfo=None)
+                from_d = to_d - dt.timedelta(hours=4)
+                rows = kc.historical_data(tok, from_d, to_d, "minute")
+        except Exception as e:
+            self._log(f"Zerodha historical API failed: {e}. Trying fallback to yfinance...")
+
+        if not rows:
+            self._log("Fetching fallback warmup candles from yfinance...")
+            try:
+                import yfinance as yf
+                yf_df = yf.download("^NSEI", period="5d", interval="1m")
+                if isinstance(yf_df.columns, pd.MultiIndex):
+                    yf_df.columns = yf_df.columns.get_level_values(0)
+                today_str = self._ist().strftime("%Y-%m-%d")
+                yf_df = yf_df[yf_df.index.strftime("%Y-%m-%d") == today_str]
+                if not yf_df.empty:
+                    rows = []
+                    for idx, r in yf_df.iterrows():
+                        rows.append({
+                            "date": idx.to_pydatetime(),
+                            "open": float(r["Open"]),
+                            "high": float(r["High"]),
+                            "low": float(r["Low"]),
+                            "close": float(r["Close"]),
+                        })
+            except Exception as yfe:
+                self._log(f"Yfinance fallback failed: {yfe}")
+
         if not rows:
             self._log("Warning: No warmup data returned. Indicators will build from scratch.")
             return
@@ -130,7 +154,7 @@ class OptionsAutoTrader:
         # Accumulate candles
         temp_candles = []
         for r in rows:
-            ts = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if r["date"].tzinfo else r["date"]
+            ts = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if hasattr(r["date"], "tzinfo") and r["date"].tzinfo else r["date"]
             temp_candles.append({
                 "open": float(r["open"]),
                 "high": float(r["high"]),
