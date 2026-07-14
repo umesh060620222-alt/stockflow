@@ -391,7 +391,10 @@ class OptionsAutoTrader:
                 if lots == 0:
                     raise ValueError(f"Insufficient capital to trade 1 lot. Cost: Rs. {lot_cost}, Capital: Rs. {self.capital}")
 
-                self._log(f"[LIVE] Placing Market BUY order for {lots} lots ({lots*lot_size} qty) of {tradingsymbol}...")
+                # To simulate a market buy with protection: set limit price 2% above current premium
+                limit_price = round(entry_premium * 1.02, 1)
+                
+                self._log(f"[LIVE] Placing LIMIT BUY order (with 2% market protection) at Rs. {limit_price} for {lots} lots ({lots*lot_size} qty) of {tradingsymbol}...")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
                     exchange         = kc.EXCHANGE_NFO,
@@ -399,7 +402,8 @@ class OptionsAutoTrader:
                     transaction_type = kc.TRANSACTION_TYPE_BUY,
                     quantity         = lots * lot_size,
                     product          = kc.PRODUCT_MIS,
-                    order_type       = kc.ORDER_TYPE_MARKET,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = limit_price,
                 )
                 self._log(f"[LIVE] Order placed successfully. ID: {oid}")
                 
@@ -528,7 +532,10 @@ class OptionsAutoTrader:
         options_slippage = 2.0
 
         if self.mode == "live" and t["tradingsymbol"]:
-            self._log(f"[LIVE] Placing Market SELL order to close {t['lots']} lots {t['tradingsymbol']}...")
+            # To simulate a market sell with protection: set limit price 2% below current premium
+            limit_price = round(exit_premium * 0.98, 1)
+            
+            self._log(f"[LIVE] Placing LIMIT SELL order (with 2% market protection) at Rs. {limit_price} to close {t['lots']} lots {t['tradingsymbol']}...")
             try:
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
@@ -537,7 +544,8 @@ class OptionsAutoTrader:
                     transaction_type = kc.TRANSACTION_TYPE_SELL,
                     quantity         = t["lots"] * t["lot_size"],
                     product          = kc.PRODUCT_MIS,
-                    order_type       = kc.ORDER_TYPE_MARKET,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = limit_price,
                 )
                 self._log(f"[LIVE] Sell order placed: {oid}")
                 
