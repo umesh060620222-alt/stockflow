@@ -264,6 +264,12 @@ def run_options_algo(overrides: dict) -> dict:
     target_pct = 0.0030
     stop_pct = 0.0015
     period = overrides.get("period", "7d")
+    sl_atr_mult = float(overrides.get("sl_atr_mult", 1.0))
+    target_atr_mult = float(overrides.get("target_atr_mult", 2.0))
+    trail_halfway_mult = float(overrides.get("trail_halfway_mult", 0.5))
+    max_duration_mins = overrides.get("max_duration_mins")
+    if max_duration_mins is not None:
+        max_duration_mins = int(max_duration_mins)
     
     # Download Nifty spot data
     raw = pd.DataFrame()
@@ -416,8 +422,8 @@ def run_options_algo(overrides: dict) -> dict:
                 if high >= bounce_level:
                     if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
                         entry = bounce_level
-                        raw_sl_pct = (1.0 * atr) / entry
-                        raw_target_pct = (2.0 * atr) / entry
+                        raw_sl_pct = (sl_atr_mult * atr) / entry
+                        raw_target_pct = (target_atr_mult * atr) / entry
                         actual_sl_pct = max(raw_sl_pct, stop_pct)
                         actual_target_pct = max(raw_target_pct, target_pct)
                         
@@ -445,7 +451,9 @@ def run_options_algo(overrides: dict) -> dict:
                             for idx_w, w in enumerate(candles[i+1:], start=i+1):
                                 w_low = float(w["low"])
                                 w_high = float(w["high"])
-                                halfway_level = entry + 0.5 * (target - entry)
+                                w_close = float(w["close"])
+                                
+                                halfway_level = entry + trail_halfway_mult * (target - entry)
                                 if w_high >= halfway_level:
                                     reached_halfway = True
                                     current_sl = entry
@@ -459,6 +467,13 @@ def run_options_algo(overrides: dict) -> dict:
                                 if w_high >= target:
                                     trade_result = "WIN"
                                     exit_price_val = target
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                    trade_result = "TIMEOUT"
+                                    exit_price_val = w_close
                                     locked_until_idx = idx_w
                                     exit_time = w["date"].strftime("%H:%M")
                                     duration = int((w["date"] - ts).total_seconds() / 60)
@@ -515,12 +530,12 @@ def run_options_algo(overrides: dict) -> dict:
                         options_slippage = 2.0
                         
                         # Set actual/fallback exit premium and PnL
-                        if trade_result in ("WIN", "LOSS", "BREAKEVEN"):
+                        if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
                             if trade_result == "BREAKEVEN":
                                 exit_premium = premium
                                 pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
                             else:
-                                spot_change = (target - entry) if trade_result == "WIN" else (sl - entry)
+                                spot_change = exit_price_val - entry
                                 fallback_exit = premium + (spot_change * delta)
                                 exit_premium = get_opt_price(exit_time, fallback_exit)
                                 pnl_gross = (exit_premium - premium) * total_shares
@@ -580,8 +595,8 @@ def run_options_algo(overrides: dict) -> dict:
                     if low <= short_trigger_level:
                         if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
                             entry = short_trigger_level
-                            raw_sl_pct = (1.0 * atr) / entry
-                            raw_target_pct = (2.0 * atr) / entry
+                            raw_sl_pct = (sl_atr_mult * atr) / entry
+                            raw_target_pct = (target_atr_mult * atr) / entry
                             actual_sl_pct = max(raw_sl_pct, stop_pct)
                             actual_target_pct = max(raw_target_pct, target_pct)
                             
@@ -609,7 +624,9 @@ def run_options_algo(overrides: dict) -> dict:
                                 for idx_w, w in enumerate(candles[i+1:], start=i+1):
                                     w_low = float(w["low"])
                                     w_high = float(w["high"])
-                                    halfway_level = entry - 0.5 * (entry - target)
+                                    w_close = float(w["close"])
+                                    
+                                    halfway_level = entry - trail_halfway_mult * (entry - target)
                                     if w_low <= halfway_level:
                                         reached_halfway = True
                                         current_sl = entry
@@ -623,6 +640,13 @@ def run_options_algo(overrides: dict) -> dict:
                                     if w_low <= target:
                                         trade_result = "WIN"
                                         exit_price_val = target
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                        trade_result = "TIMEOUT"
+                                        exit_price_val = w_close
                                         locked_until_idx = idx_w
                                         exit_time = w["date"].strftime("%H:%M")
                                         duration = int((w["date"] - ts).total_seconds() / 60)
@@ -679,12 +703,12 @@ def run_options_algo(overrides: dict) -> dict:
                             options_slippage = 2.0
                             
                             # Set actual/fallback exit premium and PnL
-                            if trade_result in ("WIN", "LOSS", "BREAKEVEN"):
+                            if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
                                 if trade_result == "BREAKEVEN":
                                     exit_premium = premium
                                     pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
                                 else:
-                                    spot_change = (entry - target) if trade_result == "WIN" else (entry - sl)
+                                    spot_change = entry - exit_price_val
                                     fallback_exit = premium + (spot_change * delta)
                                     exit_premium = get_opt_price(exit_time, fallback_exit)
                                     pnl_gross = (exit_premium - premium) * total_shares

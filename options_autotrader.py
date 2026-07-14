@@ -479,20 +479,27 @@ class OptionsAutoTrader:
             spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
             t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
 
-        # Check trailing breakeven condition (halfway point)
+        # Check time-decay timeout (45 minutes max hold)
+        elapsed_mins = (time.time() - t["started_at"]) / 60.0
+        if elapsed_mins >= 45.0:
+            self._log(f"Time-Decay Trigger: Duration exceeded 45 minutes ({elapsed_mins:.1f}m). Exiting trade.")
+            self._exit_position(kc, "TIMEOUT", spot_ltp)
+            return
+
+        # Check trailing breakeven condition (30% progress point)
         if not reached_halfway:
             if is_call:
-                halfway = entry_spot + 0.5 * (target - entry_spot)
-                if spot_ltp >= halfway:
+                trail_level = entry_spot + 0.3 * (target - entry_spot)
+                if spot_ltp >= trail_level:
                     t["reached_halfway"] = True
                     t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit halfway point Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+                    self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
             else:
-                halfway = entry_spot - 0.5 * (entry_spot - target)
-                if spot_ltp <= halfway:
+                trail_level = entry_spot - 0.3 * (entry_spot - target)
+                if spot_ltp <= trail_level:
                     t["reached_halfway"] = True
                     t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit halfway point Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+                    self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
         # Check exit triggers
         exit_triggered = False
