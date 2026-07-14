@@ -266,10 +266,12 @@ def run_options_algo(overrides: dict) -> dict:
     period = overrides.get("period", "7d")
     sl_atr_mult = float(overrides.get("sl_atr_mult", 1.0))
     target_atr_mult = float(overrides.get("target_atr_mult", 2.0))
-    trail_halfway_mult = float(overrides.get("trail_halfway_mult", 0.5))
-    max_duration_mins = overrides.get("max_duration_mins")
-    if max_duration_mins is not None:
-        max_duration_mins = int(max_duration_mins)
+    trail_halfway_mult = float(overrides.get("trail_halfway_mult", 0.3))
+    raw_max_dur = overrides.get("max_duration_mins", 45)
+    if raw_max_dur in (None, "None", 0, "0"):
+        max_duration_mins = None
+    else:
+        max_duration_mins = int(raw_max_dur)
     
     # Download Nifty spot data
     raw = pd.DataFrame()
