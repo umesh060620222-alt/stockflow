@@ -1,0 +1,32 @@
+{
+  "date": "2026-07-14",
+  "completed_trades": [
+    {
+      "date": "2026-07-14",
+      "symbol": "NIFTY 14 JUL 24150 PE",
+      "side": "BUY PUT (PE)",
+      "entry_time": "10:01",
+      "exit_time": "10:01",
+      "duration": "1m",
+      "entry_spot": 24030.0,
+      "exit_spot": 24000.0,
+      "entry_premium": 120.15,
+      "exit_premium": 158.91,
+      "result": "WIN",
+      "pnl": 10869,
+      "lots": 4
+    }
+  ],
+  "logs": [
+    "[09:15:10] Starting Options Auto-Trader in PAPER mode with Rs. 40000.0 capital (Lot Sizing: AUTO (Capital-based))...",
+    "[09:15:10] Fetching warmup historical Nifty index candles...",
+    "[09:15:12] Warmup loaded 1 index candles.",
+    "[09:15:12] Locked Nifty Session Open for today: 24076.35",
+    "[09:15:12] Warm-up complete. Scanning Nifty Spot index for pullback signals.",
+    "[10:01:00] [PAPER] BUY PUT Entry Signal triggered at spot 24030.00",
+    "[10:01:00] [PAPER] Position opened: NIFTY 14 JUL 24150 PE @ Rs. 120.15 premium",
+    "[10:01:45] [PAPER] WIN exit target hit at spot 24000.00",
+    "[10:01:45] TRADE CLOSED: BUY PUT (PE) -> WIN | P&L: Rs. +10869"
+  ],
+  "nifty_open": 24076.35
+}

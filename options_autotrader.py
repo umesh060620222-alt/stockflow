@@ -33,9 +33,40 @@ class OptionsAutoTrader:
         self.thread = None
         self._stop = False
         self.nifty_open = None
+        self._load_state()
 
     def _ist(self):
         return dt.datetime.now(pytz.timezone("Asia/Kolkata"))
+
+    def _save_state(self):
+        try:
+            import json
+            state = {
+                "date": self._ist().strftime("%Y-%m-%d"),
+                "completed_trades": self.completed_trades,
+                "logs": self.logs,
+                "nifty_open": self.nifty_open
+            }
+            with open("state_autotrader.json", "w") as f:
+                json.dump(state, f)
+        except Exception as e:
+            log.error(f"Failed to save autotrader state: {e}")
+
+    def _load_state(self):
+        try:
+            import os, json
+            if os.path.exists("state_autotrader.json"):
+                with open("state_autotrader.json", "r") as f:
+                    state = json.load(f)
+                today = self._ist().strftime("%Y-%m-%d")
+                if state.get("date") == today:
+                    self.completed_trades = state.get("completed_trades", [])
+                    self.logs = state.get("logs", [])
+                    self.nifty_open = state.get("nifty_open")
+                    ts = self._ist().strftime("%H:%M:%S")
+                    self.logs.append(f"[{ts}] Restored today's trade history and logs from state file.")
+        except Exception as e:
+            log.error(f"Failed to load autotrader state: {e}")
 
     def _log(self, msg: str):
         ts = self._ist().strftime("%H:%M:%S")
@@ -44,6 +75,7 @@ class OptionsAutoTrader:
             self.logs.append(entry)
             if len(self.logs) > 300:
                 self.logs.pop(0)
+            self._save_state()
         log.info(entry)
 
     def start(self, capital=40000.0, mode="paper", lot_size_mode="auto", fixed_lots=1):
