@@ -286,7 +286,8 @@
         <table>
           <thead>
             <tr>
-              <th>Time</th>
+              <th>Entry Time</th>
+              <th>Exit Time</th>
               <th>Duration</th>
               <th>Symbol</th>
               <th>Side</th>
@@ -298,7 +299,7 @@
             </tr>
           </thead>
           <tbody id="at_opt_trades_body">
-            <tr><td colspan="9" class="muted" style="text-align:center">No trades completed today</td></tr>
+            <tr><td colspan="10" class="muted" style="text-align:center">No trades completed today</td></tr>
           </tbody>
         </table>
       </div>
@@ -3427,7 +3428,8 @@ function updateOptAutoTraderUI(d) {
       const pnlSign = t.pnl >= 0 ? '+' : '';
       return `
         <tr>
-          <td class="muted">${t.entry_time} - ${t.exit_time}</td>
+          <td class="muted">${t.entry_time}</td>
+          <td class="muted">${t.exit_time}</td>
           <td>${t.duration || '0m'}</td>
           <td><b>${t.symbol}</b></td>
           <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
@@ -3440,7 +3442,7 @@ function updateOptAutoTraderUI(d) {
       `;
     }).join('');
   } else {
-    tradesBody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center">No trades completed today</td></tr>';
+    tradesBody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center">No trades completed today</td></tr>';
   }
 }
 
@@ -3459,7 +3461,7 @@ function copyCompletedTrades() {
     alert('No completed trades to copy.');
     return;
   }
-  let text = 'Time\tDuration\tSymbol\tSide\tLots\tEntry Prem\tExit Prem\tResult\tPnL\n';
+  let text = 'Entry Time\tExit Time\tDuration\tSymbol\tSide\tLots\tEntry Prem\tExit Prem\tResult\tPnL\n';
   rows.forEach(r => {
     const cols = r.querySelectorAll('td');
     if (cols.length > 1) {
