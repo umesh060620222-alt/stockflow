@@ -99,8 +99,8 @@ def instrument_map(kc) -> dict:
 
 _nfo_instruments = None
 
-def get_option_token(kc, name: str, expiry_date, strike: float, option_type: str):
-    """Find option instrument token in NFO segment."""
+def get_nfo_instruments(kc):
+    """Fetch and cache NFO instruments list."""
     global _nfo_instruments
     if _nfo_instruments is None:
         try:
@@ -108,9 +108,16 @@ def get_option_token(kc, name: str, expiry_date, strike: float, option_type: str
             _nfo_instruments = kc.instruments("NFO")
         except Exception as e:
             print(f"Failed to fetch NFO instruments: {e}")
-            return None
-            
-    for inst in _nfo_instruments:
+            return []
+    return _nfo_instruments
+
+def get_option_token(kc, name: str, expiry_date, strike: float, option_type: str):
+    """Find option instrument token in NFO segment."""
+    insts = get_nfo_instruments(kc)
+    if not insts:
+        return None
+        
+    for inst in insts:
         inst_expiry = inst.get("expiry")
         if isinstance(inst_expiry, str) and inst_expiry:
             try:
