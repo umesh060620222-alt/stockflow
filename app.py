@@ -13,6 +13,8 @@ import config, data as D, strategy as S, engine as E, zerodha as Z
 import recommend as REC
 import newsflash as NF
 from live import ENGINE as LIVE
+from options_autotrader import OptionsAutoTrader
+options_trader = OptionsAutoTrader()
 
 _REC_CACHE = {}   # market -> {"date": ..., "data": ...}
 _BRACKET = {}     # key (symbol) -> bracket state, see _place_bracket_after_fill
@@ -1009,6 +1011,8 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/autotrader/status":
             import autotrader as AT
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
+        if path == "/api/options/autotrader/status":
+            return self._send(200, dumps(options_trader.status()))
         if path == "/api/autotrader/stop":
             import autotrader as AT
             from urllib.parse import urlparse, parse_qs
@@ -1288,6 +1292,14 @@ class H(BaseHTTPRequestHandler):
             else:
                 result = DS.save_premarket(date_str, body)
             return self._send(200, dumps(result))
+        if path == "/api/options/autotrader/start":
+            capital = float(body.get("capital", 40000.0))
+            mode = body.get("mode", "paper").strip().lower()
+            options_trader.start(capital=capital, mode=mode)
+            return self._send(200, dumps(options_trader.status()))
+        if path == "/api/options/autotrader/stop":
+            options_trader.stop()
+            return self._send(200, dumps(options_trader.status()))
         if path == "/api/options/run":
             try:
                 out = run_options_algo(body)

@@ -209,6 +209,66 @@
       <div id="opt_results" class="muted">Set Nifty Option params and hit Run.</div>
     </div>
   </div>
+  
+  <div class="grid" style="margin-top:14px">
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Nifty Options Live Auto-Trader</h3>
+      
+      <div class="row">
+        <div><label>Capital Pool (INR)</label><input id="at_opt_capital" type="number" value="40000" step="1000"></div>
+        <div>
+          <label>Trading Mode</label>
+          <select id="at_opt_mode">
+            <option value="paper">Paper Trading (Simulated)</option>
+            <option value="live">Live Trading (Zerodha NFO)</option>
+          </select>
+        </div>
+      </div>
+      
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button id="at_opt_start_btn" class="btn btn-yellow" onclick="startOptAutoTrader()">Start Auto-Trader</button>
+        <button id="at_opt_stop_btn" class="btn btn-danger" onclick="stopOptAutoTrader()" disabled>Stop Auto-Trader</button>
+      </div>
+      
+      <div id="at_opt_status" style="margin-top:14px;font-size:13px;font-weight:bold;color:#f59e0b">
+        Status: Offline (Idle)
+      </div>
+      
+      <div id="at_opt_position" class="card" style="margin-top:14px;background:#18191c;border:1px solid #2a2c30;display:none;padding:10px">
+        <b style="font-size:13px;display:block;margin-bottom:8px">Active Floating Position</b>
+        <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:10px;font-size:12px">
+          <div><span class="muted">Symbol:</span> <b id="at_pos_sym">-</b></div>
+          <div><span class="muted">Side:</span> <b id="at_pos_side">-</b></div>
+          <div><span class="muted">Entry Price:</span> <b id="at_pos_entry">-</b></div>
+          <div><span class="muted">LTP / P&L:</span> <b id="at_pos_pnl">-</b></div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Live Trader Log & Positions</h3>
+      <div id="at_opt_logs" style="height:150px;overflow-y:auto;background:#18191c;border-radius:6px;font-family:monospace;font-size:11px;padding:10px;color:#a3a3a3;border:1px solid #2a2c30;margin-bottom:14px;white-space:pre-wrap">
+[System] Auto-Trader logs will print here once started...
+      </div>
+      <b style="font-size:12px;display:block;margin-bottom:6px">Completed Trades Today</b>
+      <div style="max-height:120px;overflow-y:auto;border:1px solid #2a2c30;border-radius:6px">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Result</th>
+              <th>P&L</th>
+            </tr>
+          </thead>
+          <tbody id="at_opt_trades_body">
+            <tr><td colspan="5" class="muted" style="text-align:center">No trades completed today</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
   </div>
 
   <div id="live" class="tab-panel card" style="margin-top:14px">
@@ -3207,6 +3267,137 @@ function renderOptTradesLog(trades) {
     `;
   }).join('');
 }
+
+let optAutoTraderPollInterval = null;
+
+async function startOptAutoTrader() {
+  const cap = parseFloat(document.getElementById('at_opt_capital').value) || 40000;
+  const mode = document.getElementById('at_opt_mode').value;
+  const startBtn = document.getElementById('at_opt_start_btn');
+  const stopBtn = document.getElementById('at_opt_stop_btn');
+  
+  startBtn.disabled = true;
+  try {
+    const res = await fetch('/api/options/autotrader/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({capital: cap, mode: mode})
+    });
+    const d = await res.json();
+    stopBtn.disabled = false;
+    updateOptAutoTraderUI(d);
+    
+    if (!optAutoTraderPollInterval) {
+      optAutoTraderPollInterval = setInterval(pollOptAutoTraderStatus, 2000);
+    }
+  } catch(e) {
+    alert('Failed to start Options Auto-Trader: ' + e);
+    startBtn.disabled = false;
+  }
+}
+
+async function stopOptAutoTrader() {
+  const startBtn = document.getElementById('at_opt_start_btn');
+  const stopBtn = document.getElementById('at_opt_stop_btn');
+  stopBtn.disabled = true;
+  try {
+    const res = await fetch('/api/options/autotrader/stop', {method: 'POST'});
+    const d = await res.json();
+    startBtn.disabled = false;
+    updateOptAutoTraderUI(d);
+    
+    if (optAutoTraderPollInterval) {
+      clearInterval(optAutoTraderPollInterval);
+      optAutoTraderPollInterval = null;
+    }
+  } catch(e) {
+    alert('Failed to stop Options Auto-Trader: ' + e);
+    stopBtn.disabled = false;
+  }
+}
+
+async function pollOptAutoTraderStatus() {
+  try {
+    const res = await fetch('/api/options/autotrader/status');
+    const d = await res.json();
+    updateOptAutoTraderUI(d);
+  } catch(e) {
+    console.error('Error polling options autotrader: ', e);
+  }
+}
+
+function updateOptAutoTraderUI(d) {
+  const statusEl = document.getElementById('at_opt_status');
+  const logsEl = document.getElementById('at_opt_logs');
+  const startBtn = document.getElementById('at_opt_start_btn');
+  const stopBtn = document.getElementById('at_opt_stop_btn');
+  const posCard = document.getElementById('at_opt_position');
+  
+  let stateText = d.state.toUpperCase();
+  let stateColor = '#f59e0b';
+  if (d.state === 'idle') {
+    stateText = 'OFFLINE (IDLE)';
+    stateColor = '#6b7280';
+  } else if (d.state === 'in-trade') {
+    stateColor = '#10b981';
+  } else if (d.state === 'error') {
+    stateColor = '#ef4444';
+  }
+  statusEl.innerHTML = `Status: <span style="color:${stateColor}">${stateText}</span> (${d.mode.toUpperCase()})`;
+  
+  startBtn.disabled = d.running;
+  stopBtn.disabled = !d.running;
+  
+  if (d.running && !optAutoTraderPollInterval) {
+    optAutoTraderPollInterval = setInterval(pollOptAutoTraderStatus, 2000);
+  } else if (!d.running && optAutoTraderPollInterval) {
+    clearInterval(optAutoTraderPollInterval);
+    optAutoTraderPollInterval = null;
+  }
+  
+  if (d.logs && d.logs.length) {
+    logsEl.textContent = d.logs.join('\n');
+    logsEl.scrollTop = logsEl.scrollHeight;
+  } else {
+    logsEl.textContent = d.running ? 'Scanning Nifty Spot index...' : '[System] Auto-Trader logs will print here once started...';
+  }
+  
+  if (d.active_trade) {
+    posCard.style.display = 'block';
+    document.getElementById('at_pos_sym').textContent = d.active_trade.symbol;
+    document.getElementById('at_pos_side').textContent = d.active_trade.side;
+    document.getElementById('at_pos_entry').textContent = `₹${d.active_trade.entry_premium.toFixed(2)} (Spot: ₹${d.active_trade.entry_spot.toFixed(2)})`;
+    
+    let pnl = d.active_trade.pnl;
+    let pnlClass = pnl >= 0 ? 'pos' : 'neg';
+    let pnlSign = pnl >= 0 ? '+' : '';
+    document.getElementById('at_pos_pnl').innerHTML = `₹${d.active_trade.current_premium.toFixed(2)} / <span class="${pnlClass}">${pnlSign}₹${pnl.toLocaleString()}</span>`;
+  } else {
+    posCard.style.display = 'none';
+  }
+  
+  const tradesBody = document.getElementById('at_opt_trades_body');
+  if (d.completed_trades && d.completed_trades.length) {
+    tradesBody.innerHTML = d.completed_trades.map(t => {
+      const pnlClass = t.pnl >= 0 ? 'pos' : 'neg';
+      const pnlSign = t.pnl >= 0 ? '+' : '';
+      return `
+        <tr>
+          <td class="muted">${t.entry_time} - ${t.exit_time}</td>
+          <td><b>${t.symbol}</b></td>
+          <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
+          <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
+          <td class="${pnlClass}">${pnlSign}₹${t.pnl}</td>
+        </tr>
+      `;
+    }).join('');
+  } else {
+    tradesBody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center">No trades completed today</td></tr>';
+  }
+}
+
+// Initial status load
+pollOptAutoTraderStatus();
 </script>
 </body>
 </html>
