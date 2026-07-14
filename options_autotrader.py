@@ -45,7 +45,8 @@ class OptionsAutoTrader:
                 "date": self._ist().strftime("%Y-%m-%d"),
                 "completed_trades": self.completed_trades,
                 "logs": self.logs,
-                "nifty_open": self.nifty_open
+                "nifty_open": self.nifty_open,
+                "active_trade": self.active_trade
             }
             with open("state_autotrader.json", "w") as f:
                 json.dump(state, f)
@@ -63,6 +64,7 @@ class OptionsAutoTrader:
                     self.completed_trades = state.get("completed_trades", [])
                     self.logs = state.get("logs", [])
                     self.nifty_open = state.get("nifty_open")
+                    self.active_trade = state.get("active_trade")
                     ts = self._ist().strftime("%H:%M:%S")
                     self.logs.append(f"[{ts}] Restored today's trade history and logs from state file.")
         except Exception as e:
