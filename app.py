@@ -426,13 +426,11 @@ def run_options_algo(overrides: dict) -> dict:
                 if high >= bounce_level:
                     if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
                         entry = bounce_level
-                        raw_sl_pct = (sl_atr_mult * atr) / entry
-                        raw_target_pct = (target_atr_mult * atr) / entry
-                        actual_sl_pct = max(raw_sl_pct, stop_pct)
-                        actual_target_pct = max(raw_target_pct, target_pct)
+                        sl_points = max(sl_atr_mult * atr, 7.0)
+                        target_points = max(target_atr_mult * atr, 14.0)
                         
-                        sl = entry * (1 - actual_sl_pct)
-                        target = entry * (1 + actual_target_pct)
+                        sl = entry - sl_points
+                        target = entry + target_points
                         
                         trade_result = "OPEN"
                         exit_price_val = None
@@ -602,13 +600,11 @@ def run_options_algo(overrides: dict) -> dict:
                     if low <= short_trigger_level:
                         if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
                             entry = short_trigger_level
-                            raw_sl_pct = (sl_atr_mult * atr) / entry
-                            raw_target_pct = (target_atr_mult * atr) / entry
-                            actual_sl_pct = max(raw_sl_pct, stop_pct)
-                            actual_target_pct = max(raw_target_pct, target_pct)
+                            sl_points = max(sl_atr_mult * atr, 7.0)
+                            target_points = max(target_atr_mult * atr, 14.0)
                             
-                            sl = entry * (1 + actual_sl_pct)
-                            target = entry * (1 - actual_target_pct)
+                            sl = entry + sl_points
+                            target = entry - target_points
                             
                             trade_result = "OPEN"
                             exit_price_val = None

@@ -407,18 +407,16 @@ class OptionsAutoTrader:
         self.state = "in-trade"
 
         # Calculate target & stop-loss levels on spot index
-        # Standard: Target = 2.0 * ATR (min 0.3%), SL = 1.0 * ATR (min 0.15%)
-        raw_sl_pct = atr / entry_spot
-        raw_target_pct = (2.0 * atr) / entry_spot
-        actual_sl_pct = max(raw_sl_pct, 0.0015)
-        actual_target_pct = max(raw_target_pct, 0.0030)
+        # Standard: Target = 2.0 * ATR (min 14.0 points), SL = 1.0 * ATR (min 7.0 points)
+        sl_points = max(atr, 7.0)
+        target_points = max(2.0 * atr, 14.0)
 
         if opt_type == "CE":
-            spot_sl = entry_spot * (1 - actual_sl_pct)
-            spot_target = entry_spot * (1 + actual_target_pct)
+            spot_sl = entry_spot - sl_points
+            spot_target = entry_spot + target_points
         else:
-            spot_sl = entry_spot * (1 + actual_sl_pct)
-            spot_target = entry_spot * (1 - actual_target_pct)
+            spot_sl = entry_spot + sl_points
+            spot_target = entry_spot - target_points
 
         # Tuesday premium decay decay estimation
         days_to_expiry = days_until_tuesday
