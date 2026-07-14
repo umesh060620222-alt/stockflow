@@ -57,7 +57,7 @@ class OptionsAutoTrader:
             self.active_trade = None
             self.nifty_open = None
             self.logs = []
-            self._log(f"Starting Options Auto-Trader in {self.mode.upper()} mode with ₹{self.capital} capital...")
+            self._log(f"Starting Options Auto-Trader in {self.mode.upper()} mode with Rs. {self.capital} capital...")
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
             return True
@@ -384,7 +384,7 @@ class OptionsAutoTrader:
                 lot_cost = entry_premium * lot_size
                 lots = math.floor(self.capital / lot_cost) if lot_cost > 0 else 0
                 if lots == 0:
-                    raise ValueError(f"Insufficient capital to trade 1 lot. Cost: ₹{lot_cost}, Capital: ₹{self.capital}")
+                    raise ValueError(f"Insufficient capital to trade 1 lot. Cost: Rs. {lot_cost}, Capital: Rs. {self.capital}")
 
                 self._log(f"[LIVE] Placing Market BUY order for {lots} lots ({lots*lot_size} qty) of {tradingsymbol}...")
                 oid = kc.place_order(
@@ -405,9 +405,9 @@ class OptionsAutoTrader:
                 o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
                 if o and o["status"] == "COMPLETE":
                     entry_premium = float(o["average_price"])
-                    self._log(f"[LIVE] FILLED at premium ₹{entry_premium:.2f}")
+                    self._log(f"[LIVE] FILLED at premium Rs. {entry_premium:.2f}")
                 else:
-                    self._log(f"[LIVE] Warning: Order not marked complete yet. Using quoted LTP ₹{entry_premium:.2f}")
+                    self._log(f"[LIVE] Warning: Order not marked complete yet. Using quoted LTP Rs. {entry_premium:.2f}")
 
             except Exception as e:
                 self.state = "error"
@@ -418,7 +418,7 @@ class OptionsAutoTrader:
             # Paper Trading Fills
             lot_cost = entry_premium * lot_size
             lots = math.floor(self.capital / lot_cost) if lot_cost > 0 else 0
-            self._log(f"[PAPER] Simulating Buy {lots} lots CE/PE @ ₹{entry_premium:.2f} premium")
+            self._log(f"[PAPER] Simulating Buy {lots} lots CE/PE @ Rs. {entry_premium:.2f} premium")
 
         with self.lock:
             self.active_trade = {
@@ -472,13 +472,13 @@ class OptionsAutoTrader:
                 if spot_ltp >= halfway:
                     t["reached_halfway"] = True
                     t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit halfway point ₹{spot_ltp:.2f}. Trailing Stop-Loss to entry ₹{entry_spot:.2f}")
+                    self._log(f"Trail Trigger: Spot hit halfway point Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
             else:
                 halfway = entry_spot - 0.5 * (entry_spot - target)
                 if spot_ltp <= halfway:
                     t["reached_halfway"] = True
                     t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit halfway point ₹{spot_ltp:.2f}. Trailing Stop-Loss to entry ₹{entry_spot:.2f}")
+                    self._log(f"Trail Trigger: Spot hit halfway point Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
         # Check exit triggers
         exit_triggered = False
@@ -537,7 +537,7 @@ class OptionsAutoTrader:
                 o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
                 if o and o["status"] == "COMPLETE":
                     exit_premium = float(o["average_price"])
-                    self._log(f"[LIVE] FILLED close @ ₹{exit_premium:.2f} premium")
+                    self._log(f"[LIVE] FILLED close @ Rs. {exit_premium:.2f} premium")
             except Exception as e:
                 self.state = "error"
                 self._log(f"[LIVE ERROR] Exit Order Failed: {e} — EXIT POSITION MANUALLY!")
@@ -570,7 +570,7 @@ class OptionsAutoTrader:
             self.active_trade = None
             self.state = "scanning"
 
-        self._log(f"TRADE CLOSED: {completed_trade['side']} -> {verdict} | P&L: ₹{completed_trade['pnl']:+}")
+        self._log(f"TRADE CLOSED: {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
 
     def status(self):
         with self.lock:
