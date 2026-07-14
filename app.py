@@ -272,6 +272,8 @@ def run_options_algo(overrides: dict) -> dict:
         max_duration_mins = None
     else:
         max_duration_mins = int(raw_max_dur)
+    lot_size_mode = overrides.get("lot_size_mode", "auto").strip().lower()
+    fixed_lots = int(overrides.get("fixed_lots", 1))
     
     # Download Nifty spot data
     raw = pd.DataFrame()
