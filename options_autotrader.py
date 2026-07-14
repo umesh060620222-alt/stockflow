@@ -182,7 +182,7 @@ class OptionsAutoTrader:
                 # Set session open price if missing
                 if self.nifty_open is None:
                     self.nifty_open = ltp
-                    self._log(f"First Nifty Spot Tick observed. Session Open locked at ₹{self.nifty_open}")
+                    self._log(f"First Nifty Spot Tick observed. Session Open locked at Rs. {self.nifty_open}")
 
                 ist = self._ist()
                 time_str = ist.strftime("%H:%M")
