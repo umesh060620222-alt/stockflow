@@ -140,7 +140,16 @@ def fetch(symbols=None, interval=None, period=None) -> dict:
     symbols = symbols or (config.UNIVERSE + [config.BENCHMARK])
     interval = interval or config.INTERVAL
     kint = _KINT.get(interval, "5minute")
-    days = {"1d": 1, "5d": 5, "7d": 7}.get(period or config.PERIOD, 1)
+    days_str = period or config.PERIOD
+    try:
+        if days_str.endswith("d"):
+            days = int(days_str[:-1])
+        elif days_str.endswith("mo"):
+            days = int(days_str[:-2]) * 30
+        else:
+            days = int(days_str)
+    except Exception:
+        days = {"1d": 1, "5d": 5, "7d": 7}.get(days_str, 1)
 
     kc = kite()
     imap = instrument_map(kc)
