@@ -462,7 +462,49 @@ def run_options_algo(overrides: dict) -> dict:
                                     duration = int((w["date"] - ts).total_seconds() / 60)
                                     break
                                     
-                        premium = entry * decay_factor
+                        strike_rounded = int(round(entry / 50.0) * 50.0)
+                        
+                        # Attempt to download actual option candles from Zerodha
+                        opt_candles = {}
+                        try:
+                            import zerodha
+                            import pytz
+                            kc = zerodha.kite()
+                            opt_token = zerodha.get_option_token(kc, "NIFTY", expiry_date, strike_rounded, "CE")
+                            if opt_token:
+                                opt_from = datetime.datetime.combine(d, datetime.time(9, 15))
+                                opt_to = datetime.datetime.combine(d, datetime.time(15, 30))
+                                rows = kc.historical_data(opt_token, opt_from, opt_to, "minute")
+                                for r in rows:
+                                    ts_row = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if r["date"].tzinfo else r["date"]
+                                    time_key = ts_row.strftime("%H:%M")
+                                    opt_candles[time_key] = float(r["close"])
+                        except Exception as e:
+                            print(f"Failed to fetch actual Nifty CE option candles: {e}")
+                            
+                        def get_opt_price(t_str, default_val):
+                            if not opt_candles:
+                                return default_val
+                            if t_str in opt_candles:
+                                return opt_candles[t_str]
+                            try:
+                                h, m = map(int, t_str.split(":"))
+                                dt_curr = datetime.datetime(2000, 1, 1, h, m)
+                                for offset in range(1, 11):
+                                    dt_prev = dt_curr - datetime.timedelta(minutes=offset)
+                                    prev_t_str = dt_prev.strftime("%H:%M")
+                                    if prev_t_str in opt_candles:
+                                        return opt_candles[prev_t_str]
+                            except Exception:
+                                pass
+                            return default_val
+
+                        # Estimate fallback premium
+                        fallback_premium = entry * decay_factor
+                        
+                        # Set actual/fallback entry premium
+                        premium = get_opt_price(time_str, fallback_premium)
+                        
                         lot_cost = premium * lot_size
                         lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                         total_shares = lots * lot_size
@@ -470,22 +512,21 @@ def run_options_algo(overrides: dict) -> dict:
                         options_brokerage = 40.0
                         options_slippage = 2.0
                         
-                        if trade_result == "WIN":
-                            spot_change = target - entry
-                            premium_change = spot_change * delta
-                            pnl_gross = premium_change * total_shares
-                            pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
-                        elif trade_result == "LOSS":
-                            spot_change = sl - entry
-                            premium_change = spot_change * delta
-                            pnl_gross = premium_change * total_shares
-                            pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
-                        elif trade_result == "BREAKEVEN":
-                            pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                        # Set actual/fallback exit premium and PnL
+                        if trade_result in ("WIN", "LOSS", "BREAKEVEN"):
+                            if trade_result == "BREAKEVEN":
+                                exit_premium = premium
+                                pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                            else:
+                                spot_change = (target - entry) if trade_result == "WIN" else (sl - entry)
+                                fallback_exit = premium + (spot_change * delta)
+                                exit_premium = get_opt_price(exit_time, fallback_exit)
+                                pnl_gross = (exit_premium - premium) * total_shares
+                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
                         else:
+                            exit_premium = None
                             pnl_net = 0.0
                             
-                        strike_rounded = int(round(entry / 50.0) * 50.0)
                         symbol_str = f"NIFTY {expiry_str} {strike_rounded} CE"
                         
                         session_trades.append({
@@ -498,7 +539,7 @@ def run_options_algo(overrides: dict) -> dict:
                             "entry_spot": entry,
                             "exit_spot": exit_price_val,
                             "entry_premium": premium,
-                            "exit_premium": premium + (premium_change if trade_result in ("WIN", "LOSS") else 0.0),
+                            "exit_premium": exit_premium,
                             "result": trade_result,
                             "pnl": pnl_net,
                             "lots": lots
@@ -585,7 +626,49 @@ def run_options_algo(overrides: dict) -> dict:
                                         duration = int((w["date"] - ts).total_seconds() / 60)
                                         break
                                         
-                            premium = entry * decay_factor
+                            strike_rounded = int(round(entry / 50.0) * 50.0)
+                            
+                            # Attempt to download actual option candles from Zerodha
+                            opt_candles = {}
+                            try:
+                                import zerodha
+                                import pytz
+                                kc = zerodha.kite()
+                                opt_token = zerodha.get_option_token(kc, "NIFTY", expiry_date, strike_rounded, "PE")
+                                if opt_token:
+                                    opt_from = datetime.datetime.combine(d, datetime.time(9, 15))
+                                    opt_to = datetime.datetime.combine(d, datetime.time(15, 30))
+                                    rows = kc.historical_data(opt_token, opt_from, opt_to, "minute")
+                                    for r in rows:
+                                        ts_row = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if r["date"].tzinfo else r["date"]
+                                        time_key = ts_row.strftime("%H:%M")
+                                        opt_candles[time_key] = float(r["close"])
+                            except Exception as e:
+                                print(f"Failed to fetch actual Nifty PE option candles: {e}")
+                                
+                            def get_opt_price(t_str, default_val):
+                                if not opt_candles:
+                                    return default_val
+                                if t_str in opt_candles:
+                                    return opt_candles[t_str]
+                                try:
+                                    h, m = map(int, t_str.split(":"))
+                                    dt_curr = datetime.datetime(2000, 1, 1, h, m)
+                                    for offset in range(1, 11):
+                                        dt_prev = dt_curr - datetime.timedelta(minutes=offset)
+                                        prev_t_str = dt_prev.strftime("%H:%M")
+                                        if prev_t_str in opt_candles:
+                                            return opt_candles[prev_t_str]
+                                except Exception:
+                                    pass
+                                return default_val
+
+                            # Estimate fallback premium
+                            fallback_premium = entry * decay_factor
+                            
+                            # Set actual/fallback entry premium
+                            premium = get_opt_price(time_str, fallback_premium)
+                            
                             lot_cost = premium * lot_size
                             lots = math.floor(capital / lot_cost) if lot_cost > 0 else 0
                             total_shares = lots * lot_size
@@ -593,22 +676,21 @@ def run_options_algo(overrides: dict) -> dict:
                             options_brokerage = 40.0
                             options_slippage = 2.0
                             
-                            if trade_result == "WIN":
-                                spot_change = entry - target
-                                premium_change = spot_change * delta
-                                pnl_gross = premium_change * total_shares
-                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
-                            elif trade_result == "LOSS":
-                                spot_change = entry - sl
-                                premium_change = spot_change * delta
-                                pnl_gross = premium_change * total_shares
-                                pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
-                            elif trade_result == "BREAKEVEN":
-                                pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                            # Set actual/fallback exit premium and PnL
+                            if trade_result in ("WIN", "LOSS", "BREAKEVEN"):
+                                if trade_result == "BREAKEVEN":
+                                    exit_premium = premium
+                                    pnl_net = - (lots * options_brokerage) - (options_slippage * total_shares)
+                                else:
+                                    spot_change = (entry - target) if trade_result == "WIN" else (entry - sl)
+                                    fallback_exit = premium + (spot_change * delta)
+                                    exit_premium = get_opt_price(exit_time, fallback_exit)
+                                    pnl_gross = (exit_premium - premium) * total_shares
+                                    pnl_net = pnl_gross - (lots * options_brokerage) - (options_slippage * total_shares)
                             else:
+                                exit_premium = None
                                 pnl_net = 0.0
                                 
-                            strike_rounded = int(round(entry / 50.0) * 50.0)
                             symbol_str = f"NIFTY {expiry_str} {strike_rounded} PE"
                             
                             session_trades.append({
@@ -621,7 +703,7 @@ def run_options_algo(overrides: dict) -> dict:
                                 "entry_spot": entry,
                                 "exit_spot": exit_price_val,
                                 "entry_premium": premium,
-                                "exit_premium": premium + (premium_change if trade_result in ("WIN", "LOSS") else 0.0),
+                                "exit_premium": exit_premium,
                                 "result": trade_result,
                                 "pnl": pnl_net,
                                 "lots": lots

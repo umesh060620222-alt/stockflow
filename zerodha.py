@@ -97,6 +97,38 @@ def instrument_map(kc) -> dict:
     return {r["tradingsymbol"]: int(r["instrument_token"]) for _, r in df.iterrows()}
 
 
+_nfo_instruments = None
+
+def get_option_token(kc, name: str, expiry_date, strike: float, option_type: str):
+    """Find option instrument token in NFO segment."""
+    global _nfo_instruments
+    if _nfo_instruments is None:
+        try:
+            print("Downloading NFO instruments (this might take a second)...")
+            _nfo_instruments = kc.instruments("NFO")
+        except Exception as e:
+            print(f"Failed to fetch NFO instruments: {e}")
+            return None
+            
+    for inst in _nfo_instruments:
+        inst_expiry = inst.get("expiry")
+        if isinstance(inst_expiry, str) and inst_expiry:
+            try:
+                inst_expiry = dt.datetime.strptime(inst_expiry, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        elif isinstance(inst_expiry, dt.datetime):
+            inst_expiry = inst_expiry.date()
+        
+        if (inst.get("name") == name and 
+            inst_expiry == expiry_date and 
+            float(inst.get("strike", 0)) == float(strike) and 
+            inst.get("instrument_type") == option_type):
+            return int(inst.get("instrument_token"))
+            
+    return None
+
+
 def fetch(symbols=None, interval=None, period=None) -> dict:
     symbols = symbols or (config.UNIVERSE + [config.BENCHMARK])
     interval = interval or config.INTERVAL
