@@ -271,24 +271,34 @@
     </div>
     
     <div class="card">
-      <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Live Trader Log & Positions</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2c30;padding-bottom:10px;margin-bottom:10px">
+        <h3 style="margin:0;font-size:15px">Live Trader Log & Positions</h3>
+        <button onclick="copyTraderLogs()" style="width:auto;margin:0;padding:4px 8px;font-size:11px;background:#2a2c30;color:#e4e4e7;border:1px solid #3f3f46;border-radius:4px;cursor:pointer">Copy Logs</button>
+      </div>
       <div id="at_opt_logs" style="height:150px;overflow-y:auto;background:#18191c;border-radius:6px;font-family:monospace;font-size:11px;padding:10px;color:#a3a3a3;border:1px solid #2a2c30;margin-bottom:14px;white-space:pre-wrap">
 [System] Auto-Trader logs will print here once started...
       </div>
-      <b style="font-size:12px;display:block;margin-bottom:6px">Completed Trades Today</b>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <b style="font-size:12px">Completed Trades Today</b>
+        <button onclick="copyCompletedTrades()" style="width:auto;margin:0;padding:4px 8px;font-size:11px;background:#2a2c30;color:#e4e4e7;border:1px solid #3f3f46;border-radius:4px;cursor:pointer">Copy Trades</button>
+      </div>
       <div style="max-height:120px;overflow-y:auto;border:1px solid #2a2c30;border-radius:6px">
         <table>
           <thead>
             <tr>
               <th>Time</th>
+              <th>Duration</th>
               <th>Symbol</th>
               <th>Side</th>
+              <th>Lots</th>
+              <th>Entry Prem</th>
+              <th>Exit Prem</th>
               <th>Result</th>
               <th>P&L</th>
             </tr>
           </thead>
           <tbody id="at_opt_trades_body">
-            <tr><td colspan="5" class="muted" style="text-align:center">No trades completed today</td></tr>
+            <tr><td colspan="9" class="muted" style="text-align:center">No trades completed today</td></tr>
           </tbody>
         </table>
       </div>
@@ -3418,16 +3428,50 @@ function updateOptAutoTraderUI(d) {
       return `
         <tr>
           <td class="muted">${t.entry_time} - ${t.exit_time}</td>
+          <td>${t.duration || '0m'}</td>
           <td><b>${t.symbol}</b></td>
           <td class="${t.side.includes('CALL')?'pos':'neg'}">${t.side}</td>
+          <td>${t.lots || 1}</td>
+          <td>₹${t.entry_premium.toFixed(2)}</td>
+          <td>${t.exit_premium ? '₹' + t.exit_premium.toFixed(2) : '-'}</td>
           <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
-          <td class="${pnlClass}">${pnlSign}₹${t.pnl}</td>
+          <td class="${pnlClass}">${pnlSign}₹${t.pnl.toLocaleString()}</td>
         </tr>
       `;
     }).join('');
   } else {
-    tradesBody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center">No trades completed today</td></tr>';
+    tradesBody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center">No trades completed today</td></tr>';
   }
+}
+
+function copyTraderLogs() {
+  const logsText = document.getElementById('at_opt_logs').textContent;
+  navigator.clipboard.writeText(logsText).then(() => {
+    alert('Trader logs copied to clipboard!');
+  }).catch(err => {
+    alert('Failed to copy logs: ' + err);
+  });
+}
+
+function copyCompletedTrades() {
+  const rows = document.querySelectorAll('#at_opt_trades_body tr');
+  if (!rows || rows.length === 0 || rows[0].querySelector('td').getAttribute('colspan')) {
+    alert('No completed trades to copy.');
+    return;
+  }
+  let text = 'Time\tDuration\tSymbol\tSide\tLots\tEntry Prem\tExit Prem\tResult\tPnL\n';
+  rows.forEach(r => {
+    const cols = r.querySelectorAll('td');
+    if (cols.length > 1) {
+      const rowText = Array.from(cols).map(c => c.textContent.trim()).join('\t');
+      text += rowText + '\n';
+    }
+  });
+  navigator.clipboard.writeText(text).then(() => {
+    alert('Completed trades list copied to clipboard!');
+  }).catch(err => {
+    alert('Failed to copy trades: ' + err);
+  });
 }
 
 // Initial status load
