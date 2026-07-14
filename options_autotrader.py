@@ -400,6 +400,14 @@ class OptionsAutoTrader:
         # Calculate dynamic Tuesday expiry
         days_until_tuesday = (1 - today_date.weekday() + 7) % 7
         expiry_date = today_date + dt.timedelta(days=days_until_tuesday)
+        
+        # Next-Week Expiry Roll-Over: If today is Tuesday (expiry day) and it is after 12:30 PM, roll over to next week
+        if today_date.weekday() == 1:
+            now_ist = self._ist()
+            if now_ist.hour > 12 or (now_ist.hour == 12 and now_ist.minute >= 30):
+                expiry_date = today_date + dt.timedelta(days=7)
+                self._log(f"Expiry Day Afternoon Roll-over active. Selected next week's contract expiry: {expiry_date.strftime('%Y-%m-%d')}")
+                
         expiry_str = expiry_date.strftime("%d %b").upper()
         symbol_str = f"NIFTY {expiry_str} {strike} {opt_type}"
 
@@ -650,10 +658,10 @@ class OptionsAutoTrader:
 
         # Compute P&L
         if verdict == "BREAKEVEN":
-            pnl = - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
+            pnl = - options_brokerage - (options_slippage * total_shares)
         else:
             pnl_gross = (exit_premium - t["entry_premium"]) * total_shares
-            pnl = pnl_gross - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
+            pnl = pnl_gross - options_brokerage - (options_slippage * total_shares)
 
         completed_trade = {
             "date": self._ist().strftime("%Y-%m-%d"),

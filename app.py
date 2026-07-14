@@ -319,15 +319,21 @@ def run_options_algo(overrides: dict) -> dict:
     daily_summaries = []
     trades = []
     
+    def get_trade_expiry_and_decay(dt_val, t_str):
+        days_until_tuesday = (1 - dt_val.weekday() + 7) % 7
+        exp_date = dt_val + datetime.timedelta(days=days_until_tuesday)
+        if dt_val.weekday() == 1: # Tuesday
+            try:
+                h, m = map(int, t_str.split(":"))
+                if h > 12 or (h == 12 and m >= 30):
+                    exp_date = dt_val + datetime.timedelta(days=7)
+            except Exception:
+                pass
+        days_to_exp = (exp_date - dt_val).days
+        dec_fac = 0.005 if days_to_exp <= 1 else 0.007 if days_to_exp == 2 else 0.010 if days_to_exp == 3 else 0.013 if days_to_exp <= 5 else 0.016
+        return exp_date, dec_fac
+
     for d in dates:
-        # Tuesday is weekday index 1
-        days_until_tuesday = (1 - d.weekday() + 7) % 7
-        expiry_date = d + datetime.timedelta(days=days_until_tuesday)
-        expiry_str = expiry_date.strftime("%d %b").upper()
-        
-        # Estimate premium decay based on days to Tuesday expiry
-        days_to_expiry = days_until_tuesday
-        decay_factor = 0.005 if days_to_expiry <= 1 else 0.007 if days_to_expiry == 2 else 0.010 if days_to_expiry == 3 else 0.013 if days_to_expiry <= 5 else 0.016
         
         df_session = df[df.index.date == d].copy()
         if isinstance(df_session.columns, pd.MultiIndex):
@@ -482,6 +488,8 @@ def run_options_algo(overrides: dict) -> dict:
                                     break
                                     
                         strike_rounded = int(round(entry / 50.0) * 50.0)
+                        trade_expiry, decay_factor = get_trade_expiry_and_decay(d, time_str)
+                        expiry_str = trade_expiry.strftime("%d %b").upper()
                         
                         # Attempt to download actual option candles from Zerodha
                         opt_candles = {}
@@ -489,7 +497,7 @@ def run_options_algo(overrides: dict) -> dict:
                             import zerodha
                             import pytz
                             kc = zerodha.kite()
-                            opt_token = zerodha.get_option_token(kc, "NIFTY", expiry_date, strike_rounded, "CE")
+                            opt_token = zerodha.get_option_token(kc, "NIFTY", trade_expiry, strike_rounded, "CE")
                             if opt_token:
                                 opt_from = datetime.datetime.combine(d, datetime.time(9, 15))
                                 opt_to = datetime.datetime.combine(d, datetime.time(15, 30))
@@ -656,6 +664,8 @@ def run_options_algo(overrides: dict) -> dict:
                                         break
                                         
                             strike_rounded = int(round(entry / 50.0) * 50.0)
+                            trade_expiry, decay_factor = get_trade_expiry_and_decay(d, time_str)
+                            expiry_str = trade_expiry.strftime("%d %b").upper()
                             
                             # Attempt to download actual option candles from Zerodha
                             opt_candles = {}
@@ -663,7 +673,7 @@ def run_options_algo(overrides: dict) -> dict:
                                 import zerodha
                                 import pytz
                                 kc = zerodha.kite()
-                                opt_token = zerodha.get_option_token(kc, "NIFTY", expiry_date, strike_rounded, "PE")
+                                opt_token = zerodha.get_option_token(kc, "NIFTY", trade_expiry, strike_rounded, "PE")
                                 if opt_token:
                                     opt_from = datetime.datetime.combine(d, datetime.time(9, 15))
                                     opt_to = datetime.datetime.combine(d, datetime.time(15, 30))
