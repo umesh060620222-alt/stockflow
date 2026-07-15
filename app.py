@@ -424,7 +424,7 @@ def run_options_algo(overrides: dict) -> dict:
             is_nifty_red_today = close < nifty_open
             
             time_str = ts.strftime("%H:%M")
-            is_valid_time = ("10:00" <= time_str < "11:00") or ("14:00" <= time_str < "15:30")
+            is_valid_time = "09:25" <= time_str < "15:30"
             
             # LONG SETUP
             long_triggered = False

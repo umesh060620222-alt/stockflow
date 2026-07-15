@@ -93,19 +93,8 @@
 <body>
 <div class="wrap">
   <h1>stockflow</h1>
-  <nav class="nav">
-    <button onclick="showTab('recommend')" id="tab-recommend">Recommend</button>
-    <button onclick="showTab('backtest')"  id="tab-backtest">Backtest</button>
+  <nav class="nav" style="display:none">
     <button onclick="showTab('options')"   id="tab-options">Nifty Options</button>
-    <button onclick="showTab('live')"      id="tab-live">Live</button>
-    <button onclick="showTab('scanner')"   id="tab-scanner">Scanner</button>
-    <button onclick="showTab('trading')" id="tab-trading">Trading</button>
-    <button onclick="showTab('reversal');loadReversal()" id="tab-reversal">Reversal</button>
-    <button onclick="showTab('radar')"     id="tab-radar">Radar</button>
-    <button onclick="showTab('premarket')" id="tab-premarket">Pre-Market</button>
-    <button onclick="showTab('global')"    id="tab-global">Global News</button>
-    <button onclick="showTab('predict')"   id="tab-predict">Next Day</button>
-    <button onclick="showTab('journal')"   id="tab-journal">Journal</button>
   </nav>
 
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -669,7 +658,7 @@ function showTab(id){
   document.getElementById('tab-'+id).classList.add('active');
   if(id==='journal') jLoad();
 }
-showTab('recommend');
+showTab('options');
 
 // ── Shared auth ───────────────────────────────────────────────────────────────
 const FIELDS = ["source","interval","period","mode","vol_mult","mom_lookback","deviation_pct",

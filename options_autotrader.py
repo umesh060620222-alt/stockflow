@@ -303,7 +303,7 @@ class OptionsAutoTrader:
                         is_nifty_below_ema = close < nifty_ema
                         is_nifty_green_today = close > self.nifty_open
                         is_nifty_red_today = close < self.nifty_open
-                        is_valid_time = ("10:00" <= time_str < "11:00") or ("14:00" <= time_str < "15:30")
+                        is_valid_time = "09:25" <= time_str < "15:30"
 
                         # LONG STATE MACHINE
                         if l_stage == 1:
