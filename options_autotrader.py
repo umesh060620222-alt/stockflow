@@ -440,7 +440,7 @@ class OptionsAutoTrader:
             spot_target = entry_spot - target_points
 
         # Tuesday premium decay decay estimation
-        days_to_expiry = days_until_tuesday
+        days_to_expiry = (expiry_date - today_date).days
         decay_factor = 0.005 if days_to_expiry <= 1 else 0.007 if days_to_expiry == 2 else 0.010 if days_to_expiry == 3 else 0.013 if days_to_expiry <= 5 else 0.016
         fallback_premium = entry_spot * decay_factor
 
