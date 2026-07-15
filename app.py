@@ -1364,26 +1364,6 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/options/autotrader/stop":
             options_trader.stop()
             return self._send(200, dumps(options_trader.status()))
-        if path == "/api/options/autotrader/test_entry":
-            try:
-                import zerodha
-                kc = zerodha.kite()
-                # Trigger a test order on a very cheap contract (25000 CE)
-                options_trader._enter_position(kc, "BUY CALL (CE)", 25000.0, 10.0, 24000.0)
-                return self._send(200, dumps(options_trader.status()))
-            except Exception as e:
-                traceback.print_exc()
-                return self._send(500, dumps({"error": f"{type(e).__name__}: {e}"}))
-        if path == "/api/options/autotrader/test_exit":
-            try:
-                if options_trader.active_trade:
-                    import zerodha
-                    kc = zerodha.kite()
-                    options_trader._exit_position(kc, "MANUAL", 25000.0)
-                return self._send(200, dumps(options_trader.status()))
-            except Exception as e:
-                traceback.print_exc()
-                return self._send(500, dumps({"error": f"{type(e).__name__}: {e}"}))
         if path == "/api/options/run":
             try:
                 out = run_options_algo(body)
