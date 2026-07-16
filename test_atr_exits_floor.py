@@ -1,0 +1,256 @@
+import datetime
+import yfinance as yf
+import pandas as pd
+
+# 20 highly liquid stocks
+SYMS = [
+    "ICICIBANK.NS", "AXISBANK.NS", "SBIN.NS", "HCLTECH.NS", "WIPRO.NS",
+    "TECHM.NS", "DRREDDY.NS", "CIPLA.NS", "SUNPHARMA.NS", "TATAMOTORS.NS",
+    "HDFCBANK.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "HINDALCO.NS", "ADANIPORTS.NS",
+    "JSWSTEEL.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "TATACONSUM.NS", "COALINDIA.NS"
+]
+
+PULLBACK_1 = 2.5      # 2.5x ATR
+PULLBACK_2 = 0.7      # 0.7x ATR
+SL_ATR_MULT = 1.5     # Stop loss: 1.5x ATR
+TARGET_ATR_MULT = 3.0 # Target: 3.0x ATR
+VOL_MULT = 1.5        # Volume surge multiplier
+FRICTION = 0.0016     # 0.16% total friction (brokerage + slippage)
+
+MIN_SL_PCT = 0.004    # Minimum Stop Loss of 0.4% (to overcome friction)
+MIN_TARGET_PCT = 0.008 # Minimum Target of 0.8% (to maintain 2:1 R:R)
+
+def simulate_atr_exits_with_floor(candles):
+    # Calculate ATR(14)
+    prev_close = None
+    tr_history = []
+    
+    for c in candles:
+        high = float(c["high"])
+        low = float(c["low"])
+        close = float(c["close"])
+        
+        if prev_close is None:
+            tr = high - low
+        else:
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        prev_close = close
+        
+        tr_history.append(tr)
+        if len(tr_history) > 14:
+            tr_history.pop(0)
+            
+        c["atr"] = sum(tr_history) / len(tr_history) if len(tr_history) >= 7 else (high - low)
+
+    peak1 = None
+    trough1 = None
+    peak_atr = None
+    stage = 1  
+    
+    vol_history = []
+    trades = []
+    
+    # Track when the last trade on this symbol exited to prevent overlaps
+    # Since we simulate sequentially, we can just track the index until which we are locked in a trade.
+    locked_until_idx = -1
+    
+    for i, c in enumerate(candles):
+        high = float(c["high"])
+        low = float(c["low"])
+        vol = float(c["volume"])
+        atr = float(c["atr"])
+        ts = c["date"]
+        
+        # If we are currently in a trade, we cannot search for entries
+        if i <= locked_until_idx:
+            # We still update volume history to keep indicators correct
+            vol_history.append(vol)
+            if len(vol_history) > 12:
+                vol_history.pop(0)
+            continue
+            
+        if stage == 1:
+            if peak1 is None or high > peak1:
+                peak1 = high
+                peak_atr = atr
+            else:
+                trough1 = low
+                stage = 2
+            
+            vol_history.append(vol)
+            if len(vol_history) > 12:
+                vol_history.pop(0)
+            continue
+            
+        if stage == 2:
+            if high > peak1:
+                peak1 = high
+                peak_atr = atr
+                trough1 = low
+                stage = 1
+                vol_history.append(vol)
+                if len(vol_history) > 12:
+                    vol_history.pop(0)
+                continue
+            
+            trough1 = min(trough1, low)
+            drop_required = PULLBACK_1 * (peak_atr if peak_atr else atr)
+            if trough1 <= peak1 - drop_required:
+                stage = 3
+                
+            vol_history.append(vol)
+            if len(vol_history) > 12:
+                vol_history.pop(0)
+            continue
+            
+        if stage == 3:
+            if low < trough1:
+                trough1 = low
+            
+            bounce_required = PULLBACK_2 * atr
+            bounce_level = trough1 + bounce_required
+            if high >= bounce_level:
+                # 1. Time Filter (ONLY trade 10:00 - 11:00, and 14:00 - 15:30)
+                time_str = ts.strftime("%H:%M")
+                is_valid_time = ("10:00" <= time_str < "11:00") or ("14:00" <= time_str < "15:30")
+                
+                # 2. Volume filter
+                if len(vol_history) >= 3:
+                    vol_avg = sum(vol_history) / len(vol_history)
+                else:
+                    vol_avg = 0
+                is_valid_vol = (vol > VOL_MULT * vol_avg) if vol_avg > 0 else True
+                
+                if is_valid_time and is_valid_vol:
+                    entry = bounce_level
+                    
+                    # Calculate volatility-adjusted exits with a floor
+                    raw_sl_pct = (SL_ATR_MULT * atr) / entry
+                    raw_target_pct = (TARGET_ATR_MULT * atr) / entry
+                    
+                    actual_sl_pct = max(raw_sl_pct, MIN_SL_PCT)
+                    actual_target_pct = max(raw_target_pct, MIN_TARGET_PCT)
+                    
+                    sl = entry * (1 - actual_sl_pct)
+                    target = entry * (1 + actual_target_pct)
+                    entry_time = time_str
+                    
+                    trade_result = "OPEN"
+                    exit_time = "-"
+                    exit_price_val = None
+                    
+                    for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                        w_low = float(w["low"])
+                        w_high = float(w["high"])
+                        if w_low <= sl:
+                            trade_result = "LOSS"
+                            exit_time = w["date"].strftime("%H:%M")
+                            exit_price_val = sl
+                            locked_until_idx = idx_w
+                            break
+                        if w_high >= target:
+                            trade_result = "WIN"
+                            exit_time = w["date"].strftime("%H:%M")
+                            exit_price_val = target
+                            locked_until_idx = idx_w
+                            break
+                            
+                    # Calculate percentage PnL
+                    if trade_result == "WIN":
+                        pnl_pct = actual_target_pct - FRICTION
+                    elif trade_result == "LOSS":
+                        pnl_pct = -actual_sl_pct - FRICTION
+                    else:
+                        pnl_pct = 0.0
+                        
+                    pnl_inr = 100000 * pnl_pct if trade_result in ("WIN", "LOSS") else 0.0
+                    
+                    trades.append({
+                        "sym": c["symbol"],
+                        "entry": entry,
+                        "exit": exit_price_val,
+                        "result": trade_result,
+                        "entry_time": entry_time,
+                        "exit_time": exit_time,
+                        "pnl": pnl_inr
+                    })
+                    
+                    # Reset stage to look for next entry
+                    peak1 = None
+                    trough1 = None
+                    peak_atr = None
+                    stage = 1
+                    
+            vol_history.append(vol)
+            if len(vol_history) > 12:
+                vol_history.pop(0)
+            continue
+            
+    return trades
+
+def run_test():
+    print("Downloading 5 days of historical 1m data...")
+    raw = yf.download(SYMS, period="5d", interval="1m", group_by="ticker", progress=False)
+    
+    ticker = "ICICIBANK.NS"
+    df_sample = raw[ticker].dropna(how="all")
+    if df_sample.index.tz is None:
+        df_sample.index = df_sample.index.tz_localize("UTC")
+    df_sample.index = df_sample.index.tz_convert("Asia/Kolkata")
+    
+    dates = sorted(list(set(df_sample.index.date)))
+    test_dates = [dates[-2], dates[-1]] # [July 10, July 13]
+    
+    for d in test_dates:
+        print("\n" + "="*95)
+        print(f"SESSION REPORT FOR DATE: {d} (WITH EXITS FLOOR & NO OVERLAPS)")
+        print("="*95)
+        print(f"{'SYMBOL':<15}{'ENTRY PRICE':>12}{'EXIT PRICE':>12}  {'RESULT':<10}{'ENTRY@':>8}{'EXIT@':>8}{'NET PnL (INR)':>15}")
+        print("-"*95)
+        
+        all_trades = []
+        for sym in SYMS:
+            try:
+                df = raw[sym].copy()
+                df = df.dropna(how="all")
+                if df.empty:
+                    continue
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize("UTC")
+                df.index = df.index.tz_convert("Asia/Kolkata")
+                
+                df_session = df[df.index.date == d]
+                df_session.columns = df_session.columns.str.lower()
+                df_session = df_session[["open", "high", "low", "close", "volume"]]
+                df_session = df_session.dropna(how="any")
+                if df_session.empty:
+                    continue
+                    
+                df_session["date"] = df_session.index
+                df_session["symbol"] = sym
+                
+                candles = df_session.to_dict("records")
+                trades = simulate_atr_exits_with_floor(candles)
+                all_trades.extend(trades)
+            except Exception as e:
+                pass
+                
+        wins = sum(1 for t in all_trades if t["result"] == "WIN")
+        losses = sum(1 for t in all_trades if t["result"] == "LOSS")
+        opens = sum(1 for t in all_trades if t["result"] == "OPEN")
+        total_pnl = sum(t["pnl"] for t in all_trades)
+        
+        for t in all_trades:
+            exit_str = f"{t['exit']:.2f}" if t["exit"] else "-"
+            pnl_str = f"{t['pnl']:+.0f}" if t["result"] in ("WIN", "LOSS") else "-"
+            sym_clean = t["sym"].replace(".NS", "")
+            print(f"{sym_clean:<15}{t['entry']:>12.2f}{exit_str:>12}  {t['result']:<10}{t['entry_time']:>8}{t['exit_time']:>8}{pnl_str:>15}")
+            
+        print("="*95)
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+        print(f"SUMMARY FOR {d}: Wins: {wins} | Losses: {losses} | Open: {opens} | Win Rate: {win_rate:.1f}%")
+        print(f"TOTAL NET PROFIT (sequential 100,000 INR trades): {total_pnl:,.0f} INR")
+        print("="*95)
+
+if __name__ == "__main__":
+    run_test()

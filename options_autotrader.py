@@ -500,8 +500,16 @@ class OptionsAutoTrader:
         expiry_str = expiry_date.strftime("%d %b").upper()
         symbol_str = f"NIFTY {expiry_str} {strike} {opt_type}"
 
-        self._log(f"SIGNAL FIRED: {side} at Spot ₹{entry_spot:.2f} (ATR={atr:.2f})")
-        self.state = "in-trade"
+        # Fetch actual current Spot price to calculate target and SL
+        current_spot = entry_spot
+        if self.mode == "live":
+            try:
+                q = kc.quote(["NSE:NIFTY 50"])
+                d_q = q.get("NSE:NIFTY 50")
+                if d_q and d_q.get("last_price"):
+                    current_spot = float(d_q["last_price"])
+            except Exception:
+                pass
 
         # Calculate target & stop-loss levels on spot index
         # Standard: Target = 2.0 * ATR (min 14.0 points), SL = 1.0 * ATR (min 7.0 points)
@@ -509,11 +517,22 @@ class OptionsAutoTrader:
         target_points = max(2.0 * atr, 14.0)
 
         if opt_type == "CE":
-            spot_sl = entry_spot - sl_points
-            spot_target = entry_spot + target_points
+            spot_sl = current_spot - sl_points
+            spot_target = current_spot + target_points
         else:
-            spot_sl = entry_spot + sl_points
-            spot_target = entry_spot - target_points
+            spot_sl = current_spot + sl_points
+            spot_target = current_spot - target_points
+
+        # Skip entry if the Spot price has already crossed the target (overshot)
+        if opt_type == "CE" and current_spot >= spot_target:
+            self._log(f"Skipping CE entry: Spot ₹{current_spot:.2f} has already crossed target ₹{spot_target:.2f}")
+            return
+        if opt_type == "PE" and current_spot <= spot_target:
+            self._log(f"Skipping PE entry: Spot ₹{current_spot:.2f} has already crossed target ₹{spot_target:.2f}")
+            return
+
+        self._log(f"SIGNAL FIRED: {side} | Signal Spot: ₹{entry_spot:.2f} | Fill Spot: ₹{current_spot:.2f} | Target: ₹{spot_target:.2f} | SL: ₹{spot_sl:.2f} (ATR={atr:.2f})")
+        self.state = "in-trade"
 
         # Tuesday premium decay decay estimation
         days_to_expiry = (expiry_date - today_date).days
@@ -607,7 +626,7 @@ class OptionsAutoTrader:
                 "symbol": symbol_str,
                 "tradingsymbol": tradingsymbol,
                 "entry_time": self._ist().strftime("%H:%M:%S"),
-                "entry_spot": entry_spot,
+                "entry_spot": current_spot,
                 "spot_sl": spot_sl,
                 "spot_target": spot_target,
                 "current_sl": spot_sl,  # Will trail to entry at halfway

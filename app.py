@@ -453,7 +453,7 @@ def run_options_algo(overrides: dict) -> dict:
                 bounce_level = l_trough + bounce_required
                 if high >= bounce_level:
                     if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
-                        entry = bounce_level
+                        entry = close  # Calculate SL and Target based on actual entry Spot price (candle close)
                         sl_points = max(sl_atr_mult * atr, 7.0)
                         target_points = max(target_atr_mult * atr, 14.0)
                         
@@ -629,7 +629,7 @@ def run_options_algo(overrides: dict) -> dict:
                     short_trigger_level = s_peak - drop_required
                     if low <= short_trigger_level:
                         if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
-                            entry = short_trigger_level
+                            entry = close  # Calculate SL and Target based on actual entry Spot price (candle close)
                             sl_points = max(sl_atr_mult * atr, 7.0)
                             target_points = max(target_atr_mult * atr, 14.0)
                             
