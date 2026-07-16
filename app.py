@@ -483,10 +483,10 @@ def run_options_algo(overrides: dict) -> dict:
                                 w_high = float(w["high"])
                                 w_close = float(w["close"])
                                 
-                                halfway_level = entry + trail_halfway_mult * (target - entry)
-                                if w_high >= halfway_level:
-                                    reached_halfway = True
-                                    current_sl = entry
+                                # halfway_level = entry + trail_halfway_mult * (target - entry)
+                                # if w_high >= halfway_level:
+                                #     reached_halfway = True
+                                #     current_sl = entry
                                 if w_low <= current_sl:
                                     trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
                                     exit_price_val = current_sl
@@ -659,10 +659,10 @@ def run_options_algo(overrides: dict) -> dict:
                                     w_high = float(w["high"])
                                     w_close = float(w["close"])
                                     
-                                    halfway_level = entry - trail_halfway_mult * (entry - target)
-                                    if w_low <= halfway_level:
-                                        reached_halfway = True
-                                        current_sl = entry
+                                    # halfway_level = entry - trail_halfway_mult * (entry - target)
+                                    # if w_low <= halfway_level:
+                                    #     reached_halfway = True
+                                    #     current_sl = entry
                                     if w_high >= current_sl:
                                         trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
                                         exit_price_val = current_sl

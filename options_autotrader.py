@@ -531,7 +531,7 @@ class OptionsAutoTrader:
 
         # Check gap between actual current Spot price and theoretical trigger (entry_spot)
         gap = abs(current_spot - entry_spot)
-        max_gap = self.config.get("max_entry_gap_points", 3.0)
+        max_gap = getattr(config, "max_entry_gap_points", 3.0)
         if gap > max_gap:
             self._log(f"Skipping entry: Actual Spot ₹{current_spot:.2f} is too far from Signal Spot ₹{entry_spot:.2f} (Gap: {gap:.2f} pts > Max Allowed: {max_gap:.2f} pts)")
             return
