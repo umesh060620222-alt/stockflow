@@ -33,6 +33,14 @@ class OptionsAutoTrader:
         self.thread = None
         self._stop = False
         self.nifty_open = None
+        self.l_stage = 1
+        self.l_peak = None
+        self.l_trough = None
+        self.l_peak_atr = None
+        self.s_stage = 1
+        self.s_trough = None
+        self.s_peak = None
+        self.s_trough_atr = None
         self._load_state()
 
     def _ist(self):
@@ -197,6 +205,85 @@ class OptionsAutoTrader:
             # Fallback if starting before market open
             self._log("Starting before session open or no today's candles. Will lock open price on first tick.")
 
+        # Replay today's candles to reconstruct active stage counters
+        today_trading_candles = [c for c in temp_candles if c["date"].date() == today_date and c["date"].strftime("%H:%M") >= "09:25"]
+        
+        self.l_stage = 1
+        self.l_peak = None
+        self.l_trough = None
+        self.l_peak_atr = None
+        self.s_stage = 1
+        self.s_trough = None
+        self.s_peak = None
+        self.s_trough_atr = None
+        
+        if today_trading_candles:
+            self._log(f"Replaying {len(today_trading_candles)} of today's candles to reconstruct active stage counters...")
+            for c in today_trading_candles:
+                high = float(c["high"])
+                low = float(c["low"])
+                atr = float(c["atr"])
+                
+                # LONG SETUP REPLAY
+                if self.l_stage == 1:
+                    if self.l_peak is None or high > self.l_peak:
+                        self.l_peak = high
+                        self.l_peak_atr = atr
+                    else:
+                        self.l_trough = low
+                        self.l_stage = 2
+                elif self.l_stage == 2:
+                    if high > self.l_peak:
+                        self.l_peak = high
+                        self.l_peak_atr = atr
+                        self.l_trough = low
+                        self.l_stage = 1
+                    else:
+                        self.l_trough = min(self.l_trough, low)
+                        drop_required = 2.5 * (self.l_peak_atr if self.l_peak_atr else atr)
+                        if self.l_trough <= self.l_peak - drop_required:
+                            self.l_stage = 3
+                elif self.l_stage == 3:
+                    if low < self.l_trough:
+                        self.l_trough = low
+                    bounce_required = 0.7 * atr
+                    bounce_level = self.l_trough + bounce_required
+                    if high >= bounce_level:
+                        self.l_peak = None
+                        self.l_trough = None
+                        self.l_stage = 1
+                        
+                # SHORT SETUP REPLAY
+                if self.s_stage == 1:
+                    if self.s_trough is None or low < self.s_trough:
+                        self.s_trough = low
+                        self.s_trough_atr = atr
+                    else:
+                        self.s_peak = high
+                        self.s_stage = 2
+                elif self.s_stage == 2:
+                    if low < self.s_trough:
+                        self.s_trough = low
+                        self.s_trough_atr = atr
+                        self.s_peak = high
+                        self.s_stage = 1
+                    else:
+                        self.s_peak = max(self.s_peak, high)
+                        rally_required = 2.5 * (self.s_trough_atr if self.s_trough_atr else atr)
+                        if self.s_peak >= self.s_trough + rally_required:
+                            self.s_stage = 3
+                elif self.s_stage == 3:
+                    if high > self.s_peak:
+                        self.s_peak = high
+                    drop_required = 0.7 * atr
+                    short_trigger_level = self.s_peak - drop_required
+                    if low <= short_trigger_level:
+                        self.s_trough = None
+                        self.s_peak = None
+                        self.s_stage = 1
+            
+            self._log(f"Replay complete. Reconstructed State: Long Stage {self.l_stage} (Peak: {self.l_peak}, Trough: {self.l_trough}), Short Stage {self.s_stage} (Trough: {self.s_trough}, Peak: {self.s_peak})")
+
     def _loop(self):
         try:
             kc = Z.kite()
@@ -208,17 +295,6 @@ class OptionsAutoTrader:
             self._log(f"Fatal Startup Error: {e}")
             self.running = False
             return
-
-        # State machine stages
-        l_peak = None
-        l_trough = None
-        l_peak_atr = None
-        l_stage = 1
-        
-        s_trough = None
-        s_peak = None
-        s_trough_atr = None
-        s_stage = 1
 
         # Track tick accumulation for live 1-minute candle
         current_minute = None
@@ -306,69 +382,69 @@ class OptionsAutoTrader:
                         is_valid_time = "09:25" <= time_str < "15:30"
 
                         # LONG STATE MACHINE
-                        if l_stage == 1:
-                            if l_peak is None or high > l_peak:
-                                l_peak = high
-                                l_peak_atr = atr
+                        if self.l_stage == 1:
+                            if self.l_peak is None or high > self.l_peak:
+                                self.l_peak = high
+                                self.l_peak_atr = atr
                             else:
-                                l_trough = low
-                                l_stage = 2
-                        elif l_stage == 2:
-                            if high > l_peak:
-                                l_peak = high
-                                l_peak_atr = atr
-                                l_trough = low
-                                l_stage = 1
+                                self.l_trough = low
+                                self.l_stage = 2
+                        elif self.l_stage == 2:
+                            if high > self.l_peak:
+                                self.l_peak = high
+                                self.l_peak_atr = atr
+                                self.l_trough = low
+                                self.l_stage = 1
                             else:
-                                l_trough = min(l_trough, low)
-                                drop_required = 2.5 * (l_peak_atr if l_peak_atr else atr)
-                                if l_trough <= l_peak - drop_required:
-                                    l_stage = 3
-                        elif l_stage == 3:
-                            if low < l_trough:
-                                l_trough = low
+                                self.l_trough = min(self.l_trough, low)
+                                drop_required = 2.5 * (self.l_peak_atr if self.l_peak_atr else atr)
+                                if self.l_trough <= self.l_peak - drop_required:
+                                    self.l_stage = 3
+                        elif self.l_stage == 3:
+                            if low < self.l_trough:
+                                self.l_trough = low
                             bounce_required = 0.7 * atr
-                            bounce_level = l_trough + bounce_required
+                            bounce_level = self.l_trough + bounce_required
                             if high >= bounce_level and not self.active_trade:
                                 if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
                                     # Trigger LONG CE Trade!
                                     self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
-                                    l_peak = None
-                                    l_trough = None
-                                    l_stage = 1
+                                    self.l_peak = None
+                                    self.l_trough = None
+                                    self.l_stage = 1
 
                         # SHORT STATE MACHINE
                         if not self.active_trade:
-                            if s_stage == 1:
-                                if s_trough is None or low < s_trough:
-                                    s_trough = low
-                                    s_trough_atr = atr
+                            if self.s_stage == 1:
+                                if self.s_trough is None or low < self.s_trough:
+                                    self.s_trough = low
+                                    self.s_trough_atr = atr
                                 else:
-                                    s_peak = high
-                                    s_stage = 2
-                            elif s_stage == 2:
-                                if low < s_trough:
-                                    s_trough = low
-                                    s_trough_atr = atr
-                                    s_peak = high
-                                    s_stage = 1
+                                    self.s_peak = high
+                                    self.s_stage = 2
+                            elif self.s_stage == 2:
+                                if low < self.s_trough:
+                                    self.s_trough = low
+                                    self.s_trough_atr = atr
+                                    self.s_peak = high
+                                    self.s_stage = 1
                                 else:
-                                    s_peak = max(s_peak, high)
-                                    rally_required = 2.5 * (s_trough_atr if s_trough_atr else atr)
-                                    if s_peak >= s_trough + rally_required:
-                                        s_stage = 3
-                            elif s_stage == 3:
-                                if high > s_peak:
-                                    s_peak = high
+                                    self.s_peak = max(self.s_peak, high)
+                                    rally_required = 2.5 * (self.s_trough_atr if self.s_trough_atr else atr)
+                                    if self.s_peak >= self.s_trough + rally_required:
+                                        self.s_stage = 3
+                            elif self.s_stage == 3:
+                                if high > self.s_peak:
+                                    self.s_peak = high
                                 drop_required = 0.7 * atr
-                                short_trigger_level = s_peak - drop_required
+                                short_trigger_level = self.s_peak - drop_required
                                 if low <= short_trigger_level and not self.active_trade:
                                     if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
                                         # Trigger SHORT PE Trade!
                                         self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
-                                        s_trough = None
-                                        s_peak = None
-                                        s_stage = 1
+                                        self.s_trough = None
+                                        self.s_peak = None
+                                        self.s_stage = 1
 
                     # Initialize next live 1-minute candle
                     current_minute = minute_key
@@ -588,20 +664,20 @@ class OptionsAutoTrader:
             self._exit_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Check trailing breakeven condition (30% progress point)
-        if not reached_halfway:
-            if is_call:
-                trail_level = entry_spot + 0.3 * (target - entry_spot)
-                if spot_ltp >= trail_level:
-                    t["reached_halfway"] = True
-                    t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
-            else:
-                trail_level = entry_spot - 0.3 * (entry_spot - target)
-                if spot_ltp <= trail_level:
-                    t["reached_halfway"] = True
-                    t["current_sl"] = entry_spot
-                    self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+        # Check trailing breakeven condition (disabled)
+        # if not reached_halfway:
+        #     if is_call:
+        #         trail_level = entry_spot + 0.3 * (target - entry_spot)
+        #         if spot_ltp >= trail_level:
+        #             t["reached_halfway"] = True
+        #             t["current_sl"] = entry_spot
+        #             self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+        #     else:
+        #         trail_level = entry_spot - 0.3 * (entry_spot - target)
+        #         if spot_ltp <= trail_level:
+        #             t["reached_halfway"] = True
+        #             t["current_sl"] = entry_spot
+        #             self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
         # Check exit triggers
         exit_triggered = False
