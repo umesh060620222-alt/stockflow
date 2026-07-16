@@ -523,12 +523,15 @@ class OptionsAutoTrader:
             spot_sl = current_spot + sl_points
             spot_target = current_spot - target_points
 
-        # Skip entry if the Spot price has already crossed the target (overshot)
-        if opt_type == "CE" and current_spot >= spot_target:
-            self._log(f"Skipping CE entry: Spot ₹{current_spot:.2f} has already crossed target ₹{spot_target:.2f}")
+        # Calculate theoretical target based on theoretical trigger level
+        theoretical_target = (entry_spot + target_points) if opt_type == "CE" else (entry_spot - target_points)
+
+        # Skip entry if the Spot price has already crossed the theoretical target (overshot)
+        if opt_type == "CE" and current_spot >= theoretical_target:
+            self._log(f"Skipping CE entry: Actual Spot ₹{current_spot:.2f} has already crossed theoretical target ₹{theoretical_target:.2f}")
             return
-        if opt_type == "PE" and current_spot <= spot_target:
-            self._log(f"Skipping PE entry: Spot ₹{current_spot:.2f} has already crossed target ₹{spot_target:.2f}")
+        if opt_type == "PE" and current_spot <= theoretical_target:
+            self._log(f"Skipping PE entry: Actual Spot ₹{current_spot:.2f} has already crossed theoretical target ₹{theoretical_target:.2f}")
             return
 
         self._log(f"SIGNAL FIRED: {side} | Signal Spot: ₹{entry_spot:.2f} | Fill Spot: ₹{current_spot:.2f} | Target: ₹{spot_target:.2f} | SL: ₹{spot_sl:.2f} (ATR={atr:.2f})")

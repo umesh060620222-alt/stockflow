@@ -453,10 +453,15 @@ def run_options_algo(overrides: dict) -> dict:
                 bounce_level = l_trough + bounce_required
                 if high >= bounce_level:
                     if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
-                        entry = close  # Calculate SL and Target based on actual entry Spot price (candle close)
                         sl_points = max(sl_atr_mult * atr, 7.0)
                         target_points = max(target_atr_mult * atr, 14.0)
                         
+                        # Skip if price has already overshot the theoretical target
+                        theoretical_target = bounce_level + target_points
+                        if close >= theoretical_target:
+                            continue
+                            
+                        entry = close
                         sl = entry - sl_points
                         target = entry + target_points
                         
@@ -618,10 +623,15 @@ def run_options_algo(overrides: dict) -> dict:
                     short_trigger_level = s_peak - drop_required
                     if low <= short_trigger_level:
                         if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
-                            entry = close  # Calculate SL and Target based on actual entry Spot price (candle close)
                             sl_points = max(sl_atr_mult * atr, 7.0)
                             target_points = max(target_atr_mult * atr, 14.0)
                             
+                            # Skip if price has already overshot the theoretical target
+                            theoretical_target = short_trigger_level - target_points
+                            if close <= theoretical_target:
+                                continue
+                                
+                            entry = close
                             sl = entry + sl_points
                             target = entry - target_points
                             
