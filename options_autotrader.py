@@ -511,6 +511,13 @@ class OptionsAutoTrader:
             except Exception:
                 pass
 
+        # Check gap between actual current Spot price and theoretical trigger (entry_spot)
+        gap = abs(current_spot - entry_spot)
+        max_gap = self.config.get("max_entry_gap_points", 3.0)
+        if gap > max_gap:
+            self._log(f"Skipping entry: Actual Spot ₹{current_spot:.2f} is too far from Signal Spot ₹{entry_spot:.2f} (Gap: {gap:.2f} pts > Max Allowed: {max_gap:.2f} pts)")
+            return
+
         # Calculate target & stop-loss levels on spot index
         # Standard: Target = 2.0 * ATR (min 14.0 points), SL = 1.0 * ATR (min 7.0 points)
         sl_points = max(atr, 7.0)

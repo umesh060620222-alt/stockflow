@@ -274,6 +274,7 @@ def run_options_algo(overrides: dict) -> dict:
         max_duration_mins = int(raw_max_dur)
     lot_size_mode = overrides.get("lot_size_mode", "auto").strip().lower()
     fixed_lots = int(overrides.get("fixed_lots", 1))
+    max_entry_gap_points = float(overrides.get("max_entry_gap_points", 3.0))
     
     # Download Nifty spot data
     raw = pd.DataFrame()
@@ -456,6 +457,10 @@ def run_options_algo(overrides: dict) -> dict:
                         sl_points = max(sl_atr_mult * atr, 7.0)
                         target_points = max(target_atr_mult * atr, 14.0)
                         
+                        # Gap check: Skip if close is too far from theoretical trigger
+                        if abs(close - bounce_level) > max_entry_gap_points:
+                            continue
+                            
                         # Skip if price has already overshot the theoretical target
                         theoretical_target = bounce_level + target_points
                         if close >= theoretical_target:
@@ -626,6 +631,10 @@ def run_options_algo(overrides: dict) -> dict:
                             sl_points = max(sl_atr_mult * atr, 7.0)
                             target_points = max(target_atr_mult * atr, 14.0)
                             
+                            # Gap check: Skip if close is too far from theoretical trigger
+                            if abs(close - short_trigger_level) > max_entry_gap_points:
+                                continue
+                                
                             # Skip if price has already overshot the theoretical target
                             theoretical_target = short_trigger_level - target_points
                             if close <= theoretical_target:
