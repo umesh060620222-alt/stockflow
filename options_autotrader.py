@@ -332,6 +332,42 @@ class OptionsAutoTrader:
                 time_str = ist.strftime("%H:%M")
                 minute_key = ist.strftime("%Y-%m-%d %H:%M")
 
+                # Real-Time Tick Trigger Checks when in Stage 3
+                is_valid_time = "09:25" <= time_str < "15:30"
+                if len(self.candles) > 0 and is_valid_time and not self.active_trade:
+                    last_c = self.candles[-1]
+                    atr_val = last_c.get("atr", 7.0)
+                    ema_val = last_c.get("nifty_ema", ltp)
+                    
+                    is_nifty_green_today = ltp > self.nifty_open if self.nifty_open else True
+                    is_nifty_red_today = ltp < self.nifty_open if self.nifty_open else True
+                    is_nifty_above_ema = ltp > ema_val
+                    is_nifty_below_ema = ltp < ema_val
+                    
+                    # LONG TRIGGER CHECK
+                    if self.l_stage == 3:
+                        bounce_required = 0.7 * atr_val
+                        bounce_level = self.l_trough + bounce_required
+                        if ltp >= bounce_level:
+                            if is_nifty_above_ema and is_nifty_green_today:
+                                # Trigger LONG CE Trade instantly!
+                                self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
+                                self.l_peak = None
+                                self.l_trough = None
+                                self.l_stage = 1
+                                
+                    # SHORT TRIGGER CHECK
+                    if self.s_stage == 3 and not self.active_trade:
+                        drop_required = 0.7 * atr_val
+                        short_trigger_level = self.s_peak - drop_required
+                        if ltp <= short_trigger_level:
+                            if is_nifty_below_ema and is_nifty_red_today:
+                                # Trigger SHORT PE Trade instantly!
+                                self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
+                                self.s_trough = None
+                                self.s_peak = None
+                                self.s_stage = 1
+
                 # Accumulate 1-minute candle
                 if current_minute != minute_key:
                     # Minute boundary crossed! Finalize previous candle
@@ -403,15 +439,6 @@ class OptionsAutoTrader:
                         elif self.l_stage == 3:
                             if low < self.l_trough:
                                 self.l_trough = low
-                            bounce_required = 0.7 * atr
-                            bounce_level = self.l_trough + bounce_required
-                            if high >= bounce_level and not self.active_trade:
-                                if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
-                                    # Trigger LONG CE Trade!
-                                    self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
-                                    self.l_peak = None
-                                    self.l_trough = None
-                                    self.l_stage = 1
 
                         # SHORT STATE MACHINE
                         if not self.active_trade:
@@ -436,15 +463,6 @@ class OptionsAutoTrader:
                             elif self.s_stage == 3:
                                 if high > self.s_peak:
                                     self.s_peak = high
-                                drop_required = 0.7 * atr
-                                short_trigger_level = self.s_peak - drop_required
-                                if low <= short_trigger_level and not self.active_trade:
-                                    if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
-                                        # Trigger SHORT PE Trade!
-                                        self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
-                                        self.s_trough = None
-                                        self.s_peak = None
-                                        self.s_stage = 1
 
                     # Initialize next live 1-minute candle
                     current_minute = minute_key

@@ -274,7 +274,6 @@ def run_options_algo(overrides: dict) -> dict:
         max_duration_mins = int(raw_max_dur)
     lot_size_mode = overrides.get("lot_size_mode", "auto").strip().lower()
     fixed_lots = int(overrides.get("fixed_lots", 1))
-    max_entry_gap_points = float(overrides.get("max_entry_gap_points", 3.0))
     
     # Download Nifty spot data
     raw = pd.DataFrame()
@@ -454,19 +453,10 @@ def run_options_algo(overrides: dict) -> dict:
                 bounce_level = l_trough + bounce_required
                 if high >= bounce_level:
                     if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
+                        entry = bounce_level
                         sl_points = max(sl_atr_mult * atr, 7.0)
                         target_points = max(target_atr_mult * atr, 14.0)
                         
-                        # Gap check: Skip if close is too far from theoretical trigger
-                        if abs(close - bounce_level) > max_entry_gap_points:
-                            continue
-                            
-                        # Skip if price has already overshot the theoretical target
-                        theoretical_target = bounce_level + target_points
-                        if close >= theoretical_target:
-                            continue
-                            
-                        entry = close
                         sl = entry - sl_points
                         target = entry + target_points
                         
@@ -475,38 +465,49 @@ def run_options_algo(overrides: dict) -> dict:
                         exit_time = "-"
                         duration = 0
                         
-                        reached_halfway = False
-                        current_sl = sl
-                        for idx_w, w in enumerate(candles[i+1:], start=i+1):
-                            w_low = float(w["low"])
-                            w_high = float(w["high"])
-                            w_close = float(w["close"])
-                            
-                            # halfway_level = entry + trail_halfway_mult * (target - entry)
-                            # if w_high >= halfway_level:
-                            #     reached_halfway = True
-                            #     current_sl = entry
-                            if w_low <= current_sl:
-                                trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
-                                exit_price_val = current_sl
-                                locked_until_idx = idx_w
-                                exit_time = w["date"].strftime("%H:%M")
-                                duration = int((w["date"] - ts).total_seconds() / 60)
-                                break
-                            if w_high >= target:
-                                trade_result = "WIN"
-                                exit_price_val = target
-                                locked_until_idx = idx_w
-                                exit_time = w["date"].strftime("%H:%M")
-                                duration = int((w["date"] - ts).total_seconds() / 60)
-                                break
-                            if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
-                                trade_result = "TIMEOUT"
-                                exit_price_val = w_close
-                                locked_until_idx = idx_w
-                                exit_time = w["date"].strftime("%H:%M")
-                                duration = int((w["date"] - ts).total_seconds() / 60)
-                                break
+                        if low <= sl:
+                            trade_result = "LOSS"
+                            exit_price_val = sl
+                            locked_until_idx = i
+                            exit_time = time_str
+                        elif high >= target:
+                            trade_result = "WIN"
+                            exit_price_val = target
+                            locked_until_idx = i
+                            exit_time = time_str
+                        else:
+                            reached_halfway = False
+                            current_sl = sl
+                            for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                w_low = float(w["low"])
+                                w_high = float(w["high"])
+                                w_close = float(w["close"])
+                                
+                                halfway_level = entry + trail_halfway_mult * (target - entry)
+                                if w_high >= halfway_level:
+                                    reached_halfway = True
+                                    current_sl = entry
+                                if w_low <= current_sl:
+                                    trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
+                                    exit_price_val = current_sl
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if w_high >= target:
+                                    trade_result = "WIN"
+                                    exit_price_val = target
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                    trade_result = "TIMEOUT"
+                                    exit_price_val = w_close
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
                                     
                         strike_rounded = int(round(entry / 50.0) * 50.0)
                         trade_expiry, decay_factor = get_trade_expiry_and_decay(d, time_str)
@@ -628,19 +629,10 @@ def run_options_algo(overrides: dict) -> dict:
                     short_trigger_level = s_peak - drop_required
                     if low <= short_trigger_level:
                         if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
+                            entry = short_trigger_level
                             sl_points = max(sl_atr_mult * atr, 7.0)
                             target_points = max(target_atr_mult * atr, 14.0)
                             
-                            # Gap check: Skip if close is too far from theoretical trigger
-                            if abs(close - short_trigger_level) > max_entry_gap_points:
-                                continue
-                                
-                            # Skip if price has already overshot the theoretical target
-                            theoretical_target = short_trigger_level - target_points
-                            if close <= theoretical_target:
-                                continue
-                                
-                            entry = close
                             sl = entry + sl_points
                             target = entry - target_points
                             
@@ -649,38 +641,49 @@ def run_options_algo(overrides: dict) -> dict:
                             exit_time = "-"
                             duration = 0
                             
-                            reached_halfway = False
-                            current_sl = sl
-                            for idx_w, w in enumerate(candles[i+1:], start=i+1):
-                                w_low = float(w["low"])
-                                w_high = float(w["high"])
-                                w_close = float(w["close"])
-                                
-                                # halfway_level = entry - trail_halfway_mult * (entry - target)
-                                # if w_low <= halfway_level:
-                                #     reached_halfway = True
-                                #     current_sl = entry
-                                if w_high >= current_sl:
-                                    trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
-                                    exit_price_val = current_sl
-                                    locked_until_idx = idx_w
-                                    exit_time = w["date"].strftime("%H:%M")
-                                    duration = int((w["date"] - ts).total_seconds() / 60)
-                                    break
-                                if w_low <= target:
-                                    trade_result = "WIN"
-                                    exit_price_val = target
-                                    locked_until_idx = idx_w
-                                    exit_time = w["date"].strftime("%H:%M")
-                                    duration = int((w["date"] - ts).total_seconds() / 60)
-                                    break
-                                if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
-                                    trade_result = "TIMEOUT"
-                                    exit_price_val = w_close
-                                    locked_until_idx = idx_w
-                                    exit_time = w["date"].strftime("%H:%M")
-                                    duration = int((w["date"] - ts).total_seconds() / 60)
-                                    break
+                            if high >= sl:
+                                trade_result = "LOSS"
+                                exit_price_val = sl
+                                locked_until_idx = i
+                                exit_time = time_str
+                            elif low <= target:
+                                trade_result = "WIN"
+                                exit_price_val = target
+                                locked_until_idx = i
+                                exit_time = time_str
+                            else:
+                                reached_halfway = False
+                                current_sl = sl
+                                for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                    w_low = float(w["low"])
+                                    w_high = float(w["high"])
+                                    w_close = float(w["close"])
+                                    
+                                    halfway_level = entry - trail_halfway_mult * (entry - target)
+                                    if w_low <= halfway_level:
+                                        reached_halfway = True
+                                        current_sl = entry
+                                    if w_high >= current_sl:
+                                        trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
+                                        exit_price_val = current_sl
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if w_low <= target:
+                                        trade_result = "WIN"
+                                        exit_price_val = target
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                        trade_result = "TIMEOUT"
+                                        exit_price_val = w_close
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
                                         
                             strike_rounded = int(round(entry / 50.0) * 50.0)
                             trade_expiry, decay_factor = get_trade_expiry_and_decay(d, time_str)
