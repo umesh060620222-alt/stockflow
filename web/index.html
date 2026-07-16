@@ -3367,6 +3367,14 @@ function updateOptAutoTraderUI(d) {
   const stopBtn = document.getElementById('at_opt_stop_btn');
   const posCard = document.getElementById('at_opt_position');
   
+  if (d.mode) {
+    document.getElementById('at_opt_mode').value = d.mode;
+  }
+  document.getElementById('at_opt_mode').disabled = d.running;
+  document.getElementById('at_opt_capital').disabled = d.running;
+  document.getElementById('at_opt_lot_mode').disabled = d.running;
+  document.getElementById('at_opt_fixed_lots').disabled = d.running;
+  
   let stateText = d.state.toUpperCase();
   let stateColor = '#f59e0b';
   if (d.state === 'idle') {
