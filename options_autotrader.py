@@ -41,6 +41,8 @@ class OptionsAutoTrader:
         self.s_trough = None
         self.s_peak = None
         self.s_trough_atr = None
+        self.fut_tok = None
+        self.has_vol_conf = True
         self._load_state()
 
     def _ist(self):
@@ -121,6 +123,17 @@ class OptionsAutoTrader:
 
     def _warmup(self, kc):
         """Fetch the last 2 hours of Nifty Spot candles to warm up EMA and ATR. Fallback to yfinance if Zerodha fails."""
+        # Resolve Nifty Futures token
+        try:
+            nfo = Z.get_nfo_instruments(kc)
+            nifty_futs = [i for i in nfo if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT"]
+            if nifty_futs:
+                nifty_futs = sorted(nifty_futs, key=lambda x: x.get("expiry"))
+                self.fut_tok = int(nifty_futs[0]["instrument_token"])
+                self._log(f"Warmup: Resolved Nifty Futures token {self.fut_tok} ({nifty_futs[0]['tradingsymbol']})")
+        except Exception as e:
+            self._log(f"Warmup: Error resolving Nifty Futures token: {e}")
+            
         self._log("Fetching warmup historical Nifty index candles...")
         rows = []
         try:
@@ -173,25 +186,55 @@ class OptionsAutoTrader:
                 "date": ts
             })
 
-        # Recalculate indicators (EMA 15, ATR 14)
+        # Recalculate indicators (EMA 15, ATR 14, Volume 10 SMA)
         closes = pd.Series([c["close"] for c in temp_candles])
         ema_series = closes.ewm(span=15, adjust=False).mean().tolist()
         
-        # ATR Calculation
+        # Fetch futures volume for warmup if we have fut_tok
+        fut_vol_map = {}
+        if self.fut_tok:
+            try:
+                to_d = self._ist().replace(tzinfo=None)
+                from_d = to_d - dt.timedelta(hours=4)
+                fut_rows = kc.historical_data(self.fut_tok, from_d, to_d, "minute")
+                for r in fut_rows:
+                    r_ts = r["date"]
+                    if r_ts.tzinfo is not None:
+                        r_ts = r_ts.replace(tzinfo=None)
+                    fut_vol_map[r_ts] = float(r["volume"])
+            except Exception as fe:
+                self._log(f"Warmup: Failed to fetch futures volume: {fe}")
+                
+        # ATR & Volume SMA Calculation
         tr_history = []
+        vol_history = []
         prev_close = None
         for i, c in enumerate(temp_candles):
             high, low, close = c["high"], c["low"], c["close"]
+            ts_naive = c["date"].replace(tzinfo=None) if hasattr(c["date"], "tzinfo") and c["date"].tzinfo else c["date"]
+            
+            # Map futures volume
+            c["volume"] = fut_vol_map.get(ts_naive, 0.0)
+            vol_history.append(c["volume"])
+            if len(vol_history) > 10:
+                vol_history.pop(0)
+            c["vol_sma"] = sum(vol_history) / len(vol_history) if len(vol_history) >= 5 else 0.0
+            
             if prev_close is None:
                 tr = high - low
             else:
                 tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
             prev_close = close
             tr_history.append(tr)
-            if len(tr_history) > 14:
-                tr_history.pop(0)
             
-            c["atr"] = sum(tr_history) / len(tr_history) if len(tr_history) >= 7 else (high - low)
+            if i < 13:
+                c["atr"] = sum(tr_history) / len(tr_history)
+            elif i == 13:
+                c["atr"] = sum(tr_history) / 14.0
+            else:
+                prev_atr = temp_candles[i-1]["atr"]
+                c["atr"] = (prev_atr * 13.0 + tr) / 14.0
+                
             c["nifty_ema"] = ema_series[i]
 
         self.candles = temp_candles
@@ -349,7 +392,7 @@ class OptionsAutoTrader:
                         bounce_required = 0.7 * atr_val
                         bounce_level = self.l_trough + bounce_required
                         if ltp >= bounce_level:
-                            if is_nifty_above_ema and is_nifty_green_today:
+                             if is_nifty_above_ema and is_nifty_green_today and self.has_vol_conf:
                                 # Trigger LONG CE Trade instantly!
                                 self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
                                 self.l_peak = None
@@ -361,7 +404,7 @@ class OptionsAutoTrader:
                         drop_required = 0.7 * atr_val
                         short_trigger_level = self.s_peak - drop_required
                         if ltp <= short_trigger_level:
-                            if is_nifty_below_ema and is_nifty_red_today:
+                             if is_nifty_below_ema and is_nifty_red_today and self.has_vol_conf:
                                 # Trigger SHORT PE Trade instantly!
                                 self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
                                 self.s_trough = None
@@ -388,18 +431,49 @@ class OptionsAutoTrader:
                         closes = pd.Series([c["close"] for c in self.candles])
                         ema_val = float(closes.ewm(span=15, adjust=False).mean().iloc[-1])
                         
-                        # Calculate ATR
-                        tr_history = []
-                        prev = None
-                        for c in self.candles[-15:]:
-                            h, l, cl = c["high"], c["low"], c["close"]
-                            if prev is None:
-                                tr = h - l
+                        # Get latest Nifty Futures volume for the completed candle
+                        fut_vol = 0.0
+                        if self.fut_tok:
+                            try:
+                                to_d = dt.datetime.now()
+                                from_d = to_d - dt.timedelta(minutes=3)
+                                rows = kc.historical_data(self.fut_tok, from_d, to_d, "minute")
+                                if rows:
+                                    completed_ts = new_candle["date"].replace(tzinfo=None)
+                                    for r in reversed(rows):
+                                        r_dt = r["date"]
+                                        if r_dt.tzinfo is not None:
+                                            r_dt = r_dt.replace(tzinfo=None)
+                                        if abs((r_dt - completed_ts).total_seconds()) < 30:
+                                            fut_vol = float(r["volume"])
+                                            break
+                            except Exception as e:
+                                self._log(f"Error fetching live Nifty Futures volume: {e}")
+                        
+                        new_candle["volume"] = fut_vol
+                        
+                        # Calculate volume SMA
+                        vol_history = [c.get("volume", 0.0) for c in self.candles[-10:]]
+                        vol_sma = sum(vol_history) / len(vol_history) if len(vol_history) >= 5 else 0.0
+                        new_candle["vol_sma"] = vol_sma
+                        
+                        # Update live has_vol_conf state
+                        if fut_vol > 0.0 and vol_sma > 0.0:
+                            self.has_vol_conf = (fut_vol > vol_sma)
+                        else:
+                            self.has_vol_conf = True  # Safe fallback if API fails
+
+                        # Calculate ATR using Wilder's 14-period smoothing (RMA)
+                        if self.candles:
+                            prev_atr = self.candles[-1].get("atr")
+                            prev_close = self.candles[-1].get("close")
+                            new_tr = max(live_high - live_low, abs(live_high - prev_close), abs(live_low - prev_close))
+                            if prev_atr is not None:
+                                atr_val = (prev_atr * 13.0 + new_tr) / 14.0
                             else:
-                                tr = max(h - l, abs(h - prev), abs(l - prev))
-                            prev = cl
-                            tr_history.append(tr)
-                        atr_val = sum(tr_history[-14:]) / len(tr_history[-14:]) if len(tr_history) >= 7 else (live_high - live_low)
+                                atr_val = new_tr
+                        else:
+                            atr_val = live_high - live_low
                         
                         new_candle["atr"] = atr_val
                         new_candle["nifty_ema"] = ema_val
@@ -610,10 +684,12 @@ class OptionsAutoTrader:
                 if lots == 0:
                     raise ValueError(f"Trade lot size evaluated to 0. Mode: {self.lot_size_mode}")
 
-                # To simulate a market buy with protection: set limit price 2% above current premium
-                limit_price = round(entry_premium * 1.02, 1)
+                # Place order at the best bid price to buy at a discount (saving spread)
+                buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
+                best_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
+                limit_price = round(best_bid, 1)
                 
-                self._log(f"[LIVE] Placing LIMIT BUY order (with 2% market protection) at Rs. {limit_price} for {lots} lots ({lots*lot_size} qty) of {tradingsymbol}...")
+                self._log(f"[LIVE] Placing DISCOUNT LIMIT BUY order (at Best Bid) at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
                     exchange         = kc.EXCHANGE_NFO,
@@ -624,18 +700,39 @@ class OptionsAutoTrader:
                     order_type       = kc.ORDER_TYPE_LIMIT,
                     price            = limit_price,
                 )
-                self._log(f"[LIVE] Order placed successfully. ID: {oid}")
+                self._log(f"[LIVE] Order placed successfully. ID: {oid}. Polling for fill (max 10 seconds)...")
                 
-                # Poll for fill
-                self._log("[LIVE] Polling order book for average fill price...")
-                time.sleep(1)
-                orders = kc.orders()
-                o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
-                if o and o["status"] == "COMPLETE":
-                    entry_premium = float(o["average_price"])
-                    self._log(f"[LIVE] FILLED at premium Rs. {entry_premium:.2f}")
-                else:
-                    self._log(f"[LIVE] Warning: Order not marked complete yet. Using quoted LTP Rs. {entry_premium:.2f}")
+                # Poll order status for fill
+                filled = False
+                for seconds_elapsed in range(10):
+                    time.sleep(1)
+                    orders = kc.orders()
+                    o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
+                    if o:
+                        status = o["status"]
+                        if status == "COMPLETE":
+                            entry_premium = float(o["average_price"])
+                            self._log(f"[LIVE] FILLED at premium Rs. {entry_premium:.2f} (Matched Bid!)")
+                            filled = True
+                            break
+                        elif status in ["CANCELLED", "REJECTED"]:
+                            raise ValueError(f"Order was {status}. Reason: {o.get('status_message', 'none')}")
+                
+                if not filled:
+                    self._log(f"[LIVE] Limit order did not fill in 10 seconds. Cancelling order {oid} to avoid stale entry...")
+                    try:
+                        kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=oid)
+                    except Exception as ce:
+                        self._log(f"[LIVE] Cancel failed or already filled: {ce}")
+                    
+                    # Return out of _enter_position to scan again
+                    self.active_trade = None
+                    self.state = "scanning"
+                    if opt_type == "CE":
+                        self.l_stage = 3
+                    else:
+                        self.s_stage = 3
+                    return
 
             except Exception as e:
                 self.state = "error"
@@ -711,20 +808,20 @@ class OptionsAutoTrader:
             self._exit_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Check trailing breakeven condition (disabled)
+        # Check trailing breakeven condition (commented out)
         # if not reached_halfway:
         #     if is_call:
-        #         trail_level = entry_spot + 0.3 * (target - entry_spot)
+        #         trail_level = entry_spot + 0.5 * (target - entry_spot)
         #         if spot_ltp >= trail_level:
         #             t["reached_halfway"] = True
         #             t["current_sl"] = entry_spot
-        #             self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+        #             self._log(f"Trail Trigger: Spot hit 50% progress (1 ATR) Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
         #     else:
-        #         trail_level = entry_spot - 0.3 * (entry_spot - target)
+        #         trail_level = entry_spot - 0.5 * (entry_spot - target)
         #         if spot_ltp <= trail_level:
         #             t["reached_halfway"] = True
         #             t["current_sl"] = entry_spot
-        #             self._log(f"Trail Trigger: Spot hit 30% progress Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
+        #             self._log(f"Trail Trigger: Spot hit 50% progress (1 ATR) Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
         # Check exit triggers
         exit_triggered = False
@@ -732,19 +829,19 @@ class OptionsAutoTrader:
         exit_spot = spot_ltp
 
         if is_call:
-            if spot_ltp <= current_sl:
+            if spot_ltp <= sl:
                 exit_triggered = True
-                verdict = "BREAKEVEN" if reached_halfway else "LOSS"
-                exit_spot = current_sl
+                verdict = "LOSS"
+                exit_spot = sl
             elif spot_ltp >= target:
                 exit_triggered = True
                 verdict = "WIN"
                 exit_spot = target
         else:
-            if spot_ltp >= current_sl:
+            if spot_ltp >= sl:
                 exit_triggered = True
-                verdict = "BREAKEVEN" if reached_halfway else "LOSS"
-                exit_spot = current_sl
+                verdict = "LOSS"
+                exit_spot = sl
             elif spot_ltp <= target:
                 exit_triggered = True
                 verdict = "WIN"
@@ -764,30 +861,105 @@ class OptionsAutoTrader:
         options_slippage = 2.0
 
         if self.mode == "live" and t["tradingsymbol"]:
-            # To simulate a market sell with protection: set limit price 2% below current premium
-            limit_price = round(exit_premium * 0.98, 1)
-            
-            self._log(f"[LIVE] Placing LIMIT SELL order (with 2% market protection) at Rs. {limit_price} to close {t['lots']} lots {t['tradingsymbol']}...")
             try:
-                oid = kc.place_order(
-                    variety          = kc.VARIETY_REGULAR,
-                    exchange         = kc.EXCHANGE_NFO,
-                    tradingsymbol    = t["tradingsymbol"],
-                    transaction_type = kc.TRANSACTION_TYPE_SELL,
-                    quantity         = t["lots"] * t["lot_size"],
-                    product          = kc.PRODUCT_MIS,
-                    order_type       = kc.ORDER_TYPE_LIMIT,
-                    price            = limit_price,
-                )
-                self._log(f"[LIVE] Sell order placed: {oid}")
+                # Fetch current option quotes
+                quote = kc.quote([f"NFO:{t['tradingsymbol']}"])
+                opt_q = quote.get(f"NFO:{t['tradingsymbol']}")
                 
-                # Poll fill
-                time.sleep(1)
-                orders = kc.orders()
-                o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
-                if o and o["status"] == "COMPLETE":
-                    exit_premium = float(o["average_price"])
-                    self._log(f"[LIVE] FILLED close @ Rs. {exit_premium:.2f} premium")
+                if verdict == "TARGET":
+                    # Place Limit Sell at Best Ask (demanding the seller's price!)
+                    sell_depth = opt_q.get("depth", {}).get("sell", []) if opt_q else []
+                    best_ask = float(sell_depth[0]["price"]) if sell_depth else exit_premium
+                    limit_price = round(best_ask, 1)
+                    
+                    self._log(f"[LIVE] Exiting TARGET: Placing LIMIT SELL order (at Best Ask) at Rs. {limit_price} for {t['lots']} lots...")
+                    oid = kc.place_order(
+                        variety          = kc.VARIETY_REGULAR,
+                        exchange         = kc.EXCHANGE_NFO,
+                        tradingsymbol    = t["tradingsymbol"],
+                        transaction_type = kc.TRANSACTION_TYPE_SELL,
+                        quantity         = t["lots"] * t["lot_size"],
+                        product          = kc.PRODUCT_MIS,
+                        order_type       = kc.ORDER_TYPE_LIMIT,
+                        price            = limit_price,
+                    )
+                    self._log(f"[LIVE] Target exit order placed: {oid}. Polling for fill (max 10 seconds)...")
+                    
+                    filled = False
+                    for seconds_elapsed in range(10):
+                        time.sleep(1)
+                        orders = kc.orders()
+                        o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
+                        if o and o["status"] == "COMPLETE":
+                            exit_premium = float(o["average_price"])
+                            self._log(f"[LIVE] FILLED close @ Rs. {exit_premium:.2f} premium (Matched Ask!)")
+                            filled = True
+                            break
+                    
+                    if not filled:
+                        self._log(f"[LIVE] Target limit order did not fill in 10 seconds. Modifying to current bid to force exit...")
+                        try:
+                            q2 = kc.quote([f"NFO:{t['tradingsymbol']}"])
+                            q2_q = q2.get(f"NFO:{t['tradingsymbol']}")
+                            b_depth = q2_q.get("depth", {}).get("buy", []) if q2_q else []
+                            new_bid = float(b_depth[0]["price"]) if b_depth else exit_premium
+                            
+                            kc.modify_order(
+                                variety=kc.VARIETY_REGULAR,
+                                order_id=oid,
+                                price=round(new_bid, 1)
+                            )
+                            self._log(f"[LIVE] Modified target order price to current bid Rs. {new_bid:.2f}. Waiting for fill...")
+                            time.sleep(1)
+                            orders = kc.orders()
+                            o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
+                            if o and o["status"] == "COMPLETE":
+                                exit_premium = float(o["average_price"])
+                                self._log(f"[LIVE] FILLED close @ Rs. {exit_premium:.2f}")
+                        except Exception as me:
+                            self._log(f"[LIVE] Modify failed or already complete: {me}")
+                
+                else:
+                    # For SL/TIMEOUT/BREAKEVEN: Place Limit Sell at Best Bid to exit instantly with zero slippage below bid
+                    buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
+                    best_bid = float(buy_depth[0]["price"]) if buy_depth else exit_premium
+                    limit_price = round(best_bid, 1)
+                    
+                    self._log(f"[LIVE] Exiting {verdict}: Placing LIMIT SELL order (at Best Bid) at Rs. {limit_price} to close {t['lots']} lots...")
+                    oid = kc.place_order(
+                        variety          = kc.VARIETY_REGULAR,
+                        exchange         = kc.EXCHANGE_NFO,
+                        tradingsymbol    = t["tradingsymbol"],
+                        transaction_type = kc.TRANSACTION_TYPE_SELL,
+                        quantity         = t["lots"] * t["lot_size"],
+                        product          = kc.PRODUCT_MIS,
+                        order_type       = kc.ORDER_TYPE_LIMIT,
+                        price            = limit_price,
+                    )
+                    self._log(f"[LIVE] Exit order placed: {oid}. Polling for fill (max 5 seconds)...")
+                    
+                    filled = False
+                    for seconds_elapsed in range(5):
+                        time.sleep(1)
+                        orders = kc.orders()
+                        o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
+                        if o and o["status"] == "COMPLETE":
+                            exit_premium = float(o["average_price"])
+                            self._log(f"[LIVE] FILLED close @ Rs. {exit_premium:.2f}")
+                            filled = True
+                            break
+                            
+                    if not filled:
+                        self._log(f"[LIVE] Warning: SL limit order did not fill in 5 seconds. Modifying price 2% lower to force exit...")
+                        try:
+                            kc.modify_order(
+                                variety=kc.VARIETY_REGULAR,
+                                order_id=oid,
+                                price=round(limit_price * 0.97, 1)
+                            )
+                        except Exception as fe:
+                            self._log(f"[LIVE] Force exit modify failed: {fe}")
+                            
             except Exception as e:
                 self.state = "error"
                 self._log(f"[LIVE ERROR] Exit Order Failed: {e} — EXIT POSITION MANUALLY!")

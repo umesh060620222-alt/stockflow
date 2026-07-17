@@ -266,7 +266,7 @@ def run_options_algo(overrides: dict) -> dict:
     period = overrides.get("period", "7d")
     sl_atr_mult = float(overrides.get("sl_atr_mult", 1.0))
     target_atr_mult = float(overrides.get("target_atr_mult", 2.0))
-    trail_halfway_mult = float(overrides.get("trail_halfway_mult", 0.3))
+    trail_halfway_mult = float(overrides.get("trail_halfway_mult", 0.5))
     raw_max_dur = overrides.get("max_duration_mins", 45)
     if raw_max_dur in (None, "None", 0, "0"):
         max_duration_mins = None
@@ -314,6 +314,32 @@ def run_options_algo(overrides: dict) -> dict:
         df.index = df.index.tz_localize("UTC")
     df.index = df.index.tz_convert("Asia/Kolkata")
     
+    # Fetch Nifty Futures volume data for the backtest period
+    fut_vol_map = {}
+    try:
+        import zerodha
+        import datetime as dt
+        kc = zerodha.kite()
+        nfo = zerodha.get_nfo_instruments(kc)
+        nifty_futs = [i for i in nfo if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT"]
+        if nifty_futs:
+            nifty_futs = sorted(nifty_futs, key=lambda x: x.get("expiry"))
+            fut_tok = int(nifty_futs[0]["instrument_token"])
+            min_ts = df.index.min()
+            max_ts = df.index.max()
+            from_d = min_ts.tz_convert("UTC").replace(tzinfo=None)
+            to_d = max_ts.tz_convert("UTC").replace(tzinfo=None)
+            fut_rows = kc.historical_data(fut_tok, from_d, to_d, "minute")
+            for r in fut_rows:
+                r_ts = r["date"]
+                if r_ts.tzinfo is None:
+                    r_ts = r_ts.replace(tzinfo=dt.timezone.utc)
+                r_ts_ist = r_ts.astimezone(dt.timezone(dt.timedelta(hours=5, minutes=30)))
+                fut_vol_map[r_ts_ist] = float(r["volume"])
+            print(f"Successfully loaded Nifty Futures volume data: {len(fut_vol_map)} rows mapped.")
+    except Exception as e:
+        print(f"Failed to fetch Nifty Futures volume: {e}. Volume filter will be ignored.")
+        
     dates = sorted(list(set(df.index.date)))
     
     daily_summaries = []
@@ -371,10 +397,20 @@ def run_options_algo(overrides: dict) -> dict:
         candles = df_session.to_dict("records")
         nifty_open = float(df_session["open"].iloc[0])
         
+        # Map futures volume and compute 10-period volume SMA
+        vol_history = []
+        for c in candles:
+            c_ts = c["date"]
+            c["volume"] = fut_vol_map.get(c_ts, 0.0)
+            vol_history.append(c["volume"])
+            if len(vol_history) > 10:
+                vol_history.pop(0)
+            c["vol_sma"] = sum(vol_history) / len(vol_history) if len(vol_history) >= 5 else 0.0
+        
         # Calculate Indicators
         prev_close = None
         tr_history = []
-        for c in candles:
+        for idx, c in enumerate(candles):
             high = float(c["high"])
             low = float(c["low"])
             close = float(c["close"])
@@ -384,9 +420,13 @@ def run_options_algo(overrides: dict) -> dict:
                 tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
             prev_close = close
             tr_history.append(tr)
-            if len(tr_history) > 14:
-                tr_history.pop(0)
-            c["atr"] = sum(tr_history) / len(tr_history) if len(tr_history) >= 7 else (high - low)
+            if idx < 13:
+                c["atr"] = sum(tr_history) / len(tr_history)
+            elif idx == 13:
+                c["atr"] = sum(tr_history) / 14.0
+            else:
+                prev_atr = candles[idx-1]["atr"]
+                c["atr"] = (prev_atr * 13.0 + tr) / 14.0
             
         closes_s = pd.Series([float(c["close"]) for c in candles])
         ema_series = closes_s.ewm(span=15, adjust=False).mean().tolist()
@@ -418,6 +458,15 @@ def run_options_algo(overrides: dict) -> dict:
             if i <= locked_until_idx:
                 continue
                 
+            # Volume confirmation check (last completed candle's volume > 10 SMA)
+            has_vol_conf = True
+            if i >= 1:
+                prev_c = candles[i-1]
+                prev_vol = prev_c.get("volume", 0.0)
+                prev_sma = prev_c.get("vol_sma", 0.0)
+                if prev_vol > 0 and prev_sma > 0:
+                    has_vol_conf = (prev_vol > prev_sma)
+                    
             is_nifty_above_ema = close > nifty_ema
             is_nifty_below_ema = close < nifty_ema
             is_nifty_green_today = close > nifty_open
@@ -452,7 +501,7 @@ def run_options_algo(overrides: dict) -> dict:
                 bounce_required = 0.7 * atr
                 bounce_level = l_trough + bounce_required
                 if high >= bounce_level:
-                    if is_valid_time and is_nifty_above_ema and is_nifty_green_today:
+                    if is_valid_time and is_nifty_above_ema and is_nifty_green_today and has_vol_conf:
                         entry = bounce_level
                         sl_points = max(sl_atr_mult * atr, 7.0)
                         target_points = max(target_atr_mult * atr, 14.0)
@@ -487,9 +536,9 @@ def run_options_algo(overrides: dict) -> dict:
                                 # if w_high >= halfway_level:
                                 #     reached_halfway = True
                                 #     current_sl = entry
-                                if w_low <= current_sl:
-                                    trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
-                                    exit_price_val = current_sl
+                                if w_low <= sl:
+                                    trade_result = "LOSS"
+                                    exit_price_val = sl
                                     locked_until_idx = idx_w
                                     exit_time = w["date"].strftime("%H:%M")
                                     duration = int((w["date"] - ts).total_seconds() / 60)
@@ -527,32 +576,35 @@ def run_options_algo(overrides: dict) -> dict:
                                 for r in rows:
                                     ts_row = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if r["date"].tzinfo else r["date"]
                                     time_key = ts_row.strftime("%H:%M")
-                                    opt_candles[time_key] = float(r["close"])
+                                    opt_candles[time_key] = {
+                                        "open": float(r["open"]),
+                                        "high": float(r["high"]),
+                                        "low": float(r["low"]),
+                                        "close": float(r["close"])
+                                    }
                         except Exception as e:
                             print(f"Failed to fetch actual Nifty CE option candles: {e}")
                             
-                        def get_opt_price(t_str, default_val):
+                        def get_opt_price(t_str, default_val, field="close"):
                             if not opt_candles:
                                 return default_val
                             if t_str in opt_candles:
-                                return opt_candles[t_str]
+                                return opt_candles[t_str][field]
                             try:
                                 h, m = map(int, t_str.split(":"))
                                 dt_curr = datetime.datetime(2000, 1, 1, h, m)
                                 for offset in range(1, 11):
-                                    dt_prev = dt_curr - datetime.timedelta(minutes=offset)
-                                    prev_t_str = dt_prev.strftime("%H:%M")
-                                    if prev_t_str in opt_candles:
-                                        return opt_candles[prev_t_str]
+                                    dt_next = dt_curr + datetime.timedelta(minutes=offset)
+                                    next_t_str = dt_next.strftime("%H:%M")
+                                    if next_t_str in opt_candles:
+                                        return opt_candles[next_t_str][field]
                             except Exception:
                                 pass
                             return default_val
 
                         # Estimate fallback premium
                         fallback_premium = entry * decay_factor
-                        
-                        # Set actual/fallback entry premium
-                        premium = get_opt_price(time_str, fallback_premium)
+                        premium = get_opt_price(time_str, fallback_premium, field="close")
                         
                         if lot_size_mode == "fixed":
                             lots = fixed_lots
@@ -562,21 +614,20 @@ def run_options_algo(overrides: dict) -> dict:
                         total_shares = lots * lot_size
                         
                         options_brokerage = 40.0
-                        options_slippage = 2.0
+                        options_slippage = 0.0
                         
                         # Set actual/fallback exit premium and PnL
+                        exit_premium = None
                         if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
-                            if trade_result == "BREAKEVEN":
-                                exit_premium = premium
-                                pnl_net = - options_brokerage - (options_slippage * total_shares)
-                            else:
-                                spot_change = exit_price_val - entry
-                                fallback_exit = premium + (spot_change * delta)
-                                exit_premium = fallback_exit if exit_time == time_str else get_opt_price(exit_time, fallback_exit)
-                                pnl_gross = (exit_premium - premium) * total_shares
-                                pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
+                            spot_change = exit_price_val - entry
+                            d_delta = 0.55 if trade_result == "WIN" else 0.45
+                            fallback_exit = premium + (spot_change * d_delta)
+                            
+                            field = "high" if trade_result == "WIN" else ("low" if trade_result == "LOSS" else "close")
+                            exit_premium = get_opt_price(exit_time, fallback_exit, field=field)
+                            pnl_gross = (exit_premium - premium) * total_shares
+                            pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                         else:
-                            exit_premium = None
                             pnl_net = 0.0
                             
                         symbol_str = f"NIFTY {expiry_str} {strike_rounded} CE"
@@ -628,7 +679,7 @@ def run_options_algo(overrides: dict) -> dict:
                     drop_required = 0.7 * atr
                     short_trigger_level = s_peak - drop_required
                     if low <= short_trigger_level:
-                        if is_valid_time and is_nifty_below_ema and is_nifty_red_today:
+                        if is_valid_time and is_nifty_below_ema and is_nifty_red_today and has_vol_conf:
                             entry = short_trigger_level
                             sl_points = max(sl_atr_mult * atr, 7.0)
                             target_points = max(target_atr_mult * atr, 14.0)
@@ -663,9 +714,9 @@ def run_options_algo(overrides: dict) -> dict:
                                     # if w_low <= halfway_level:
                                     #     reached_halfway = True
                                     #     current_sl = entry
-                                    if w_high >= current_sl:
-                                        trade_result = "LOSS" if not reached_halfway else "BREAKEVEN"
-                                        exit_price_val = current_sl
+                                    if w_high >= sl:
+                                        trade_result = "LOSS"
+                                        exit_price_val = sl
                                         locked_until_idx = idx_w
                                         exit_time = w["date"].strftime("%H:%M")
                                         duration = int((w["date"] - ts).total_seconds() / 60)
@@ -703,32 +754,35 @@ def run_options_algo(overrides: dict) -> dict:
                                     for r in rows:
                                         ts_row = r["date"].astimezone(pytz.timezone("Asia/Kolkata")) if r["date"].tzinfo else r["date"]
                                         time_key = ts_row.strftime("%H:%M")
-                                        opt_candles[time_key] = float(r["close"])
+                                        opt_candles[time_key] = {
+                                            "open": float(r["open"]),
+                                            "high": float(r["high"]),
+                                            "low": float(r["low"]),
+                                            "close": float(r["close"])
+                                        }
                             except Exception as e:
                                 print(f"Failed to fetch actual Nifty PE option candles: {e}")
                                 
-                            def get_opt_price(t_str, default_val):
+                            def get_opt_price(t_str, default_val, field="close"):
                                 if not opt_candles:
                                     return default_val
                                 if t_str in opt_candles:
-                                    return opt_candles[t_str]
+                                    return opt_candles[t_str][field]
                                 try:
                                     h, m = map(int, t_str.split(":"))
                                     dt_curr = datetime.datetime(2000, 1, 1, h, m)
                                     for offset in range(1, 11):
-                                        dt_prev = dt_curr - datetime.timedelta(minutes=offset)
-                                        prev_t_str = dt_prev.strftime("%H:%M")
-                                        if prev_t_str in opt_candles:
-                                            return opt_candles[prev_t_str]
+                                        dt_next = dt_curr + datetime.timedelta(minutes=offset)
+                                        next_t_str = dt_next.strftime("%H:%M")
+                                        if next_t_str in opt_candles:
+                                            return opt_candles[next_t_str][field]
                                 except Exception:
                                     pass
                                 return default_val
 
                             # Estimate fallback premium
                             fallback_premium = entry * decay_factor
-                            
-                            # Set actual/fallback entry premium
-                            premium = get_opt_price(time_str, fallback_premium)
+                            premium = get_opt_price(time_str, fallback_premium, field="close")
                             
                             if lot_size_mode == "fixed":
                                 lots = fixed_lots
@@ -738,21 +792,20 @@ def run_options_algo(overrides: dict) -> dict:
                             total_shares = lots * lot_size
                             
                             options_brokerage = 40.0
-                            options_slippage = 2.0
+                            options_slippage = 0.0
                             
                             # Set actual/fallback exit premium and PnL
+                            exit_premium = None
                             if trade_result in ("WIN", "LOSS", "BREAKEVEN", "TIMEOUT"):
-                                if trade_result == "BREAKEVEN":
-                                    exit_premium = premium
-                                    pnl_net = - options_brokerage - (options_slippage * total_shares)
-                                else:
-                                    spot_change = entry - exit_price_val
-                                    fallback_exit = premium + (spot_change * delta)
-                                    exit_premium = fallback_exit if exit_time == time_str else get_opt_price(exit_time, fallback_exit)
-                                    pnl_gross = (exit_premium - premium) * total_shares
-                                    pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
+                                spot_change = entry - exit_price_val
+                                d_delta = 0.55 if trade_result == "WIN" else 0.45
+                                fallback_exit = premium + (spot_change * d_delta)
+                                
+                                field = "high" if trade_result == "WIN" else ("low" if trade_result == "LOSS" else "close")
+                                exit_premium = get_opt_price(exit_time, fallback_exit, field=field)
+                                pnl_gross = (exit_premium - premium) * total_shares
+                                pnl_net = pnl_gross - options_brokerage - (options_slippage * total_shares)
                             else:
-                                exit_premium = None
                                 pnl_net = 0.0
                                 
                             symbol_str = f"NIFTY {expiry_str} {strike_rounded} PE"

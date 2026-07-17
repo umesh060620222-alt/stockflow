@@ -9,7 +9,8 @@ def main():
         "capital": 40000.0,
         "period": "30d",
         "source": "zerodha",
-        "lot_size_mode": "auto"
+        "lot_size_mode": "auto",
+        "trail_halfway_mult": 0.5
     }
     out = app.run_options_algo(overrides)
     if "error" in out:
