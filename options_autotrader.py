@@ -141,7 +141,12 @@ class OptionsAutoTrader:
             tok = imap.get("NIFTY 50")
             if tok:
                 to_d = self._ist().replace(tzinfo=None)
-                from_d = to_d - dt.timedelta(hours=4)
+                ist_now = self._ist()
+                market_open_today = dt.datetime.combine(ist_now.date(), dt.time(9, 15)).astimezone(ist_now.tzinfo)
+                if ist_now < market_open_today:
+                    from_d = (market_open_today - dt.timedelta(days=1)).replace(tzinfo=None)
+                else:
+                    from_d = market_open_today.replace(tzinfo=None)
                 rows = kc.historical_data(tok, from_d, to_d, "minute")
         except Exception as e:
             self._log(f"Zerodha historical API failed: {e}. Trying fallback to yfinance...")
@@ -195,7 +200,12 @@ class OptionsAutoTrader:
         if self.fut_tok:
             try:
                 to_d = self._ist().replace(tzinfo=None)
-                from_d = to_d - dt.timedelta(hours=4)
+                ist_now = self._ist()
+                market_open_today = dt.datetime.combine(ist_now.date(), dt.time(9, 15)).astimezone(ist_now.tzinfo)
+                if ist_now < market_open_today:
+                    from_d = (market_open_today - dt.timedelta(days=1)).replace(tzinfo=None)
+                else:
+                    from_d = market_open_today.replace(tzinfo=None)
                 fut_rows = kc.historical_data(self.fut_tok, from_d, to_d, "minute")
                 for r in fut_rows:
                     r_ts = r["date"]
