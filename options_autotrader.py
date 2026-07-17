@@ -694,12 +694,20 @@ class OptionsAutoTrader:
                 if lots == 0:
                     raise ValueError(f"Trade lot size evaluated to 0. Mode: {self.lot_size_mode}")
 
-                # Place order at the best bid price to buy at a discount (saving spread)
+                # Calculate ideal premium limit price based on Nifty Spot gap (Wait for Price)
                 buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
-                best_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
-                limit_price = round(best_bid, 1)
+                current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
                 
-                self._log(f"[LIVE] Placing DISCOUNT LIMIT BUY order (at Best Bid) at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+                spot_gap = (current_spot - entry_spot) if opt_type == "CE" else (entry_spot - current_spot)
+                if spot_gap > 0:
+                    ideal_limit = current_bid - (spot_gap * 0.55)
+                else:
+                    ideal_limit = current_bid
+                    
+                limit_price = max(1.0, round(ideal_limit, 1))
+                
+                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+                self._log(f"[LIVE] (Signal Spot: ₹{entry_spot:.2f}, Current Spot: ₹{current_spot:.2f}, Spot Gap: {spot_gap:.2f} pts, Original Bid: Rs. {current_bid:.2f})")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
                     exchange         = kc.EXCHANGE_NFO,
@@ -876,13 +884,13 @@ class OptionsAutoTrader:
                 quote = kc.quote([f"NFO:{t['tradingsymbol']}"])
                 opt_q = quote.get(f"NFO:{t['tradingsymbol']}")
                 
-                if verdict == "TARGET":
+                if verdict == "WIN":
                     # Place Limit Sell at Best Ask (demanding the seller's price!)
                     sell_depth = opt_q.get("depth", {}).get("sell", []) if opt_q else []
                     best_ask = float(sell_depth[0]["price"]) if sell_depth else exit_premium
                     limit_price = round(best_ask, 1)
                     
-                    self._log(f"[LIVE] Exiting TARGET: Placing LIMIT SELL order (at Best Ask) at Rs. {limit_price} for {t['lots']} lots...")
+                    self._log(f"[LIVE] Exiting WIN: Placing LIMIT SELL order (at Best Ask) at Rs. {limit_price} for {t['lots']} lots...")
                     oid = kc.place_order(
                         variety          = kc.VARIETY_REGULAR,
                         exchange         = kc.EXCHANGE_NFO,
