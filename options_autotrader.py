@@ -423,7 +423,7 @@ class OptionsAutoTrader:
                         bounce_required = config.ATR_BOUNCE_MULT * atr_val
                         bounce_level = self.l_trough + bounce_required
                         if ltp >= bounce_level:
-                            if is_nifty_above_ema and is_nifty_green_today and self.has_vol_conf:
+                            if is_nifty_above_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today) and self.has_vol_conf:
                                 self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
                                 self.l_peak = None
                                 self.l_trough = None
@@ -456,7 +456,7 @@ class OptionsAutoTrader:
                             drop_required = config.ATR_BOUNCE_MULT * atr_val
                             short_trigger_level = self.s_peak - drop_required
                             if ltp <= short_trigger_level:
-                                if is_nifty_below_ema and is_nifty_red_today and self.has_vol_conf:
+                                if is_nifty_below_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today) and self.has_vol_conf:
                                     self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
                                     self.s_trough = None
                                     self.s_peak = None
