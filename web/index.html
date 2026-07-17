@@ -250,12 +250,12 @@
       </div>
       
       <div id="at_opt_position" class="card" style="margin-top:14px;background:#18191c;border:1px solid #2a2c30;display:none;padding:10px">
-        <b style="font-size:13px;display:block;margin-bottom:8px">Active Floating Position</b>
+        <b id="at_pos_title" style="font-size:13px;display:block;margin-bottom:8px">Active Floating Position</b>
         <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:10px;font-size:12px">
           <div><span class="muted">Symbol:</span> <b id="at_pos_sym">-</b></div>
           <div><span class="muted">Side:</span> <b id="at_pos_side">-</b></div>
-          <div><span class="muted">Entry Price:</span> <b id="at_pos_entry">-</b></div>
-          <div><span class="muted">LTP / P&L:</span> <b id="at_pos_pnl">-</b></div>
+          <div><span id="at_pos_entry_lbl" class="muted">Entry Price:</span> <b id="at_pos_entry">-</b></div>
+          <div><span id="at_pos_pnl_lbl" class="muted">LTP / P&L:</span> <b id="at_pos_pnl">-</b></div>
         </div>
       </div>
     </div>
@@ -3610,12 +3610,28 @@ function updateOptAutoTraderUI(d) {
     posCard.style.display = 'block';
     document.getElementById('at_pos_sym').textContent = d.active_trade.symbol;
     document.getElementById('at_pos_side').textContent = d.active_trade.side;
-    document.getElementById('at_pos_entry').textContent = `₹${d.active_trade.entry_premium.toFixed(2)} (Spot: ₹${d.active_trade.entry_spot.toFixed(2)})`;
     
-    let pnl = d.active_trade.pnl;
-    let pnlClass = pnl >= 0 ? 'pos' : 'neg';
-    let pnlSign = pnl >= 0 ? '+' : '';
-    document.getElementById('at_pos_pnl').innerHTML = `₹${d.active_trade.current_premium.toFixed(2)} / <span class="${pnlClass}">${pnlSign}₹${pnl.toLocaleString()}</span>`;
+    const titleEl = document.getElementById('at_pos_title');
+    const entryLbl = document.getElementById('at_pos_entry_lbl');
+    const pnlLbl = document.getElementById('at_pos_pnl_lbl');
+    
+    if (d.state === 'waiting-fill') {
+      titleEl.innerHTML = '<span style="color:#f59e0b">● Pending Order (WAITING FILL)</span>';
+      if (entryLbl) entryLbl.textContent = 'Waiting Limit:';
+      if (pnlLbl) pnlLbl.textContent = 'Status:';
+      document.getElementById('at_pos_entry').textContent = `₹${d.active_trade.entry_premium.toFixed(2)} (Signal Spot: ₹${d.active_trade.entry_spot.toFixed(2)})`;
+      document.getElementById('at_pos_pnl').innerHTML = `<span style="color:#f59e0b;font-weight:bold">WAITING FOR PULLBACK TO FILL</span>`;
+    } else {
+      titleEl.innerHTML = '<span style="color:#10b981">● Active Floating Position</span>';
+      if (entryLbl) entryLbl.textContent = 'Entry Price:';
+      if (pnlLbl) pnlLbl.textContent = 'LTP / P&L:';
+      document.getElementById('at_pos_entry').textContent = `₹${d.active_trade.entry_premium.toFixed(2)} (Spot: ₹${d.active_trade.entry_spot.toFixed(2)})`;
+      
+      let pnl = d.active_trade.pnl;
+      let pnlClass = pnl >= 0 ? 'pos' : 'neg';
+      let pnlSign = pnl >= 0 ? '+' : '';
+      document.getElementById('at_pos_pnl').innerHTML = `₹${d.active_trade.current_premium.toFixed(2)} / <span class="${pnlClass}">${pnlSign}₹${pnl.toLocaleString()}</span>`;
+    }
   } else {
     posCard.style.display = 'none';
   }
