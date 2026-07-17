@@ -194,6 +194,7 @@ class OptionsAutoTrader:
         # Recalculate indicators (EMA 15, ATR 14, Volume 10 SMA)
         closes = pd.Series([c["close"] for c in temp_candles])
         ema_series = closes.ewm(span=15, adjust=False).mean().tolist()
+        macro_ema_series = closes.ewm(span=75, adjust=False).mean().tolist()
         
         # Fetch futures volume for warmup if we have fut_tok
         fut_vol_map = {}
@@ -246,6 +247,7 @@ class OptionsAutoTrader:
                 c["atr"] = (prev_atr * 13.0 + tr) / 14.0
                 
             c["nifty_ema"] = ema_series[i]
+            c["nifty_macro_ema"] = macro_ema_series[i]
 
         self.candles = temp_candles
         # Grab Nifty session open from today's first candle
@@ -391,11 +393,14 @@ class OptionsAutoTrader:
                     last_c = self.candles[-1]
                     atr_val = last_c.get("atr", 7.0)
                     ema_val = last_c.get("nifty_ema", ltp)
+                    macro_ema_val = last_c.get("nifty_macro_ema", ltp)
                     
                     is_nifty_green_today = ltp > self.nifty_open if self.nifty_open else True
                     is_nifty_red_today = ltp < self.nifty_open if self.nifty_open else True
                     is_nifty_above_ema = ltp > ema_val
                     is_nifty_below_ema = ltp < ema_val
+                    is_nifty_above_macro_ema = ltp > macro_ema_val
+                    is_nifty_below_macro_ema = ltp < macro_ema_val
                     
                     # LONG STATE MACHINE (Real-Time Tick)
                     if self.l_stage == 1:
@@ -423,11 +428,11 @@ class OptionsAutoTrader:
                         bounce_required = config.ATR_BOUNCE_MULT * atr_val
                         bounce_level = self.l_trough + bounce_required
                         if ltp >= bounce_level:
-                            long_trend_ok = is_nifty_above_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today)
+                            long_trend_ok = is_nifty_above_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today)
                             curr_t = time.time()
                             if not hasattr(self, '_last_filter_log_time') or curr_t - self._last_filter_log_time > 10.0:
                                 self._last_filter_log_time = curr_t
-                                self._log(f"[FILTER CHECK] Long CE target ₹{bounce_level:.2f} reached. Filters: EMA Trend ({'OK' if is_nifty_above_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'})")
+                                self._log(f"[FILTER CHECK] Long CE target ₹{bounce_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'})")
                             if long_trend_ok and self.has_vol_conf:
                                 self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
                                 self.l_peak = None
@@ -461,11 +466,11 @@ class OptionsAutoTrader:
                             drop_required = config.ATR_BOUNCE_MULT * atr_val
                             short_trigger_level = self.s_peak - drop_required
                             if ltp <= short_trigger_level:
-                                short_trend_ok = is_nifty_below_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
+                                short_trend_ok = is_nifty_below_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
                                 curr_t = time.time()
                                 if not hasattr(self, '_last_filter_log_time') or curr_t - self._last_filter_log_time > 10.0:
                                     self._last_filter_log_time = curr_t
-                                    self._log(f"[FILTER CHECK] Short PE target ₹{short_trigger_level:.2f} reached. Filters: EMA Trend ({'OK' if is_nifty_below_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'})")
+                                    self._log(f"[FILTER CHECK] Short PE target ₹{short_trigger_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'})")
                                 if short_trend_ok and self.has_vol_conf:
                                     self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
                                     self.s_trough = None
@@ -491,6 +496,7 @@ class OptionsAutoTrader:
 
                         closes = pd.Series([c["close"] for c in self.candles])
                         ema_val = float(closes.ewm(span=15, adjust=False).mean().iloc[-1])
+                        macro_ema_val = float(closes.ewm(span=75, adjust=False).mean().iloc[-1])
                         
                         # Get latest Nifty Futures volume for the completed candle
                         fut_vol = 0.0
@@ -538,6 +544,7 @@ class OptionsAutoTrader:
                         
                         new_candle["atr"] = atr_val
                         new_candle["nifty_ema"] = ema_val
+                        new_candle["nifty_macro_ema"] = macro_ema_val
 
 
 
