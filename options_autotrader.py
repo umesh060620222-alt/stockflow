@@ -397,29 +397,70 @@ class OptionsAutoTrader:
                     is_nifty_above_ema = ltp > ema_val
                     is_nifty_below_ema = ltp < ema_val
                     
-                    # LONG TRIGGER CHECK
-                    if self.l_stage == 3:
-                        bounce_required = 0.7 * atr_val
+                    # LONG STATE MACHINE (Real-Time Tick)
+                    if self.l_stage == 1:
+                        if self.l_peak is None or ltp > self.l_peak:
+                            self.l_peak = ltp
+                            self.l_peak_atr = atr_val
+                        else:
+                            self.l_trough = ltp
+                            self.l_stage = 2
+                    elif self.l_stage == 2:
+                        if ltp > self.l_peak:
+                            self.l_peak = ltp
+                            self.l_peak_atr = atr_val
+                            self.l_trough = ltp
+                            self.l_stage = 1
+                        else:
+                            self.l_trough = min(self.l_trough, ltp)
+                            drop_required = config.ATR_DROP_MULT * (self.l_peak_atr if self.l_peak_atr else atr_val)
+                            if self.l_trough <= self.l_peak - drop_required:
+                                self.l_stage = 3
+                                self._log(f"[STAGE] Long Stage 2 -> 3. Peak: {self.l_peak:.2f}, Trough: {self.l_trough:.2f} (Required Drop: {drop_required:.2f} pts)")
+                    elif self.l_stage == 3:
+                        if ltp < self.l_trough:
+                            self.l_trough = ltp
+                        bounce_required = config.ATR_BOUNCE_MULT * atr_val
                         bounce_level = self.l_trough + bounce_required
                         if ltp >= bounce_level:
-                             if is_nifty_above_ema and is_nifty_green_today and self.has_vol_conf:
-                                # Trigger LONG CE Trade instantly!
+                            if is_nifty_above_ema and is_nifty_green_today and self.has_vol_conf:
                                 self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
                                 self.l_peak = None
                                 self.l_trough = None
                                 self.l_stage = 1
                                 
-                    # SHORT TRIGGER CHECK
-                    if self.s_stage == 3 and (not self.active_trade or self.state == "waiting-fill"):
-                        drop_required = 0.7 * atr_val
-                        short_trigger_level = self.s_peak - drop_required
-                        if ltp <= short_trigger_level:
-                             if is_nifty_below_ema and is_nifty_red_today and self.has_vol_conf:
-                                # Trigger SHORT PE Trade instantly!
-                                self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
-                                self.s_trough = None
-                                self.s_peak = None
+                    # SHORT STATE MACHINE (Real-Time Tick)
+                    if not self.active_trade or self.state == "waiting-fill":
+                        if self.s_stage == 1:
+                            if self.s_trough is None or ltp < self.s_trough:
+                                self.s_trough = ltp
+                                self.s_trough_atr = atr_val
+                            else:
+                                self.s_peak = ltp
+                                self.s_stage = 2
+                        elif self.s_stage == 2:
+                            if ltp < self.s_trough:
+                                self.s_trough = ltp
+                                self.s_trough_atr = atr_val
+                                self.s_peak = ltp
                                 self.s_stage = 1
+                            else:
+                                self.s_peak = max(self.s_peak, ltp)
+                                rally_required = config.ATR_DROP_MULT * (self.s_trough_atr if self.s_trough_atr else atr_val)
+                                if self.s_peak >= self.s_trough + rally_required:
+                                    self.s_stage = 3
+                                    self._log(f"[STAGE] Short Stage 2 -> 3. Trough: {self.s_trough:.2f}, Peak: {self.s_peak:.2f} (Required Rally: {rally_required:.2f} pts)")
+                        elif self.s_stage == 3:
+                            if ltp > self.s_peak:
+                                self.s_peak = ltp
+                            drop_required = config.ATR_BOUNCE_MULT * atr_val
+                            short_trigger_level = self.s_peak - drop_required
+                            if ltp <= short_trigger_level:
+                                if is_nifty_below_ema and is_nifty_red_today and self.has_vol_conf:
+                                    self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
+                                    self.s_trough = None
+                                    self.s_peak = None
+                                    self.s_stage = 1
 
                 # Accumulate 1-minute candle
                 if current_minute != minute_key:
@@ -488,65 +529,7 @@ class OptionsAutoTrader:
                         new_candle["atr"] = atr_val
                         new_candle["nifty_ema"] = ema_val
 
-                        # Run state machine on completed candle
-                        high = live_high
-                        low = live_low
-                        close = live_close
-                        atr = atr_val
-                        nifty_ema = ema_val
 
-                        is_nifty_above_ema = close > nifty_ema
-                        is_nifty_below_ema = close < nifty_ema
-                        is_nifty_green_today = close > self.nifty_open
-                        is_nifty_red_today = close < self.nifty_open
-                        is_valid_time = "09:25" <= time_str < "15:30"
-
-                        # LONG STATE MACHINE
-                        if self.l_stage == 1:
-                            if self.l_peak is None or high > self.l_peak:
-                                self.l_peak = high
-                                self.l_peak_atr = atr
-                            else:
-                                self.l_trough = low
-                                self.l_stage = 2
-                        elif self.l_stage == 2:
-                            if high > self.l_peak:
-                                self.l_peak = high
-                                self.l_peak_atr = atr
-                                self.l_trough = low
-                                self.l_stage = 1
-                            else:
-                                self.l_trough = min(self.l_trough, low)
-                                drop_required = 2.5 * (self.l_peak_atr if self.l_peak_atr else atr)
-                                if self.l_trough <= self.l_peak - drop_required:
-                                    self.l_stage = 3
-                        elif self.l_stage == 3:
-                            if low < self.l_trough:
-                                self.l_trough = low
-
-                        # SHORT STATE MACHINE
-                        if not self.active_trade or self.state == "waiting-fill":
-                            if self.s_stage == 1:
-                                if self.s_trough is None or low < self.s_trough:
-                                    self.s_trough = low
-                                    self.s_trough_atr = atr
-                                else:
-                                    self.s_peak = high
-                                    self.s_stage = 2
-                            elif self.s_stage == 2:
-                                if low < self.s_trough:
-                                    self.s_trough = low
-                                    self.s_trough_atr = atr
-                                    self.s_peak = high
-                                    self.s_stage = 1
-                                else:
-                                    self.s_peak = max(self.s_peak, high)
-                                    rally_required = 2.5 * (self.s_trough_atr if self.s_trough_atr else atr)
-                                    if self.s_peak >= self.s_trough + rally_required:
-                                        self.s_stage = 3
-                            elif self.s_stage == 3:
-                                if high > self.s_peak:
-                                    self.s_peak = high
 
                     # Initialize next live 1-minute candle
                     current_minute = minute_key
@@ -1087,6 +1070,21 @@ class OptionsAutoTrader:
                 pnl_gross = (t["current_premium"] - t["entry_premium"]) * total_shares
                 floating_pnl = pnl_gross - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
 
+            # Calculate dynamic targets for live display
+            setup_info = {
+                "l_stage": self.l_stage,
+                "l_peak": round(self.l_peak, 2) if self.l_peak else None,
+                "l_trough": round(self.l_trough, 2) if self.l_trough else None,
+                "l_drop_target": round(self.l_peak - config.ATR_DROP_MULT * (self.l_peak_atr or 7.0), 2) if self.l_peak else None,
+                "l_bounce_target": round(self.l_trough + config.ATR_BOUNCE_MULT * (self.l_peak_atr or 7.0), 2) if (self.l_stage == 3 and self.l_trough) else None,
+                
+                "s_stage": self.s_stage,
+                "s_trough": round(self.s_trough, 2) if self.s_trough else None,
+                "s_peak": round(self.s_peak, 2) if self.s_peak else None,
+                "s_rally_target": round(self.s_trough + config.ATR_DROP_MULT * (self.s_trough_atr or 7.0), 2) if self.s_trough else None,
+                "s_drop_target": round(self.s_peak - config.ATR_BOUNCE_MULT * (self.s_trough_atr or 7.0), 2) if (self.s_stage == 3 and self.s_peak) else None,
+            }
+
             return {
                 "running": self.running,
                 "mode": self.mode,
@@ -1105,5 +1103,6 @@ class OptionsAutoTrader:
                     "lots": t["lots"] if self.active_trade else 0,
                     "pnl": round(floating_pnl) if self.active_trade else 0
                 } if self.active_trade else None,
-                "completed_trades": self.completed_trades
+                "completed_trades": self.completed_trades,
+                "setup": setup_info
             }

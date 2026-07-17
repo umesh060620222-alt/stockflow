@@ -248,6 +248,9 @@
       <div id="at_opt_status" style="margin-top:14px;font-size:13px;font-weight:bold;color:#f59e0b">
         Status: Offline (Idle)
       </div>
+      <div id="at_opt_setup_levels" style="margin-top:8px;font-size:12px;background:#18191c;border:1px solid #2a2c30;border-radius:6px;padding:8px 10px;display:none;color:#d4d4d8;line-height:1.6">
+        <!-- Setup levels populated dynamically -->
+      </div>
       
       <div id="at_opt_position" class="card" style="margin-top:14px;background:#18191c;border:1px solid #2a2c30;display:none;padding:10px">
         <b id="at_pos_title" style="font-size:13px;display:block;margin-bottom:8px">Active Floating Position</b>
@@ -3588,6 +3591,40 @@ function updateOptAutoTraderUI(d) {
     stateColor = '#ef4444';
   }
   statusEl.innerHTML = `Status: <span style="color:${stateColor}">${stateText}</span> (${d.mode.toUpperCase()})`;
+  
+  const setupEl = document.getElementById('at_opt_setup_levels');
+  if (setupEl) {
+    if (d.running && d.setup) {
+      setupEl.style.display = 'block';
+      const s = d.setup;
+      
+      let longMsg = '';
+      if (s.l_stage === 1) {
+        longMsg = `🟢 <b>Long (CE):</b> Stage 1 (Est. Peak: ${s.l_peak || '—'})`;
+      } else if (s.l_stage === 2) {
+        longMsg = `🟢 <b>Long (CE):</b> Stage 2 (Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.l_drop_target}</span>)`;
+      } else if (s.l_stage === 3) {
+        longMsg = `🟢 <b>Long (CE):</b> Stage 3 (Trough: ${s.l_trough || '—'}, Waiting bounce above: <span style="color:#10b981;font-weight:bold">₹${s.l_bounce_target}</span>)`;
+      }
+      
+      let shortMsg = '';
+      if (s.s_stage === 1) {
+        shortMsg = `🔴 <b>Short (PE):</b> Stage 1 (Est. Trough: ${s.s_trough || '—'})`;
+      } else if (s.s_stage === 2) {
+        shortMsg = `🔴 <b>Short (PE):</b> Stage 2 (Waiting rally above: <span style="color:#10b981;font-weight:bold">₹${s.s_rally_target}</span>)`;
+      } else if (s.s_stage === 3) {
+        shortMsg = `🔴 <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || '—'}, Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.s_drop_target}</span>)`;
+      }
+      
+      setupEl.innerHTML = `
+        <div style="border-bottom:1px solid #2a2c30;padding-bottom:4px;margin-bottom:4px;font-weight:bold;color:#a1a1aa">Target Trigger Levels (Real-Time Spot)</div>
+        <div>${longMsg}</div>
+        <div>${shortMsg}</div>
+      `;
+    } else {
+      setupEl.style.display = 'none';
+    }
+  }
   
   startBtn.disabled = d.running;
   stopBtn.disabled = !d.running;
