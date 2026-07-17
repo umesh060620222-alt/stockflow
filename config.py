@@ -75,3 +75,4 @@ LIVE_POLL_SEC = 1.0        # how often we poll quotes (1s)
 LIVE_CONSEC_UPS = 5        # (backtest streak mode) consecutive price rises -> BUY
 LIVE_WINDOW_SEC = 10       # live rule: rolling window length in seconds
 LIVE_MIN_UPS = 6           # recommend BUY if >= this many of the last 10 ticks were up (majority)
+max_entry_gap_points = 8.0 # max points difference allowed between signal spot and actual fill spot

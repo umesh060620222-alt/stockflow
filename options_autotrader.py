@@ -626,11 +626,11 @@ class OptionsAutoTrader:
         target_points = max(2.0 * atr, 14.0)
 
         if opt_type == "CE":
-            spot_sl = current_spot - sl_points
-            spot_target = current_spot + target_points
+            spot_sl = entry_spot - sl_points
+            spot_target = entry_spot + target_points
         else:
-            spot_sl = current_spot + sl_points
-            spot_target = current_spot - target_points
+            spot_sl = entry_spot + sl_points
+            spot_target = entry_spot - target_points
 
         # Calculate theoretical target based on theoretical trigger level
         theoretical_target = (entry_spot + target_points) if opt_type == "CE" else (entry_spot - target_points)
