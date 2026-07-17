@@ -19,7 +19,7 @@ TZ = "Asia/Kolkata"
 # --- entry mode ---
 MODE = "atr_pullback"          # "momentum", "meanrev", "streak", "atr_pullback"
 DEVIATION_PCT = 0.003      # meanrev: how far from VWAP (fraction) counts as over-extended
-ATR_DROP_MULT = 1.5         # atr_pullback: price must drop by this x ATR from peak
+ATR_DROP_MULT = 2.0         # atr_pullback: price must drop by this x ATR from peak
 ATR_BOUNCE_MULT = 0.5       # atr_pullback: price must bounce by this x ATR from trough
 USE_NIFTY_FILTER = True     # atr_pullback: check if Nifty is green today
 
