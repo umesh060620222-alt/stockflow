@@ -387,7 +387,7 @@ class OptionsAutoTrader:
 
                 # Real-Time Tick Trigger Checks when in Stage 3
                 is_valid_time = "09:25" <= time_str < "15:30"
-                if len(self.candles) > 0 and is_valid_time and not self.active_trade:
+                if len(self.candles) > 0 and is_valid_time and (not self.active_trade or self.state == "waiting-fill"):
                     last_c = self.candles[-1]
                     atr_val = last_c.get("atr", 7.0)
                     ema_val = last_c.get("nifty_ema", ltp)
@@ -410,7 +410,7 @@ class OptionsAutoTrader:
                                 self.l_stage = 1
                                 
                     # SHORT TRIGGER CHECK
-                    if self.s_stage == 3 and not self.active_trade:
+                    if self.s_stage == 3 and (not self.active_trade or self.state == "waiting-fill"):
                         drop_required = 0.7 * atr_val
                         short_trigger_level = self.s_peak - drop_required
                         if ltp <= short_trigger_level:
@@ -525,7 +525,7 @@ class OptionsAutoTrader:
                                 self.l_trough = low
 
                         # SHORT STATE MACHINE
-                        if not self.active_trade:
+                        if not self.active_trade or self.state == "waiting-fill":
                             if self.s_stage == 1:
                                 if self.s_trough is None or low < self.s_trough:
                                     self.s_trough = low
@@ -560,9 +560,12 @@ class OptionsAutoTrader:
                     live_low = min(live_low, ltp)
                     live_close = ltp
 
-                # If in position, manage exits at 1-second resolution
+                # If in position or waiting for fill, manage at 1-second resolution
                 if self.active_trade:
-                    self._manage_active_position(kc, ltp, quote_data=q)
+                    if self.state == "waiting-fill":
+                        self._manage_pending_order(kc, ltp, quote_data=q)
+                    else:
+                        self._manage_active_position(kc, ltp, quote_data=q)
 
             except Exception as e:
                 self._log(f"Loop error: {e}")
@@ -622,7 +625,7 @@ class OptionsAutoTrader:
 
         # Calculate target & stop-loss levels on spot index
         # Standard: Target = 2.0 * ATR (min 14.0 points), SL = 1.0 * ATR (min 7.0 points)
-        sl_points = max(atr, 7.0)
+        sl_points = max(2.0 * atr, 14.0)
         target_points = max(2.0 * atr, 14.0)
 
         if opt_type == "CE":
@@ -643,8 +646,7 @@ class OptionsAutoTrader:
             self._log(f"Skipping PE entry: Actual Spot ₹{current_spot:.2f} has already crossed theoretical target ₹{theoretical_target:.2f}")
             return
 
-        self._log(f"SIGNAL FIRED: {side} | Signal Spot: ₹{entry_spot:.2f} | Fill Spot: ₹{current_spot:.2f} | Target: ₹{spot_target:.2f} | SL: ₹{spot_sl:.2f} (ATR={atr:.2f})")
-        self.state = "in-trade"
+        self.state = "waiting-fill" if self.mode == "live" else "in-trade"
 
         # Tuesday premium decay decay estimation
         days_to_expiry = (expiry_date - today_date).days
@@ -664,6 +666,15 @@ class OptionsAutoTrader:
                 lots = 1
         
         if self.mode == "live":
+            # Cancel old pending order if a new one is being placed
+            if self.active_trade and self.active_trade.get("order_id"):
+                old_oid = self.active_trade["order_id"]
+                self._log(f"[PENDING] New signal fired. Cancelling old pending order {old_oid} to replace with new level...")
+                try:
+                    kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=old_oid)
+                except Exception as ce:
+                    self._log(f"[PENDING] Old order cancel failed or already filled: {ce}")
+                self.active_trade = None
             try:
                 opt_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, opt_type)
                 if not opt_token:
@@ -718,39 +729,28 @@ class OptionsAutoTrader:
                     order_type       = kc.ORDER_TYPE_LIMIT,
                     price            = limit_price,
                 )
-                self._log(f"[LIVE] Order placed successfully. ID: {oid}. Polling for fill (max 10 seconds)...")
-                
-                # Poll order status for fill
-                filled = False
-                for seconds_elapsed in range(10):
-                    time.sleep(1)
-                    orders = kc.orders()
-                    o = next((x for x in orders if str(x["order_id"]) == str(oid)), None)
-                    if o:
-                        status = o["status"]
-                        if status == "COMPLETE":
-                            entry_premium = float(o["average_price"])
-                            self._log(f"[LIVE] FILLED at premium Rs. {entry_premium:.2f} (Matched Bid!)")
-                            filled = True
-                            break
-                        elif status in ["CANCELLED", "REJECTED"]:
-                            raise ValueError(f"Order was {status}. Reason: {o.get('status_message', 'none')}")
-                
-                if not filled:
-                    self._log(f"[LIVE] Limit order did not fill in 10 seconds. Cancelling order {oid} to avoid stale entry...")
-                    try:
-                        kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=oid)
-                    except Exception as ce:
-                        self._log(f"[LIVE] Cancel failed or already filled: {ce}")
-                    
-                    # Return out of _enter_position to scan again
-                    self.active_trade = None
-                    self.state = "scanning"
-                    if opt_type == "CE":
-                        self.l_stage = 3
-                    else:
-                        self.s_stage = 3
-                    return
+                self._log(f"[LIVE] Limit order placed successfully. ID: {oid}. Waiting for fill (no timeout)...")
+                with self.lock:
+                    self.active_trade = {
+                        "side": side,
+                        "symbol": symbol_str,
+                        "tradingsymbol": tradingsymbol,
+                        "entry_time": self._ist().strftime("%H:%M:%S"),
+                        "entry_spot": entry_spot,
+                        "spot_sl": spot_sl,
+                        "spot_target": spot_target,
+                        "current_sl": spot_sl,
+                        "reached_halfway": False,
+                        "entry_premium": limit_price,
+                        "current_premium": limit_price,
+                        "lots": lots,
+                        "lot_size": lot_size,
+                        "started_at": time.time(),
+                        "order_id": oid,
+                        "filled": False
+                    }
+                self.state = "waiting-fill"
+                return
 
             except Exception as e:
                 self.state = "error"
@@ -780,6 +780,70 @@ class OptionsAutoTrader:
                 "lot_size": lot_size,
                 "started_at": time.time()
             }
+    def _manage_pending_order(self, kc, spot_ltp, quote_data=None):
+        t = self.active_trade
+        if not t:
+            return
+
+        is_call = "CALL" in t["side"]
+        sl = t["spot_sl"]
+        target = t["spot_target"]
+
+        cancel_needed = False
+        reason = ""
+
+        if is_call:
+            if spot_ltp <= sl:
+                cancel_needed = True
+                reason = f"Spot price hit SL ₹{sl:.2f} before fill"
+            elif spot_ltp >= target:
+                cancel_needed = True
+                reason = f"Spot price hit Target ₹{target:.2f} before fill"
+        else:
+            if spot_ltp >= sl:
+                cancel_needed = True
+                reason = f"Spot price hit SL ₹{sl:.2f} before fill"
+            elif spot_ltp <= target:
+                cancel_needed = True
+                reason = f"Spot price hit Target ₹{target:.2f} before fill"
+
+        if cancel_needed:
+            self._log(f"[PENDING] {reason}. Cancelling pending order {t['order_id']}...")
+            try:
+                if self.mode == "live":
+                    kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=t["order_id"])
+            except Exception as ce:
+                self._log(f"[PENDING] Cancel failed: {ce}")
+            self.active_trade = None
+            self.state = "scanning"
+            return
+
+        # Poll order status from exchange once every 2 seconds
+        now = time.time()
+        if not hasattr(self, "_last_order_poll"):
+            self._last_order_poll = 0
+
+        if now - self._last_order_poll >= 2.0:
+            self._last_order_poll = now
+            try:
+                if self.mode == "live":
+                    orders = kc.orders()
+                    o = next((x for x in orders if str(x["order_id"]) == str(t["order_id"])), None)
+                    if o:
+                        status = o["status"]
+                        if status == "COMPLETE":
+                            t["entry_premium"] = float(o["average_price"])
+                            t["current_premium"] = t["entry_premium"]
+                            t["started_at"] = time.time()
+                            t["filled"] = True
+                            self.state = "in-trade"
+                            self._log(f"[LIVE] Pending order FILLED at Rs. {t['entry_premium']:.2f}")
+                        elif status in ["CANCELLED", "REJECTED"]:
+                            self._log(f"[LIVE] Pending order was {status}. Reason: {o.get('status_message', 'none')}")
+                            self.active_trade = None
+                            self.state = "scanning"
+            except Exception as e:
+                self._log(f"[PENDING] Error checking order status: {e}")
 
     def _manage_active_position(self, kc, spot_ltp, quote_data=None):
         t = self.active_trade
