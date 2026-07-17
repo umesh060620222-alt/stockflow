@@ -93,8 +93,9 @@
 <body>
 <div class="wrap">
   <h1>stockflow</h1>
-  <nav class="nav" style="display:none">
+  <nav class="nav" style="display:flex">
     <button onclick="showTab('options')"   id="tab-options">Nifty Options</button>
+    <button onclick="showTab('futures')"   id="tab-futures">Nifty Futures</button>
   </nav>
 
   <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -509,6 +510,51 @@
         <tbody id="tdTickBody"><tr><td colspan="10" style="color:#4b5563;padding:8px 6px">Waiting for data…</td></tr></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- ── Futures tab ── -->
+  <div id="futures" class="tab-panel" style="margin-top:14px">
+  <div class="grid">
+    <div class="card">
+      <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Nifty Futures Replay</h3>
+      
+      <div class="row">
+        <div><label>Capital Pool (INR)</label><input id="fut_capital" type="number" value="100000" step="10000"></div>
+        <div>
+          <label>Lot Size Mode</label>
+          <select id="fut_lot_mode" onchange="document.getElementById('fut_fixed_lots_div').style.display = this.value === 'fixed' ? 'block' : 'none'">
+            <option value="auto">Auto (Margin-based)</option>
+            <option value="fixed">Fixed Lots</option>
+          </select>
+        </div>
+      </div>
+      <div id="fut_fixed_lots_div" style="display:none;margin-top:10px">
+        <label>Fixed Lots Count</label>
+        <input id="fut_fixed_lots" type="number" value="1" min="1" step="1">
+      </div>
+      
+      <div class="row" style="margin-top:10px">
+        <div><label>Data Source</label><select id="fut_source"><option value="yfinance">yfinance (free)</option><option value="zerodha">zerodha (live)</option></select></div>
+        <div><label>Data Period</label><select id="fut_period"><option>7d</option><option>5d</option></select></div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div><label>SL ATR Mult</label><input id="fut_sl_atr_mult" type="number" value="1.0" step="0.1"></div>
+        <div><label>Target ATR Mult</label><input id="fut_target_atr_mult" type="number" value="2.0" step="0.1"></div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div><label>Max Duration (mins)</label><input id="fut_max_dur" type="number" value="45" step="5"></div>
+      </div>
+      
+      <button id="fut_run_btn" onclick="runFuturesAlgo()" style="margin-top:14px">Run futures simulator</button>
+      <div id="fut_status" class="muted" style="margin-top:10px;font-size:12px"></div>
+    </div>
+    
+    <div class="card">
+      <div id="fut_results" class="muted">Set Nifty Futures params and hit Run.</div>
+    </div>
+  </div>
   </div>
 
   <!-- ── Reversal tab ─────────────────────────────────────────────────── -->
@@ -3288,6 +3334,162 @@ function renderOptTradesLog(trades) {
         <td>${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
         <td>${t.entry_premium.toFixed(2)}</td>
         <td>${t.exit_premium ? t.exit_premium.toFixed(2) : '-'}</td>
+        <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
+        <td class="${t.pnl>=0?'pos':'neg'}">₹${Math.round(t.pnl).toLocaleString()}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function runFuturesAlgo() {
+  const btn = document.getElementById('fut_run_btn');
+  const status = document.getElementById('fut_status');
+  const results = document.getElementById('fut_results');
+  
+  btn.disabled = true;
+  status.textContent = 'Running simulation...';
+  
+  const payload = {
+    source: document.getElementById('fut_source').value,
+    capital: parseFloat(document.getElementById('fut_capital').value),
+    period: document.getElementById('fut_period').value,
+    lot_size_mode: document.getElementById('fut_lot_mode').value,
+    fixed_lots: parseInt(document.getElementById('fut_fixed_lots').value) || 1,
+    sl_atr_mult: parseFloat(document.getElementById('fut_sl_atr_mult').value) || 1.0,
+    target_atr_mult: parseFloat(document.getElementById('fut_target_atr_mult').value) || 2.0,
+    max_duration_mins: parseInt(document.getElementById('fut_max_dur').value) || 45
+  };
+  
+  try {
+    const res = await fetch('/api/futures/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await res.json();
+    btn.disabled = false;
+    status.textContent = '';
+    
+    if (d.error) {
+      results.innerHTML = `<span class="neg">Error: ${d.error}</span>`;
+      return;
+    }
+    
+    // Render Results HTML
+    const s = d.summary;
+    const isProfitable = s.total_pnl >= 0;
+    const verdictClass = isProfitable ? 'edge' : 'noedge';
+    const verdictText = isProfitable 
+      ? `✓ PROFITABLE EDGE: +₹${s.total_pnl.toLocaleString()} (${((s.total_pnl / payload.capital) * 100).toFixed(1)}% Return)`
+      : `✗ NEGATIVE EDGE: -₹${Math.abs(s.total_pnl).toLocaleString()} (${((s.total_pnl / payload.capital) * 100).toFixed(1)}% Return)`;
+      
+    let html = `
+      <div class="verdict ${verdictClass}">${verdictText}</div>
+      
+      <div class="stats">
+        <div class="stat"><div class="k">Total Trades</div><div class="v">${s.total_trades}</div></div>
+        <div class="stat"><div class="k">Wins / Losses / BE</div><div class="v">${s.wins} / ${s.losses} / ${s.be}</div></div>
+        <div class="stat"><div class="k">Win Rate</div><div class="v">${s.win_rate}%</div></div>
+        <div class="stat"><div class="k">Net P&L</div><div class="v ${isProfitable?'pos':'neg'}">₹${s.total_pnl.toLocaleString()}</div></div>
+      </div>
+      
+      <b style="font-size:13px;display:block;margin-top:20px;margin-bottom:6px">Daily Summaries <span class="muted" style="font-weight:normal;font-size:11px">(Click any day to filter trades below)</span></b>
+      <div style="max-height: 400px; overflow-y: auto; border: 1px solid #2a2c30; border-radius: 8px; margin-bottom: 16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Trades</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>BE</th>
+              <th>Win Rate %</th>
+              <th>Net P&L</th>
+            </tr>
+          </thead>
+          <tbody id="fut_daily_body">
+            ${d.daily.map(day => `
+              <tr style="cursor:pointer" onclick="filterFutTrades('${day.date}', this)">
+                <td><b>${day.date}</b></td>
+                <td>${day.trades}</td>
+                <td>${day.wins}</td>
+                <td>${day.losses}</td>
+                <td>${day.be}</td>
+                <td>${day.win_rate}%</td>
+                <td class="${day.pnl>=0?'pos':'neg'}">₹${day.pnl.toLocaleString()}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      
+      <b style="font-size:13px;display:block;margin-bottom:6px">Detailed Trades Log</b>
+      <div style="max-height: 350px; overflow-y: auto; border: 1px solid #2a2c30; border-radius: 8px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Duration</th>
+              <th>Entry Spot</th>
+              <th>Exit Spot</th>
+              <th>Lots</th>
+              <th>Result</th>
+              <th>PnL</th>
+            </tr>
+          </thead>
+          <tbody id="fut_log_body">
+          </tbody>
+        </table>
+      </div>
+    `;
+    results.innerHTML = html;
+    
+    // Store globally and render initial detailed log
+    window._futTrades = d.trades;
+    window._futActiveDate = null;
+    renderFutTradesLog(d.trades);
+  } catch(e) {
+    btn.disabled = false;
+    status.textContent = '';
+    results.innerHTML = `<span class="neg">Error: ${e}</span>`;
+  }
+}
+
+let _futActiveDate = null;
+function filterFutTrades(dateStr, rowEl) {
+  const tableRows = document.querySelectorAll('#fut_daily_body tr');
+  tableRows.forEach(r => r.style.background = '');
+  
+  if (window._futActiveDate === dateStr) {
+    window._futActiveDate = null;
+    renderFutTradesLog(window._futTrades);
+  } else {
+    window._futActiveDate = dateStr;
+    rowEl.style.background = '#23252a';
+    const filtered = window._futTrades.filter(t => t.date === dateStr);
+    renderFutTradesLog(filtered);
+  }
+}
+
+function renderFutTradesLog(trades) {
+  const body = document.getElementById('fut_log_body');
+  if (!body) return;
+  if (!trades || !trades.length) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#6b7280;padding:20px">No trades found</td></tr>';
+    return;
+  }
+  body.innerHTML = trades.map(t => {
+    return `
+      <tr>
+        <td class="muted">${t.entry_time} - ${t.exit_time}</td>
+        <td><b>${t.symbol}</b></td>
+        <td class="${t.side.includes('BUY')?'pos':'neg'}">${t.side}</td>
+        <td>${t.duration}</td>
+        <td>${t.entry_spot.toFixed(2)}</td>
+        <td>${t.exit_spot ? t.exit_spot.toFixed(2) : '-'}</td>
+        <td>${t.lots}</td>
         <td><span class="pill ${t.result === 'WIN' ? 'pos' : t.result==='LOSS'?'neg':'muted'}">${t.result}</span></td>
         <td class="${t.pnl>=0?'pos':'neg'}">₹${Math.round(t.pnl).toLocaleString()}</td>
       </tr>

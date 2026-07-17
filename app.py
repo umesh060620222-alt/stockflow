@@ -873,6 +873,448 @@ def run_options_algo(overrides: dict) -> dict:
     }
 
 
+def run_futures_algo(overrides: dict) -> dict:
+    import math
+    import pandas as pd
+    import yfinance as yf
+    
+    capital = float(overrides.get("capital", 40000.0))
+    lot_size = 75
+    period = overrides.get("period", "7d")
+    sl_atr_mult = float(overrides.get("sl_atr_mult", 1.0))
+    target_atr_mult = float(overrides.get("target_atr_mult", 2.0))
+    raw_max_dur = overrides.get("max_duration_mins", 45)
+    if raw_max_dur in (None, "None", 0, "0"):
+        max_duration_mins = None
+    else:
+        max_duration_mins = int(raw_max_dur)
+    lot_size_mode = overrides.get("lot_size_mode", "auto").strip().lower()
+    fixed_lots = int(overrides.get("fixed_lots", 1))
+    
+    # Download Nifty spot data
+    raw = pd.DataFrame()
+    source = overrides.get("source", config.SOURCE)
+    
+    if source == "zerodha":
+        try:
+            import zerodha
+            z_res = zerodha.fetch(["^NSEI"], interval="1m", period=period)
+            if "^NSEI" in z_res and not z_res["^NSEI"].empty:
+                raw = z_res["^NSEI"]
+        except Exception as e:
+            print(f"Zerodha fetch failed: {e}. Trying yfinance...")
+            
+    if raw.empty:
+        try:
+            raw = yf.download("^NSEI", period=period, interval="1m", progress=False)
+        except Exception as e:
+            print(f"yfinance download failed: {e}")
+            
+    if raw.empty:
+        if source != "zerodha":
+            try:
+                import zerodha
+                z_res = zerodha.fetch(["^NSEI"], interval="1m", period=period)
+                if "^NSEI" in z_res and not z_res["^NSEI"].empty:
+                    raw = z_res["^NSEI"]
+            except Exception as e:
+                print(f"Zerodha fallback fetch failed: {e}")
+                
+    if raw.empty:
+        return {"error": "Failed to retrieve Nifty 50 data."}
+    
+    df = raw.copy()
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.index = df.index.tz_convert("Asia/Kolkata")
+    
+    # Futures volume map
+    fut_vol_map = {}
+    try:
+        import zerodha
+        import datetime as dt
+        kc = zerodha.kite()
+        nfo = zerodha.get_nfo_instruments(kc)
+        nifty_futs = [i for i in nfo if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT"]
+        if nifty_futs:
+            nifty_futs = sorted(nifty_futs, key=lambda x: x.get("expiry"))
+            fut_tok = int(nifty_futs[0]["instrument_token"])
+            min_ts = df.index.min()
+            max_ts = df.index.max()
+            from_d = min_ts.tz_convert("UTC").replace(tzinfo=None)
+            to_d = max_ts.tz_convert("UTC").replace(tzinfo=None)
+            fut_rows = kc.historical_data(fut_tok, from_d, to_d, "minute")
+            for r in fut_rows:
+                r_ts = r["date"]
+                if r_ts.tzinfo is None:
+                    r_ts = r_ts.replace(tzinfo=dt.timezone.utc)
+                r_ts_ist = r_ts.astimezone(dt.timezone(dt.timedelta(hours=5, minutes=30)))
+                fut_vol_map[r_ts_ist] = float(r["volume"])
+    except Exception as e:
+        pass
+        
+    dates = sorted(list(set(df.index.date)))
+    
+    daily_summaries = []
+    trades = []
+    
+    for d in dates:
+        df_session = df[df.index.date == d].copy()
+        if isinstance(df_session.columns, pd.MultiIndex):
+            df_session.columns = [col[0].lower() for col in df_session.columns]
+        else:
+            df_session.columns = df_session.columns.str.lower()
+        df_session = df_session[["open", "high", "low", "close"]]
+        df_session = df_session.dropna(how="any")
+        if df_session.empty:
+            continue
+            
+        df_session["date"] = df_session.index
+        candles = df_session.to_dict("records")
+        nifty_open = float(df_session["open"].iloc[0])
+        
+        # Volume SMA
+        vol_history = []
+        for c in candles:
+            c_ts = c["date"]
+            c["volume"] = fut_vol_map.get(c_ts, 0.0)
+            vol_history.append(c["volume"])
+            if len(vol_history) > 10:
+                vol_history.pop(0)
+            c["vol_sma"] = sum(vol_history) / len(vol_history) if len(vol_history) >= 5 else 0.0
+            
+        # Calculate Indicators (14-period Wilder's RMA ATR + 15 EMA)
+        prev_close = None
+        tr_history = []
+        for idx, c in enumerate(candles):
+            high = float(c["high"])
+            low = float(c["low"])
+            close = float(c["close"])
+            if prev_close is None:
+                tr = high - low
+            else:
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            prev_close = close
+            tr_history.append(tr)
+            if idx < 13:
+                c["atr"] = sum(tr_history) / len(tr_history)
+            elif idx == 13:
+                c["atr"] = sum(tr_history) / 14.0
+            else:
+                prev_atr = candles[idx-1]["atr"]
+                c["atr"] = (prev_atr * 13.0 + tr) / 14.0
+                
+        closes_s = pd.Series([float(c["close"]) for c in candles])
+        ema_series = closes_s.ewm(span=15, adjust=False).mean().tolist()
+        for idx, c in enumerate(candles):
+            c["nifty_ema"] = ema_series[idx]
+            
+        # Run state machine
+        l_peak = None
+        l_trough = None
+        l_peak_atr = None
+        l_stage = 1
+        
+        s_trough = None
+        s_peak = None
+        s_trough_atr = None
+        s_stage = 1
+        
+        locked_until_idx = -1
+        session_trades = []
+        
+        for i, c in enumerate(candles):
+            high = float(c["high"])
+            low = float(c["low"])
+            close = float(c["close"])
+            atr = float(c["atr"])
+            ts = c["date"]
+            time_str = ts.strftime("%H:%M")
+            
+            if i <= locked_until_idx:
+                continue
+                
+            is_valid_time = "09:25" <= time_str < "15:30"
+            is_nifty_above_ema = close > c["nifty_ema"]
+            is_nifty_below_ema = close < c["nifty_ema"]
+            is_nifty_green_today = close > nifty_open
+            is_nifty_red_today = close < nifty_open
+            has_vol_conf = c["volume"] > c["vol_sma"] if c["vol_sma"] > 0 else True
+            
+            # --- LONG SETUP ---
+            if l_stage == 1:
+                if l_peak is None or high > l_peak:
+                    l_peak = high
+                    l_peak_atr = atr
+                else:
+                    l_trough = low
+                    l_stage = 2
+            elif l_stage == 2:
+                if high > l_peak:
+                    l_peak = high
+                    l_peak_atr = atr
+                    l_trough = low
+                    l_stage = 1
+                else:
+                    l_trough = min(l_trough, low)
+                    drop_required = 2.5 * (l_peak_atr if l_peak_atr else atr)
+                    if l_trough <= l_peak - drop_required:
+                        l_stage = 3
+            elif l_stage == 3:
+                if low < l_trough:
+                    l_trough = low
+                bounce_required = 0.7 * atr
+                bounce_level = l_trough + bounce_required
+                if high >= bounce_level:
+                    if is_valid_time and is_nifty_above_ema and is_nifty_green_today and has_vol_conf:
+                        entry = bounce_level
+                        sl_points = max(sl_atr_mult * atr, 7.0)
+                        target_points = max(target_atr_mult * atr, 14.0)
+                        
+                        sl = entry - sl_points
+                        target = entry + target_points
+                        
+                        trade_result = "OPEN"
+                        exit_price_val = None
+                        exit_time = "-"
+                        duration = 0
+                        
+                        if low <= sl:
+                            trade_result = "LOSS"
+                            exit_price_val = sl
+                            locked_until_idx = i
+                            exit_time = time_str
+                        elif high >= target:
+                            trade_result = "WIN"
+                            exit_price_val = target
+                            locked_until_idx = i
+                            exit_time = time_str
+                        else:
+                            for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                w_low = float(w["low"])
+                                w_high = float(w["high"])
+                                w_close = float(w["close"])
+                                
+                                if w_low <= sl:
+                                    trade_result = "LOSS"
+                                    exit_price_val = sl
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if w_high >= target:
+                                    trade_result = "WIN"
+                                    exit_price_val = target
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                    trade_result = "TIMEOUT"
+                                    exit_price_val = w_close
+                                    locked_until_idx = idx_w
+                                    exit_time = w["date"].strftime("%H:%M")
+                                    duration = int((w["date"] - ts).total_seconds() / 60)
+                                    break
+                                    
+                        # Size position
+                        if lot_size_mode == "fixed":
+                            lots = fixed_lots
+                        else:
+                            lots = math.floor(capital / 100000.0)
+                            if lots == 0:
+                                lots = 1
+                        total_shares = lots * lot_size
+                        
+                        # Costs: flat ₹40 round-trip brokerage + 0.05 pts slippage per share
+                        brokerage = 40.0
+                        slippage = 0.05 * total_shares
+                        
+                        if trade_result in ("WIN", "LOSS", "TIMEOUT"):
+                            pnl_gross = (exit_price_val - entry) * total_shares
+                            pnl_net = pnl_gross - brokerage - slippage
+                        else:
+                            pnl_net = 0.0
+                            
+                        session_trades.append({
+                            "date": str(d),
+                            "side": "BUY FUTURES",
+                            "symbol": "NIFTY FUTURES",
+                            "entry_time": time_str,
+                            "exit_time": exit_time,
+                            "duration": f"{duration}m" if trade_result != "OPEN" else "-",
+                            "entry_spot": entry,
+                            "exit_spot": exit_price_val,
+                            "entry_premium": entry,
+                            "exit_premium": exit_price_val,
+                            "result": trade_result,
+                            "pnl": pnl_net,
+                            "lots": lots
+                        })
+                    
+                    l_peak = None
+                    l_trough = None
+                    l_stage = 1
+                    
+            # --- SHORT SETUP ---
+            if not session_trades or session_trades[-1]["entry_time"] != time_str:
+                if s_stage == 1:
+                    if s_trough is None or low < s_trough:
+                        s_trough = low
+                        s_trough_atr = atr
+                    else:
+                        s_peak = high
+                        s_stage = 2
+                elif s_stage == 2:
+                    if low < s_trough:
+                        s_trough = low
+                        s_trough_atr = atr
+                        s_peak = high
+                        s_stage = 1
+                    else:
+                        s_peak = max(s_peak, high)
+                        rally_required = 2.5 * (s_trough_atr if s_trough_atr else atr)
+                        if s_peak >= s_trough + rally_required:
+                            s_stage = 3
+                elif s_stage == 3:
+                    if high > s_peak:
+                        s_peak = high
+                    drop_required = 0.7 * atr
+                    short_trigger_level = s_peak - drop_required
+                    if low <= short_trigger_level:
+                        if is_valid_time and is_nifty_below_ema and is_nifty_red_today and has_vol_conf:
+                            entry = short_trigger_level
+                            sl_points = max(sl_atr_mult * atr, 7.0)
+                            target_points = max(target_atr_mult * atr, 14.0)
+                            
+                            sl = entry + sl_points
+                            target = entry - target_points
+                            
+                            trade_result = "OPEN"
+                            exit_price_val = None
+                            exit_time = "-"
+                            duration = 0
+                            
+                            if high >= sl:
+                                trade_result = "LOSS"
+                                exit_price_val = sl
+                                locked_until_idx = i
+                                exit_time = time_str
+                            elif low <= target:
+                                trade_result = "WIN"
+                                exit_price_val = target
+                                locked_until_idx = i
+                                exit_time = time_str
+                            else:
+                                for idx_w, w in enumerate(candles[i+1:], start=i+1):
+                                    w_low = float(w["low"])
+                                    w_high = float(w["high"])
+                                    w_close = float(w["close"])
+                                    
+                                    if w_high >= sl:
+                                        trade_result = "LOSS"
+                                        exit_price_val = sl
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if w_low <= target:
+                                        trade_result = "WIN"
+                                        exit_price_val = target
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                    if max_duration_mins is not None and (idx_w - i) >= max_duration_mins:
+                                        trade_result = "TIMEOUT"
+                                        exit_price_val = w_close
+                                        locked_until_idx = idx_w
+                                        exit_time = w["date"].strftime("%H:%M")
+                                        duration = int((w["date"] - ts).total_seconds() / 60)
+                                        break
+                                        
+                            # Size position
+                            if lot_size_mode == "fixed":
+                                lots = fixed_lots
+                            else:
+                                lots = math.floor(capital / 100000.0)
+                                if lots == 0:
+                                    lots = 1
+                            total_shares = lots * lot_size
+                            
+                            # Costs: flat ₹40 round-trip brokerage + 0.05 pts slippage per share
+                            brokerage = 40.0
+                            slippage = 0.05 * total_shares
+                            
+                            if trade_result in ("WIN", "LOSS", "TIMEOUT"):
+                                pnl_gross = (entry - exit_price_val) * total_shares
+                                pnl_net = pnl_gross - brokerage - slippage
+                            else:
+                                pnl_net = 0.0
+                                
+                            session_trades.append({
+                                "date": str(d),
+                                "side": "SELL FUTURES",
+                                "symbol": "NIFTY FUTURES",
+                                "entry_time": time_str,
+                                "exit_time": exit_time,
+                                "duration": f"{duration}m" if trade_result != "OPEN" else "-",
+                                "entry_spot": entry,
+                                "exit_spot": exit_price_val,
+                                "entry_premium": entry,
+                                "exit_premium": exit_price_val,
+                                "result": trade_result,
+                                "pnl": pnl_net,
+                                "lots": lots
+                            })
+                        
+                        s_trough = None
+                        s_peak = None
+                        s_stage = 1
+                        
+        # Compute daily stats
+        wins = sum(1 for t in session_trades if t["result"] == "WIN")
+        losses = sum(1 for t in session_trades if t["result"] == "LOSS")
+        be = sum(1 for t in session_trades if t["result"] == "BREAKEVEN")
+        opens = sum(1 for t in session_trades if t["result"] == "OPEN")
+        total_pnl = sum(t["pnl"] for t in session_trades)
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+        
+        daily_summaries.append({
+            "date": str(d),
+            "trades": len(session_trades),
+            "wins": wins,
+            "losses": losses,
+            "be": be,
+            "open": opens,
+            "win_rate": round(win_rate, 1),
+            "pnl": round(total_pnl)
+        })
+        trades.extend(session_trades)
+        
+    # Compute overall summary
+    total_wins = sum(s["wins"] for s in daily_summaries)
+    total_losses = sum(s["losses"] for s in daily_summaries)
+    total_be = sum(s["be"] for s in daily_summaries)
+    total_pnl_all = sum(s["pnl"] for s in daily_summaries)
+    overall_win_rate = (total_wins / (total_wins + total_losses) * 100) if (total_wins + total_losses) > 0 else 0.0
+    
+    summary = {
+        "total_trades": sum(s["trades"] for s in daily_summaries),
+        "wins": total_wins,
+        "losses": total_losses,
+        "be": total_be,
+        "win_rate": round(overall_win_rate, 1),
+        "total_pnl": round(total_pnl_all)
+    }
+    
+    return {
+        "summary": summary,
+        "daily": daily_summaries,
+        "trades": trades
+    }
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         b = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -1417,6 +1859,14 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/options/autotrader/stop":
             options_trader.stop()
             return self._send(200, dumps(options_trader.status()))
+        if path == "/api/futures/run":
+            try:
+                out = run_futures_algo(body)
+                self._send(200, dumps(out))
+            except Exception as e:
+                traceback.print_exc()
+                self._send(500, dumps({"error": f"{type(e).__name__}: {e}"}))
+            return
         if path == "/api/options/run":
             try:
                 out = run_options_algo(body)
