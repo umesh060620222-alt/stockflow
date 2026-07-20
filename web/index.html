@@ -306,8 +306,14 @@
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
       <input id="lvSymInput" type="text" placeholder="Symbol e.g. ICICIBANK"
         style="background:#23252a;border:1px solid #374151;color:#f9fafb;padding:6px 10px;border-radius:6px;font-size:13px;width:160px">
-      <button class="btn btn-yellow" onclick="lvStart()">Watch</button>
-      <button class="btn btn-danger" id="lvStopBtn" onclick="lvStop()" disabled>Stop</button>
+      <button class="btn btn-yellow" onclick="lvStart()" style="width:auto;margin:0">Watch</button>
+      <button class="btn btn-danger" id="lvStopBtn" onclick="lvStop()" style="width:auto;margin:0" disabled>Stop</button>
+      
+      <span style="border-left:1px solid #2a2c30;height:24px;margin:0 4px"></span>
+      
+      <input id="lvLotsInput" type="number" value="1" min="1" style="background:#23252a;border:1px solid #374151;color:#f9fafb;padding:6px 10px;border-radius:6px;font-size:13px;width:70px" placeholder="Lots">
+      <button class="btn btn-yellow" id="lvBuyCeBtn" onclick="lvOrder('CE')" style="background:#059669;color:#fff;width:auto;margin:0" disabled>Buy CE (ATM)</button>
+      <button class="btn btn-yellow" id="lvBuyPeBtn" onclick="lvOrder('PE')" style="background:#dc2626;color:#fff;width:auto;margin:0" disabled>Buy PE (ATM)</button>
     </div>
     <div class="pm-cards" id="lvCards" style="display:none">
       <div class="pm-card"><div class="lbl">LTP</div><div class="val" id="lvLtp">—</div></div>
@@ -346,6 +352,26 @@
       <div style="display:flex;justify-content:space-between;font-size:10px;color:#6b7280;margin-top:3px;padding:0 38px">
         <span>Buy ticks (total)</span><span id="lvFlowLabel" style="color:#9ca3af;font-weight:600"></span><span>Sell ticks (total)</span>
       </div>
+    </div>
+    <!-- Active Option Position Card -->
+    <div id="lvActivePosition" style="display:none;margin-bottom:12px;background:#18191c;border:1px solid #2a2c30;border-radius:10px;padding:12px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <b style="font-size:13px;color:#fbbf24">Active Option Position</b>
+        <span class="pill pos" id="lvPosSide" style="font-weight:700">CE</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px" class="muted">
+        <div>Symbol: <span id="lvPosSymbol" style="color:#fff;font-weight:600">—</span></div>
+        <div>Lots: <span id="lvPosLots" style="color:#fff;font-weight:600">—</span></div>
+        <div>Entry Spot: <span id="lvPosEntrySpot" style="color:#fff;font-weight:600">—</span></div>
+        <div>SL Spot: <span id="lvPosSLSpot" style="color:#f87171;font-weight:600">—</span></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px;margin-top:8px" class="muted">
+        <div>Option Entry: <span id="lvPosEntryOpt" style="color:#fff;font-weight:600">—</span></div>
+        <div>ATR (2x): <span id="lvPosATR" style="color:#fff;font-weight:600">—</span></div>
+        <div>Underlying Spot: <span id="lvPosSpot" style="color:#fff;font-weight:600">—</span></div>
+        <div>Order ID: <span id="lvPosOrderId" style="color:#9ca3af;font-variant-numeric:tabular-nums">—</span></div>
+      </div>
+      <button class="btn btn-danger" style="margin-top:12px;padding:8px 16px;width:100%" onclick="lvExitOrder()">Square Off (Limit Order)</button>
     </div>
     <div id="lvLog" style="font-size:12px;color:#6b7280;margin-bottom:8px"></div>
     <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
@@ -2569,6 +2595,8 @@ async function lvStart(){
   document.getElementById('lvCards').style.display='';
   document.getElementById('lvTbl').style.display='';
   document.getElementById('lvStopBtn').disabled=false;
+  document.getElementById('lvBuyCeBtn').disabled=false;
+  document.getElementById('lvBuyPeBtn').disabled=false;
   const url=`wss://ws.kite.trade?api_key=${pmCreds.api_key}&access_token=${pmCreds.access_token}`;
   lvWs=new WebSocket(url); lvWs.binaryType='arraybuffer';
   lvWs.onopen=()=>{
@@ -2586,6 +2614,8 @@ function lvStop(){
   if(lvWs){ lvWs.close(); lvWs=null; }
   if(lvRecTimer){ clearInterval(lvRecTimer); lvRecTimer=null; }
   document.getElementById('lvStopBtn').disabled=true;
+  document.getElementById('lvBuyCeBtn').disabled=true;
+  document.getElementById('lvBuyPeBtn').disabled=true;
   lvLog('');
 }
 
@@ -2649,6 +2679,84 @@ function lvRecommend(){
   document.getElementById('lvScAbsorb').textContent=absorptions+' ticks';
   document.getElementById('lvScPrice').textContent=(priceUp?'↑':'↓');
 }
+
+async function lvOrder(side) {
+  const sym = document.getElementById('lvSymInput').value.trim().toUpperCase();
+  const lots = parseInt(document.getElementById('lvLotsInput').value) || 1;
+  const ceBtn = document.getElementById('lvBuyCeBtn');
+  const peBtn = document.getElementById('lvBuyPeBtn');
+  ceBtn.disabled = true;
+  peBtn.disabled = true;
+  try {
+    const res = await fetch('/api/live/buy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol: sym, side: side, lots: lots })
+    });
+    const d = await res.json();
+    if (d.error) {
+      alert('Order Failed: ' + d.error);
+    } else {
+      updateLivePositionUI(d);
+    }
+  } catch (e) {
+    alert('Failed to place order: ' + e);
+  } finally {
+    ceBtn.disabled = false;
+    peBtn.disabled = false;
+  }
+}
+
+async function lvExitOrder() {
+  try {
+    const res = await fetch('/api/live/exit', { method: 'POST' });
+    const d = await res.json();
+    if (d.error) {
+      alert('Exit Failed: ' + d.error);
+    } else {
+      updateLivePositionUI(d);
+    }
+  } catch (e) {
+    alert('Failed to square off: ' + e);
+  }
+}
+
+async function pollLivePosition() {
+  try {
+    const res = await fetch('/api/live/position');
+    const d = await res.json();
+    updateLivePositionUI(d);
+  } catch (e) {
+    console.error('Failed to poll active position:', e);
+  }
+}
+
+function updateLivePositionUI(d) {
+  const card = document.getElementById('lvActivePosition');
+  if (!d || !d.active) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'block';
+  document.getElementById('lvPosSide').textContent = d.side;
+  document.getElementById('lvPosSide').className = d.side === 'CE' ? 'pill pos' : 'pill neg';
+  document.getElementById('lvPosSymbol').textContent = d.opt_symbol;
+  document.getElementById('lvPosLots').textContent = d.lots;
+  document.getElementById('lvPosEntrySpot').textContent = d.entry_spot.toFixed(2);
+  document.getElementById('lvPosSLSpot').textContent = d.sl_spot.toFixed(2);
+  document.getElementById('lvPosEntryOpt').textContent = d.entry_opt_price.toFixed(2);
+  document.getElementById('lvPosATR').textContent = d.atr.toFixed(2);
+  document.getElementById('lvPosOrderId').textContent = d.order_id;
+  
+  const currentLtpEl = document.getElementById('lvLtp');
+  if (currentLtpEl && currentLtpEl.textContent !== '—') {
+    document.getElementById('lvPosSpot').textContent = currentLtpEl.textContent;
+  } else {
+    document.getElementById('lvPosSpot').textContent = d.entry_spot.toFixed(2);
+  }
+}
+
+setInterval(pollLivePosition, 2000);
 
 function lvParseBinary(buf){
   const view=new DataView(buf); if(buf.byteLength<2) return;

@@ -1315,6 +1315,151 @@ def run_futures_algo(overrides: dict) -> dict:
     }
 
 
+_LIVE_POSITION = {
+    "active": False,
+    "symbol": None,
+    "side": None,
+    "lots": 1,
+    "entry_spot": 0.0,
+    "entry_opt_price": 0.0,
+    "opt_symbol": None,
+    "opt_token": None,
+    "lot_size": 1,
+    "sl_spot": 0.0,
+    "atr": 0.0,
+    "order_id": None,
+    "exit_order_id": None,
+    "status": "OPEN",
+    "result": None,
+    "exit_price": 0.0
+}
+
+def _get_atr_for_symbol(kc, symbol):
+    try:
+        formatted_sym = symbol
+        if symbol in ("NIFTY", "NIFTY 50"):
+            formatted_sym = "NSE:NIFTY 50"
+        elif symbol in ("BANKNIFTY", "NIFTY BANK"):
+            formatted_sym = "NSE:NIFTY BANK"
+        else:
+            if not symbol.startswith("NSE:"):
+                formatted_sym = "NSE:" + symbol
+                
+        # Resolve instrument token
+        imap = Z.instrument_map(kc)
+        tok = imap.get(symbol) or imap.get(formatted_sym) or imap.get(formatted_sym.replace("NSE:", ""))
+        if not tok:
+            insts = kc.instruments("NSE")
+            m = next((i for i in insts if i.get("tradingsymbol") == symbol or i.get("name") == symbol), None)
+            if m:
+                tok = int(m["instrument_token"])
+        
+        if not tok:
+            return 10.0
+            
+        to_date = datetime.datetime.now()
+        from_date = to_date - datetime.timedelta(hours=4)
+        candles = kc.historical_data(tok, from_date, to_date, "minute")
+        
+        if len(candles) < 15:
+            return 10.0
+            
+        tr_history = []
+        for idx, c in enumerate(candles):
+            high = float(c["high"])
+            low = float(c["low"])
+            close = float(c["close"])
+            if idx == 0:
+                tr = high - low
+            else:
+                prev_close = float(candles[idx-1]["close"])
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr_history.append(tr)
+            
+        atr = tr_history[0]
+        for tr in tr_history[1:]:
+            atr = (atr * 13.0 + tr) / 14.0
+        return round(atr, 2)
+    except Exception as e:
+        print(f"[live] ATR lookup failed for {symbol}, defaulting to 10.0: {e}", flush=True)
+        return 10.0
+
+def _exit_live_position(kc, reason):
+    try:
+        opt_symbol = _LIVE_POSITION["opt_symbol"]
+        lots = _LIVE_POSITION["lots"]
+        lot_size = _LIVE_POSITION["lot_size"]
+        
+        opt_quote = kc.quote([f"NFO:{opt_symbol}"])
+        q_data = opt_quote.get(f"NFO:{opt_symbol}", {})
+        best_bid = q_data.get("depth", {}).get("buy", [{}])[0].get("price") or q_data.get("last_price")
+        
+        if not best_bid:
+            print(f"[live-monitor] Failed to get sell quote for {opt_symbol}, cannot place exit order.", flush=True)
+            return
+            
+        exit_price = _round_tick(best_bid, _get_tick_size(kc, "NFO", opt_symbol))
+        
+        oid = kc.place_order(
+            variety=kc.VARIETY_REGULAR,
+            exchange=kc.EXCHANGE_NFO,
+            tradingsymbol=opt_symbol,
+            transaction_type=kc.TRANSACTION_TYPE_SELL,
+            quantity=int(lots * lot_size),
+            product=kc.PRODUCT_NRML,
+            order_type=kc.ORDER_TYPE_LIMIT,
+            price=exit_price
+        )
+        
+        _LIVE_POSITION["status"] = "CLOSED"
+        _LIVE_POSITION["result"] = "SL" if "Stop Loss" in reason else "MANUAL"
+        _LIVE_POSITION["exit_price"] = exit_price
+        _LIVE_POSITION["exit_order_id"] = oid
+        _LIVE_POSITION["active"] = False
+        print(f"[live-monitor] Exit order placed: {oid} at price {exit_price}. Reason: {reason}", flush=True)
+    except Exception as e:
+        print(f"[live-monitor] Failed to exit position: {e}", flush=True)
+        _LIVE_POSITION["active"] = False
+
+def _live_position_monitor_loop():
+    print("[live-monitor] Starting active position monitor loop...", flush=True)
+    while True:
+        try:
+            if _LIVE_POSITION.get("active") and _LIVE_POSITION.get("status") == "OPEN":
+                symbol = _LIVE_POSITION["symbol"]
+                side = _LIVE_POSITION["side"]
+                sl_spot = _LIVE_POSITION["sl_spot"]
+                
+                formatted_sym = symbol
+                if symbol in ("NIFTY", "NIFTY 50"):
+                    formatted_sym = "NSE:NIFTY 50"
+                elif symbol in ("BANKNIFTY", "NIFTY BANK"):
+                    formatted_sym = "NSE:NIFTY BANK"
+                else:
+                    if not symbol.startswith("NSE:"):
+                        formatted_sym = "NSE:" + symbol
+                        
+                if Z.auth_status():
+                    kc = Z.kite()
+                    quote = kc.quote([formatted_sym])
+                    spot_price = quote.get(formatted_sym, {}).get("last_price")
+                    
+                    if spot_price:
+                        trigger_exit = False
+                        if side == "CE" and spot_price <= sl_spot:
+                            trigger_exit = True
+                            reason = "Stop Loss Hit (Spot dropped below SL)"
+                        elif side == "PE" and spot_price >= sl_spot:
+                            trigger_exit = True
+                            reason = "Stop Loss Hit (Spot rose above SL)"
+                            
+                        if trigger_exit:
+                            print(f"[live-monitor] Triggering exit for {symbol} {side}: {reason} (Spot: {spot_price}, SL: {sl_spot})", flush=True)
+                            _exit_live_position(kc, reason)
+        except Exception as e:
+            print(f"[live-monitor] Error: {e}", flush=True)
+        time.sleep(1.0)
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         b = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -1415,6 +1560,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps({"connected": Z.auth_status(), "source": config.SOURCE}))
         if path == "/api/live/state":
             return self._send(200, dumps(LIVE.state()))
+        if path == "/api/live/position":
+            return self._send(200, dumps(_LIVE_POSITION))
         if path == "/api/recommend":
             import datetime as _dt
             from urllib.parse import urlparse, parse_qs
@@ -1643,6 +1790,105 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/live/stop":
             LIVE.stop()
             return self._send(200, dumps(LIVE.state()))
+        if path == "/api/live/buy":
+            if _LIVE_POSITION.get("active"):
+                return self._send(200, dumps({"error": "An active live position is already running."}))
+            
+            raw_sym = body.get("symbol", "").strip().upper()
+            side = body.get("side", "CE").strip().upper()
+            lots = int(body.get("lots", 1))
+            
+            if not raw_sym or side not in ("CE", "PE"):
+                return self._send(200, dumps({"error": "symbol and side (CE/PE) are required."}))
+                
+            sym = raw_sym
+            if sym in ("NIFTY 50", "NSE:NIFTY 50"):
+                sym = "NIFTY"
+            elif sym in ("NIFTY BANK", "BANKNIFTY", "NSE:NIFTY BANK"):
+                sym = "BANKNIFTY"
+                
+            try:
+                kc = Z.kite()
+                formatted_sym = raw_sym
+                if raw_sym in ("NIFTY", "NIFTY 50", "NIFTY 50 SPOT"):
+                    formatted_sym = "NSE:NIFTY 50"
+                    sym = "NIFTY"
+                elif raw_sym in ("BANKNIFTY", "NIFTY BANK", "NIFTY BANK SPOT"):
+                    formatted_sym = "NSE:NIFTY BANK"
+                    sym = "BANKNIFTY"
+                else:
+                    if not raw_sym.startswith("NSE:"):
+                        formatted_sym = "NSE:" + raw_sym
+                        
+                quote = kc.quote([formatted_sym])
+                spot_ltp = quote.get(formatted_sym, {}).get("last_price")
+                if not spot_ltp:
+                    return self._send(200, dumps({"error": f"Could not get quote for {formatted_sym}"}))
+                    
+                atr = _get_atr_for_symbol(kc, raw_sym)
+                sl_points = 2.0 * atr
+                
+                opt = _resolve_option(kc, sym, spot_ltp, side)
+                if not opt:
+                    return self._send(200, dumps({"error": f"No nearest {side} option found for {sym} at strike near {spot_ltp}"}))
+                    
+                tradingsymbol = opt["tradingsymbol"]
+                lot_size = opt["lot_size"]
+                
+                opt_quote = kc.quote([f"NFO:{tradingsymbol}"])
+                q_data = opt_quote.get(f"NFO:{tradingsymbol}", {})
+                best_ask = q_data.get("depth", {}).get("sell", [{}])[0].get("price") or q_data.get("last_price")
+                
+                if not best_ask:
+                    return self._send(200, dumps({"error": f"Could not get option quote for {tradingsymbol}"}))
+                    
+                price = _round_tick(best_ask, _get_tick_size(kc, "NFO", tradingsymbol))
+                
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NFO,
+                    tradingsymbol    = tradingsymbol,
+                    transaction_type = kc.TRANSACTION_TYPE_BUY,
+                    quantity         = int(lots * lot_size),
+                    product          = kc.PRODUCT_NRML,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = price
+                )
+                
+                _LIVE_POSITION.update({
+                    "active": True,
+                    "symbol": raw_sym,
+                    "side": side,
+                    "lots": lots,
+                    "entry_spot": spot_ltp,
+                    "entry_opt_price": price,
+                    "opt_symbol": tradingsymbol,
+                    "opt_token": opt.get("instrument_token"),
+                    "lot_size": lot_size,
+                    "sl_spot": (spot_ltp - sl_points) if side == "CE" else (spot_ltp + sl_points),
+                    "atr": atr,
+                    "order_id": oid,
+                    "exit_order_id": None,
+                    "status": "OPEN",
+                    "result": None,
+                    "exit_price": 0.0
+                })
+                
+                print(f"[live-trading] Entered {side} position on {raw_sym}: {lots} lots of {tradingsymbol} at price {price}. Spot entry: {spot_ltp}, SL Spot: {_LIVE_POSITION['sl_spot']}", flush=True)
+                return self._send(200, dumps(_LIVE_POSITION))
+            except Exception as e:
+                traceback.print_exc()
+                return self._send(200, dumps({"error": str(e)}))
+                
+        if path == "/api/live/exit":
+            if not _LIVE_POSITION.get("active"):
+                return self._send(200, dumps({"error": "No active position to exit."}))
+            try:
+                kc = Z.kite()
+                _exit_live_position(kc, "Manual Square Off")
+                return self._send(200, dumps(_LIVE_POSITION))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/trading/order":
             sym  = body.get("symbol", "")
             side = body.get("side", "BUY").upper()
@@ -1963,6 +2209,7 @@ def _news_radar_loop():
 
 threading.Thread(target=_auto_record, daemon=True).start()
 threading.Thread(target=_news_radar_loop, daemon=True).start()
+threading.Thread(target=_live_position_monitor_loop, daemon=True).start()
 
 
 if __name__ == "__main__":
