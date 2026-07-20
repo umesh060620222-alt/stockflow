@@ -1422,9 +1422,11 @@ def _exit_live_position(kc, reason):
         _LIVE_POSITION["active"] = False
 
 def _live_position_monitor_loop():
-    print("[live-monitor] Starting active position monitor loop...", flush=True)
+    import sys
     while True:
         try:
+            if not sys or not sys.modules or sys.is_finalizing():
+                break
             if _LIVE_POSITION.get("active") and _LIVE_POSITION.get("status") == "OPEN":
                 symbol = _LIVE_POSITION["symbol"]
                 side = _LIVE_POSITION["side"]
@@ -1562,6 +1564,37 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(LIVE.state()))
         if path == "/api/live/position":
             return self._send(200, dumps(_LIVE_POSITION))
+        if path == "/api/live/logs":
+            try:
+                log_dir = os.path.join(HERE, "data", "live_signals")
+                if not os.path.exists(log_dir):
+                    return self._send(200, dumps({"files": []}))
+                files = sorted([f for f in os.listdir(log_dir) if f.startswith("signals_") and f.endswith(".json")], reverse=True)
+                return self._send(200, dumps({"files": files}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e), "files": []}))
+                
+        if path == "/api/live/logs/download":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            file_name = q.get("file", [""])[0].strip()
+            if not file_name or ".." in file_name or "/" in file_name or "\\" in file_name:
+                return self._send(400, b"Invalid filename", "text/plain")
+            try:
+                file_path = os.path.join(HERE, "data", "live_signals", file_name)
+                if not os.path.exists(file_path):
+                    return self._send(404, b"File not found", "text/plain")
+                with open(file_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.send_header("Content-Disposition", f"attachment; filename={file_name}")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            except Exception as e:
+                return self._send(500, str(e).encode(), "text/plain")
         if path == "/api/recommend":
             import datetime as _dt
             from urllib.parse import urlparse, parse_qs
@@ -1790,6 +1823,44 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/live/stop":
             LIVE.stop()
             return self._send(200, dumps(LIVE.state()))
+        if path == "/api/live/log_signal":
+            sym = body.get("symbol", "").strip().upper()
+            sig = body.get("signal", "").strip() # "Buyers" or "Sellers"
+            if not sym or not sig:
+                return self._send(200, dumps({"error": "symbol and signal are required"}))
+            try:
+                import pytz
+                log_dir = os.path.join(HERE, "data", "live_signals")
+                os.makedirs(log_dir, exist_ok=True)
+                
+                ist_tz = pytz.timezone("Asia/Kolkata")
+                now = datetime.datetime.now(ist_tz)
+                date_str = now.strftime("%Y%m%d")
+                file_name = f"signals_{date_str}.json"
+                file_path = os.path.join(log_dir, file_name)
+                
+                logs = []
+                if os.path.exists(file_path):
+                    try:
+                        with open(file_path, "r") as f:
+                            logs = json.load(f)
+                    except Exception as je:
+                        print(f"[live-log] Failed to parse JSON, starting fresh: {je}", flush=True)
+                        logs = []
+                        
+                time_str = now.strftime("%H:%M:%S.%f")[:-3]
+                logs.append({
+                    "timestamp": time_str,
+                    "symbol": sym,
+                    "signal": sig
+                })
+                
+                with open(file_path, "w") as f:
+                    json.dump(logs, f, indent=2)
+                    
+                return self._send(200, dumps({"status": "success", "file": file_name}))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/live/buy":
             if _LIVE_POSITION.get("active"):
                 return self._send(200, dumps({"error": "An active live position is already running."}))

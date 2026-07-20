@@ -2586,7 +2586,7 @@ async function lvStart(){
   if(bestMatch.ts!==sym) lvLog(`Using ${bestMatch.ts} for ${sym}`);
   lvTokenMap[bestMatch.ts]=bestMatch.tok;
   lvLog(`${sym} → token ${lvTokenMap[sym]} — connecting…`);
-  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[]; lvCumBuy=0; lvCumSell=0;
+  lvBasePrice=null; lvRows=[]; lvPrevBuy=null; lvPrevSell=null; lvTicks=[]; lvCumBuy=0; lvCumSell=0; window.lvLastTrend = null;
   document.getElementById('lvFlowBar').style.display='none';
   document.getElementById('lvBody').innerHTML='';
   document.getElementById('lvSignal').style.display='none';
@@ -2837,8 +2837,24 @@ function lvOnTick({sym,ltp,buyVol,sellVol}){
   const tr=document.createElement('tr');
   let sig='—', sigCol='#9ca3af';
   if(rowDBuy!==null&&rowDSell!==null){
-    if(rowDSell<0&&chgPct>0){sig='Buying';sigCol='#4ade80';}
-    else if(rowDBuy<0&&chgPct<0){sig='Selling';sigCol='#f87171';}
+    if(rowDSell<0&&chgPct>0){
+      sig='Buying';sigCol='#4ade80';
+      if(typeof window.lvLastTrend === 'undefined') window.lvLastTrend = null;
+      if(window.lvLastTrend !== 'Buying'){
+        window.lvLastTrend = 'Buying';
+        speakAlarm('buyer');
+        logLiveSignalChange(sym, 'Buyers');
+      }
+    }
+    else if(rowDBuy<0&&chgPct<0){
+      sig='Selling';sigCol='#f87171';
+      if(typeof window.lvLastTrend === 'undefined') window.lvLastTrend = null;
+      if(window.lvLastTrend !== 'Selling'){
+        window.lvLastTrend = 'Selling';
+        speakAlarm('seller');
+        logLiveSignalChange(sym, 'Sellers');
+      }
+    }
     else{sig='Neutral';}
   }
   tr.innerHTML=`<td>${ts}</td><td>₹${ltp.toFixed(2)}</td>`+
@@ -3839,6 +3855,68 @@ function copyCompletedTrades() {
 
 // Initial status load
 pollOptAutoTraderStatus();
+
+function speakAlarm(text) {
+  const checkbox = document.getElementById('rev_sound_enabled');
+  if (checkbox && !checkbox.checked) return;
+  try {
+    const synth = window.speechSynthesis;
+    let count = 0;
+    const interval = setInterval(() => {
+      if (count >= 3) {
+        clearInterval(interval);
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.05;
+      synth.speak(utterance);
+      count++;
+    }, 1200);
+  } catch(e) {
+    console.error('Speech synthesis failed: ', e);
+  }
+}
+
+async function logLiveSignalChange(symbol, signal) {
+  try {
+    const res = await fetch('/api/live/log_signal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol: symbol, signal: signal })
+    });
+    const d = await res.json();
+    if (d.error) {
+      console.error('Failed to log signal: ' + d.error);
+    } else {
+      loadLiveSignalLogs();
+    }
+  } catch (e) {
+    console.error('Failed to log signal transition:', e);
+  }
+}
+
+async function loadLiveSignalLogs() {
+  try {
+    const res = await fetch('/api/live/logs');
+    const d = await res.json();
+    const listEl = document.getElementById('lvLogsList');
+    if (!listEl) return;
+    if (d.error || !d.files || d.files.length === 0) {
+      listEl.textContent = 'No log files found on server.';
+      return;
+    }
+    listEl.innerHTML = d.files.map(f => {
+      const datePart = f.replace('signals_', '').replace('.json', '');
+      const formattedDate = datePart.substring(0, 4) + '-' + datePart.substring(4, 6) + '-' + datePart.substring(6, 8);
+      return `<a href="/api/live/logs/download?file=${f}" target="_blank" style="color:#fbbf24;text-decoration:none;background:#23252a;border:1px solid #374151;border-radius:6px;padding:4px 8px">${formattedDate} JSON</a>`;
+    }).join(' ');
+  } catch (e) {
+    console.error('Failed to load daily signal logs:', e);
+  }
+}
+
+// Load daily signal logs list on startup
+loadLiveSignalLogs();
 </script>
 </body>
 </html>
