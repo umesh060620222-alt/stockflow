@@ -1852,6 +1852,8 @@ function renderScPaperTradesUI() {
   }
   bodyEl.innerHTML = html;
 }
+
+function scCheckStreak(d){
   const t=d.ticks;
   const ltp=t[t.length-1].ltp;
   const prev=t[t.length-2].ltp;
