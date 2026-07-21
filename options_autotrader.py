@@ -865,14 +865,17 @@ class OptionsAutoTrader:
                     "reason": f"Put writers building strong support & PCR is RISING ({pcr_direction}). High conviction CE momentum."
                 }
             elif pcr >= 1.1:
-                sell_s = strike - 50
+                sell_s = strike - 100  # Ultra-Safe 120-pt Cushion
                 buy_s = sell_s - 100
+                sell_std = strike - 50 # Standard 70-pt Cushion
                 rec = {
                     "action": f"SELL {sell_s} PE / BUY {buy_s} PE",
                     "type": "BULL_PUT_SPREAD",
                     "sell_strike": sell_s,
                     "buy_strike": buy_s,
-                    "reason": f"Solid Institutional Support Floor at {sell_s} (PCR {pcr}). Excellent Bull Put Spread entry."
+                    "sell_strike_std": sell_std,
+                    "cushion_pts": int(round(spot_ltp - sell_s)),
+                    "reason": f"Solid Institutional Support Floor at {strike} (PCR {pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
                 }
             else:
                 if pcr < 0.9 and pcr_change_5m > 0:
