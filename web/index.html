@@ -3881,10 +3881,21 @@ function updateOptAutoTraderUI(d) {
         shortMsg = `🔴 <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || '—'}, Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.s_drop_target}</span>)`;
       }
       
+      let oiHtml = '';
+      if (d.oi_metrics && d.oi_metrics.strike) {
+        const oi = d.oi_metrics;
+        const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
+        oiHtml = `<div style="margin-top:6px;padding-top:4px;border-top:1px dashed #2a2c30;font-size:11px">
+          🏛 <b>Institutional OI (ATM ${oi.strike}):</b> PCR <b style="color:${pcrCol}">${oi.pcr}</b> · Put OI: ${(oi.pe_oi/100000).toFixed(1)}L · Call OI: ${(oi.ce_oi/100000).toFixed(1)}L
+          <div style="color:${pcrCol};font-weight:bold;margin-top:2px">▸ ${oi.oi_trend}</div>
+        </div>`;
+      }
+
       setupEl.innerHTML = `
         <div style="border-bottom:1px solid #2a2c30;padding-bottom:4px;margin-bottom:4px;font-weight:bold;color:#a1a1aa">Target Trigger Levels (Real-Time Spot)</div>
         <div>${longMsg}</div>
         <div>${shortMsg}</div>
+        ${oiHtml}
       `;
     } else {
       setupEl.style.display = 'none';

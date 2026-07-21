@@ -43,6 +43,7 @@ class OptionsAutoTrader:
         self.s_trough_atr = None
         self.fut_tok = None
         self.has_vol_conf = True
+        self._oi_metrics = {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "strike": 0, "oi_trend": "NEUTRAL"}
         self._load_state()
 
     def _ist(self):
@@ -382,6 +383,9 @@ class OptionsAutoTrader:
                 if self.nifty_open is None:
                     self.nifty_open = ltp
                     self._log(f"First Nifty Spot Tick observed. Session Open locked at Rs. {self.nifty_open}")
+
+                # Fetch real-time ATM Put & Call Open Interest (OI) metrics
+                self._fetch_oi_metrics(kc, ltp)
 
                 ist = self._ist()
                 time_str = ist.strftime("%H:%M")
@@ -780,6 +784,54 @@ class OptionsAutoTrader:
                 "lot_size": lot_size,
                 "started_at": time.time()
             }
+
+    def _fetch_oi_metrics(self, kc, spot_ltp):
+        """Fetch ATM Put & Call Open Interest from Zerodha to check institutional dip buying."""
+        now = time.time()
+        if hasattr(self, '_last_oi_fetch') and now - getattr(self, '_last_oi_fetch', 0) < 10.0:
+            return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+        
+        self._last_oi_fetch = now
+        try:
+            today_date = self._ist().date()
+            expiry_date = Z.get_expiry_date(kc, today_date)
+            strike = int(round(spot_ltp / 50.0) * 50.0)
+            
+            pe_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, "PE")
+            ce_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, "CE")
+            
+            if not pe_token or not ce_token:
+                return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+            
+            insts = Z.get_nfo_instruments(kc)
+            pe_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == pe_token), None)
+            ce_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == ce_token), None)
+            
+            if not pe_sym or not ce_sym:
+                return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+            
+            quotes = kc.quote([f"NFO:{pe_sym}", f"NFO:{ce_sym}"])
+            pe_q = quotes.get(f"NFO:{pe_sym}", {})
+            ce_q = quotes.get(f"NFO:{ce_sym}", {})
+            
+            pe_oi = int(pe_q.get("oi") or 0)
+            ce_oi = int(ce_q.get("oi") or 0)
+            
+            pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 1.0
+            oi_trend = "INSTITUTIONAL PE BUYING (SUPPORT)" if pcr >= 1.2 else "CE CALL WRITING (RESISTANCE)" if pcr <= 0.8 else "NEUTRAL OI"
+            
+            self._oi_metrics = {
+                "pcr": pcr,
+                "pe_oi": pe_oi,
+                "ce_oi": ce_oi,
+                "strike": strike,
+                "oi_trend": oi_trend
+            }
+            return self._oi_metrics
+        except Exception as e:
+            log.warning(f"Failed to fetch OI metrics: {e}")
+            return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+
     def _manage_pending_order(self, kc, spot_ltp, quote_data=None):
         t = self.active_trade
         if not t:
@@ -1121,5 +1173,6 @@ class OptionsAutoTrader:
                     "pnl": round(floating_pnl) if self.active_trade else 0
                 } if self.active_trade else None,
                 "completed_trades": self.completed_trades,
-                "setup": setup_info
+                "setup": setup_info,
+                "oi_metrics": getattr(self, "_oi_metrics", {})
             }
