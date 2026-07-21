@@ -814,19 +814,94 @@ class OptionsAutoTrader:
             pe_q = quotes.get(f"NFO:{pe_sym}", {})
             ce_q = quotes.get(f"NFO:{ce_sym}", {})
             
+            pe_ltp = float(pe_q.get("last_price") or 0)
+            ce_ltp = float(ce_q.get("last_price") or 0)
             pe_oi = int(pe_q.get("oi") or 0)
             ce_oi = int(ce_q.get("oi") or 0)
             
             pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 1.0
             oi_trend = "INSTITUTIONAL PE BUYING (SUPPORT)" if pcr >= 1.2 else "CE CALL WRITING (RESISTANCE)" if pcr <= 0.8 else "NEUTRAL OI"
             
+            # PCR Trajectory Tracking (15-minute rolling window)
+            if not hasattr(self, '_pcr_history'):
+                self._pcr_history = []
+            self._pcr_history.append((now, pcr))
+            # Keep history for 15 minutes (900 seconds)
+            self._pcr_history = [(t, p) for t, p in self._pcr_history if now - t <= 900]
+            
+            # Find PCR value ~5 mins ago (between 240s and 360s ago)
+            pcr_5m_ago = next((p for t, p in reversed(self._pcr_history) if 240 <= (now - t) <= 360), pcr)
+            pcr_change_5m = round(pcr - pcr_5m_ago, 2)
+            
+            if pcr_change_5m >= 0.04:
+                pcr_direction = f"RISING (+{pcr_change_5m:.2f} in 5m)"
+            elif pcr_change_5m <= -0.04:
+                pcr_direction = f"FALLING ({pcr_change_5m:.2f} in 5m)"
+            else:
+                pcr_direction = "STABLE"
+
+            # Trade Recommendation Logic based on PCR Trajectory & Levels
+            rec = {}
+            if pcr <= 0.75 and pcr_change_5m <= -0.04:
+                rec = {
+                    "action": "BUY PE (PUT)",
+                    "type": "BUY_PE",
+                    "symbol": pe_sym,
+                    "strike": strike,
+                    "opt_ltp": pe_ltp,
+                    "target_opt": round(pe_ltp + 15.0, 2),
+                    "sl_opt": round(max(1.0, pe_ltp - 10.0), 2),
+                    "reason": f"Call writers in full control & PCR is FALLING ({pcr_direction}). High conviction PE momentum."
+                }
+            elif pcr >= 1.0 and pcr_change_5m >= 0.04:
+                rec = {
+                    "action": "BUY CE (CALL)",
+                    "type": "BUY_CE",
+                    "symbol": ce_sym,
+                    "strike": strike,
+                    "opt_ltp": ce_ltp,
+                    "target_opt": round(ce_ltp + 15.0, 2),
+                    "sl_opt": round(max(1.0, ce_ltp - 10.0), 2),
+                    "reason": f"Put writers building strong support & PCR is RISING ({pcr_direction}). High conviction CE momentum."
+                }
+            elif pcr >= 1.1:
+                sell_s = strike - 50
+                buy_s = sell_s - 100
+                rec = {
+                    "action": f"SELL {sell_s} PE / BUY {buy_s} PE",
+                    "type": "BULL_PUT_SPREAD",
+                    "sell_strike": sell_s,
+                    "buy_strike": buy_s,
+                    "reason": f"Solid Institutional Support Floor at {sell_s} (PCR {pcr}). Excellent Bull Put Spread entry."
+                }
+            else:
+                if pcr < 0.9 and pcr_change_5m > 0:
+                    rec = {
+                        "action": "WAIT / DO NOT BUY PE",
+                        "type": "WAIT_RISING_PCR",
+                        "reason": f"PCR is RISING ({pcr_direction}) from low level ({pcr}). Put writers building floor — DO NOT BUY PE! Wait for PCR >= 1.0 to Buy CE."
+                    }
+                else:
+                    rec = {
+                        "action": "WAIT / NEUTRAL",
+                        "type": "WAIT_NEUTRAL",
+                        "reason": f"PCR {pcr} is in neutral range ({pcr_direction}). Awaiting clear institutional trend."
+                    }
+
             self._oi_metrics = {
                 "pcr": pcr,
                 "pe_oi": pe_oi,
                 "ce_oi": ce_oi,
                 "strike": strike,
                 "spot": round(spot_ltp, 2),
-                "oi_trend": oi_trend
+                "oi_trend": oi_trend,
+                "pcr_direction": pcr_direction,
+                "pcr_change_5m": pcr_change_5m,
+                "ce_sym": ce_sym,
+                "pe_sym": pe_sym,
+                "ce_ltp": ce_ltp,
+                "pe_ltp": pe_ltp,
+                "trade_recommendation": rec
             }
             return self._oi_metrics
         except Exception as e:
