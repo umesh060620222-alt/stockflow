@@ -302,6 +302,11 @@
   </div>
 
   <div id="live" class="tab-panel card" style="margin-top:14px">
+    <!-- Live Institutional Open Interest Radar Banner (Always Active) -->
+    <div id="scOiBannerLive" style="margin-bottom:14px;padding:10px 14px;background:#1a1c20;border-radius:8px;border:1px solid #2a2c30">
+      <b style="font-size:12px;color:#a1a1aa;text-transform:uppercase;letter-spacing:.05em">🏛 Institutional Open Interest Radar (Nifty Spot Real-Time)</b>
+      <div id="scOiContentLive" style="margin-top:6px;font-size:12px;color:#6b7280">Fetching live Nifty option OI from Zerodha...</div>
+    </div>
     <div style="margin-bottom:10px"><b style="font-size:14px">Volume Watch</b></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
       <input id="lvSymInput" type="text" placeholder="Symbol e.g. ICICIBANK"
@@ -4076,13 +4081,14 @@ loadLiveSignalLogs();
 
 async function pollLiveOiMetrics() {
   const el = document.getElementById('scOiContent');
-  if (!el) return;
+  const elLive = document.getElementById('scOiContentLive');
+  if (!el && !elLive) return;
   try {
     const res = await fetch('/api/oi_metrics');
     const oi = await res.json();
     if (oi && oi.strike) {
       const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
-      el.innerHTML = `
+      const html = `
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px">
           <div>Strike: <b style="color:#fbbf24">ATM ${oi.strike}</b></div>
           <div>Put-Call Ratio (PCR): <b style="color:${pcrCol};font-size:15px">${oi.pcr}</b></div>
@@ -4091,8 +4097,12 @@ async function pollLiveOiMetrics() {
           <div style="color:${pcrCol};font-weight:bold;padding:3px 10px;border-radius:6px;background:#23252a;border:1px solid ${pcrCol}">▸ ${oi.oi_trend}</div>
         </div>
       `;
+      if (el) el.innerHTML = html;
+      if (elLive) elLive.innerHTML = html;
     } else {
-      el.textContent = 'Zerodha disconnected or market offline.';
+      const msg = 'Zerodha disconnected or market offline.';
+      if (el) el.textContent = msg;
+      if (elLive) elLive.textContent = msg;
     }
   } catch(e) {
     console.error('Error polling live OI:', e);
