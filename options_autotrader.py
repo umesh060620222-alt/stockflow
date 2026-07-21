@@ -859,8 +859,8 @@ class OptionsAutoTrader:
             else:
                 pcr_direction = "STABLE"
 
-            # Check if there is strong Put support at floor_strike (e.g. 24150) or ceil_strike
-            best_support_strike = floor_strike if pcr_floor >= 1.1 else (ceil_strike if pcr_ceil >= 1.1 else None)
+            # Check if there is strong Put support at floor_strike, ceil_strike, or primary ATM strike
+            best_support_strike = floor_strike if pcr_floor >= 1.05 else (ceil_strike if pcr_ceil >= 1.05 else (strike if pcr >= 1.05 else None))
 
             # Trade Recommendation Logic based on PCR Trajectory & Levels
             rec = {}
