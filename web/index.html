@@ -449,6 +449,11 @@
       <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Waitlist — ≥0.5% streak · waiting for 0.1% pullback</div>
       <div id="atxWaitBody" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     </div>
+    <!-- Live Paper Trades (Neutral -> Buying Transition with >50% Buy Ticks & 10pt Target/SL) -->
+    <div id="scPaperTradesCard" style="display:none;margin-top:14px;padding:12px 14px;background:#12141a;border-radius:8px;border:1px solid #14532d">
+      <div style="font-size:11px;color:#34d399;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px">⚡ Live Scanner Paper Trades (Neutral → Buying | >50% Buy Ticks | ±10 pts)</div>
+      <div id="scPaperTradesBody"></div>
+    </div>
     <!-- Auto-Test panel — below live data, only runs on Start -->
     <div id="atxPanel" style="display:none;margin-top:18px;padding:12px 16px;background:#1a1c20;border-radius:8px;border:1px solid #374151">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -1720,9 +1725,133 @@ function scParseBinary(buf){
 // {sym: {state:'streaking'|'watching', dir:'up'|'down', startPrice, extremePrice}}
 const scStreaks={};
 const ATX_STREAK_PCT   = 0.50;  // min streak to qualify
-const ATX_REVERSAL_PCT = 0.10;  // reversal confirmation before entry
+const ATX_REVERSAL_PCT = 0.04;  // early reversal confirmation before entry (0.04%)
 
-function scCheckStreak(d){
+// Live Paper Trading (Neutral -> Buying Transition with >50% Buy Ticks)
+const scPaperTrades = {};          // sym -> trade object
+const scCompletedPaperTrades = []; // list of completed paper trades
+
+function scCheckPaperTradeSignals(r, sig) {
+  const sym = r.sym;
+  const ltp = r.ltp;
+
+  // 1. Manage Active Paper Trade for this symbol
+  if (scPaperTrades[sym]) {
+    const t = scPaperTrades[sym];
+    t.currentLtp = ltp;
+    t.pnlPts = ltp - t.entryPrice;
+
+    if (ltp >= t.targetPrice) {
+      t.status = 'WIN (+10 pts Target)';
+      t.exitPrice = t.targetPrice;
+      t.exitTime = new Date().toLocaleTimeString('en-GB');
+      scCompletedPaperTrades.unshift(t);
+      delete scPaperTrades[sym];
+      if (typeof atLog === 'function') atLog(`[PAPER TRADE WIN] ${sym} BUY CALL (CE) hit +10 pts target @ ₹${t.exitPrice.toFixed(2)}`);
+    } else if (ltp <= t.slPrice) {
+      t.status = 'LOSS (-10 pts Stop)';
+      t.exitPrice = t.slPrice;
+      t.exitTime = new Date().toLocaleTimeString('en-GB');
+      scCompletedPaperTrades.unshift(t);
+      delete scPaperTrades[sym];
+      if (typeof atLog === 'function') atLog(`[PAPER TRADE LOSS] ${sym} BUY CALL (CE) hit -10 pts SL @ ₹${t.exitPrice.toFixed(2)}`);
+    }
+  }
+
+  // 2. Check for NEW Paper Trade Entry
+  // Must transition from Neutral/Non-Buying to Buying
+  const prevSig = r._prevSig || 'Flat';
+  const wasNeutral = (prevSig === 'Flat' || prevSig === 'Selling' || prevSig === 'Rising' || prevSig === 'Falling');
+  const isBuying = (sig === 'Buying');
+  const transitionedToBuying = (wasNeutral && isBuying);
+
+  // Must have >50% buying ticks out of past 10 ticks
+  const last10 = (r.ticks || []).slice(-10);
+  let buyTicks = 0;
+  if (last10.length >= 5) {
+    for (let i = 1; i < last10.length; i++) {
+      if (last10[i].ltp > last10[i-1].ltp || (last10[i].dBuy > 0 && last10[i].dBuy > last10[i].dSell)) {
+        buyTicks++;
+      }
+    }
+  }
+  const totalTickPairs = last10.length >= 2 ? (last10.length - 1) : 1;
+  const isMajorityBuying = (last10.length >= 5) && ((buyTicks / totalTickPairs) > 0.50);
+
+  if (transitionedToBuying && isMajorityBuying && !scPaperTrades[sym]) {
+    scPaperTrades[sym] = {
+      sym: sym,
+      side: 'BUY CALL (CE)',
+      entryPrice: ltp,
+      targetPrice: ltp + 10.0,
+      slPrice: ltp - 10.0,
+      entryTime: new Date().toLocaleTimeString('en-GB'),
+      status: 'OPEN',
+      pnlPts: 0,
+      currentLtp: ltp
+    };
+    if (typeof atLog === 'function') {
+      atLog(`[PAPER TRADE ENTER] ${sym} BUY CALL (CE) @ ₹${ltp.toFixed(2)} | Target: ₹${(ltp+10).toFixed(2)} | SL: ₹${(ltp-10).toFixed(2)} (Transition: ${prevSig} -> Buying, Ticks: ${buyTicks}/${totalTickPairs})`);
+    }
+  }
+
+  // Save signal for next tick check
+  r._prevSig = sig;
+}
+
+function renderScPaperTradesUI() {
+  const cardEl = document.getElementById('scPaperTradesCard');
+  const bodyEl = document.getElementById('scPaperTradesBody');
+  if (!cardEl || !bodyEl) return;
+
+  const active = Object.values(scPaperTrades);
+  const totalTrades = active.length + scCompletedPaperTrades.length;
+  if (totalTrades === 0) {
+    cardEl.style.display = 'none';
+    return;
+  }
+  cardEl.style.display = '';
+
+  let html = '';
+  if (active.length > 0) {
+    html += '<b style="font-size:12px;color:#34d399;display:block;margin-bottom:6px">Active Paper Positions</b>';
+    html += active.map(t => {
+      const pnlClass = t.pnlPts >= 0 ? 'pos' : 'neg';
+      const pnlSign = t.pnlPts >= 0 ? '+' : '';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-bottom:6px;background:#1a1c20;border-radius:8px;border-left:3px solid #34d399">
+        <div>
+          <b style="color:#fbbf24;font-size:14px">${t.sym}</b> <span class="pill pos">${t.side}</span>
+          <span style="font-size:11px;color:#9ca3af;margin-left:8px">Entry @ ₹${t.entryPrice.toFixed(2)} (${t.entryTime})</span>
+        </div>
+        <div style="font-size:12px">
+          Target (+10): <span style="color:#34d399">₹${t.targetPrice.toFixed(2)}</span> ·
+          SL (-10): <span style="color:#f87171">₹${t.slPrice.toFixed(2)}</span> ·
+          P&L: <span class="${pnlClass}" style="font-weight:bold">${pnlSign}${t.pnlPts.toFixed(2)} pts</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  if (scCompletedPaperTrades.length > 0) {
+    html += '<b style="font-size:12px;color:#9ca3af;display:block;margin-top:10px;margin-bottom:6px">Completed Paper Trades Today</b>';
+    html += scCompletedPaperTrades.slice(0, 10).map(t => {
+      const isWin = t.status.includes('WIN');
+      const pnlClass = isWin ? 'pos' : 'neg';
+      const pnlSign = isWin ? '+' : '';
+      const statusClass = isWin ? 'pos' : 'neg';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;margin-bottom:4px;background:#101113;border-radius:6px;font-size:12px">
+        <div>
+          <b>${t.sym}</b> ${t.side} · Entry ₹${t.entryPrice.toFixed(2)} → Exit ₹${(t.exitPrice||t.currentLtp).toFixed(2)} (${t.entryTime} - ${t.exitTime||''})
+        </div>
+        <div>
+          <span class="pill ${statusClass}">${t.status}</span>
+          <span class="${pnlClass}" style="font-weight:bold;margin-left:8px">${pnlSign}${(t.exitPrice ? t.exitPrice - t.entryPrice : t.pnlPts).toFixed(2)} pts</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  bodyEl.innerHTML = html;
+}
   const t=d.ticks;
   const ltp=t[t.length-1].ltp;
   const prev=t[t.length-2].ltp;
@@ -1945,6 +2074,7 @@ function scRender(){
     const drifting=last20.length>=10&&Math.abs(driftScore)>=5;
     let sig=up&&r.ratio>=1.2&&!s.sellGrowing?'Buying':dn&&r.ratio<=0.8?'Selling':up?'Rising':dn?'Falling':
             drifting?(driftScore>0?'Buying':'Selling'):'Flat';
+    scCheckPaperTradeSignals(r, sig);
     const sigCol=sig==='Buying'?'#4ade80':sig==='Selling'?'#f87171':'#9ca3af';
     // tick flow bar
     const total=driftUp+driftDn||1;
@@ -1972,6 +2102,7 @@ function scRender(){
       `<td>${flowBar}</td>`;
     tb.appendChild(tr);
   });
+  renderScPaperTradesUI();
 }
 // ── Auto Trader ───────────────────────────────────────────────────────
 let atArmedBuy=false, atPickSentBuy=false;
