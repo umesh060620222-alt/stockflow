@@ -825,6 +825,7 @@ class OptionsAutoTrader:
                 "pe_oi": pe_oi,
                 "ce_oi": ce_oi,
                 "strike": strike,
+                "spot": round(spot_ltp, 2),
                 "oi_trend": oi_trend
             }
             return self._oi_metrics
