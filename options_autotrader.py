@@ -795,41 +795,60 @@ class OptionsAutoTrader:
         try:
             today_date = self._ist().date()
             expiry_date = Z.get_expiry_date(kc, today_date)
+            floor_strike = int(spot_ltp // 50.0) * 50.0
+            ceil_strike = floor_strike + 50.0
             strike = int(round(spot_ltp / 50.0) * 50.0)
             
-            pe_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, "PE")
-            ce_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, "CE")
-            
-            if not pe_token or not ce_token:
-                return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+            floor_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, floor_strike, "PE")
+            floor_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, floor_strike, "CE")
+            ceil_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, ceil_strike, "PE")
+            ceil_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, ceil_strike, "CE")
             
             insts = Z.get_nfo_instruments(kc)
-            pe_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == pe_token), None)
-            ce_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == ce_token), None)
-            
-            if not pe_sym or not ce_sym:
-                return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
-            
-            quotes = kc.quote([f"NFO:{pe_sym}", f"NFO:{ce_sym}"])
-            pe_q = quotes.get(f"NFO:{pe_sym}", {})
-            ce_q = quotes.get(f"NFO:{ce_sym}", {})
-            
-            pe_ltp = float(pe_q.get("last_price") or 0)
-            ce_ltp = float(ce_q.get("last_price") or 0)
-            pe_oi = int(pe_q.get("oi") or 0)
-            ce_oi = int(ce_q.get("oi") or 0)
-            
-            pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 1.0
+            tokens = {}
+            for t_val, name_val in [(floor_pe_tok, "floor_pe"), (floor_ce_tok, "floor_ce"), (ceil_pe_tok, "ceil_pe"), (ceil_ce_tok, "ceil_ce")]:
+                if t_val:
+                    sym_val = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == t_val), None)
+                    if sym_val:
+                        tokens[name_val] = sym_val
+
+            symbols_list = [f"NFO:{s}" for s in tokens.values()]
+            quotes = kc.quote(symbols_list) if symbols_list else {}
+
+            floor_pe_q = quotes.get(f"NFO:{tokens.get('floor_pe')}", {})
+            floor_ce_q = quotes.get(f"NFO:{tokens.get('floor_ce')}", {})
+            ceil_pe_q = quotes.get(f"NFO:{tokens.get('ceil_pe')}", {})
+            ceil_ce_q = quotes.get(f"NFO:{tokens.get('ceil_ce')}", {})
+
+            floor_pe_oi = int(floor_pe_q.get("oi") or 0)
+            floor_ce_oi = int(floor_ce_q.get("oi") or 0)
+            ceil_pe_oi = int(ceil_pe_q.get("oi") or 0)
+            ceil_ce_oi = int(ceil_ce_q.get("oi") or 0)
+
+            pcr_floor = round(floor_pe_oi / floor_ce_oi, 2) if floor_ce_oi > 0 else 1.0
+            pcr_ceil = round(ceil_pe_oi / ceil_ce_oi, 2) if ceil_ce_oi > 0 else 1.0
+
+            if strike == floor_strike:
+                pe_oi, ce_oi, pcr = floor_pe_oi, floor_ce_oi, pcr_floor
+                pe_sym = tokens.get('floor_pe')
+                ce_sym = tokens.get('floor_ce')
+                pe_ltp = float(floor_pe_q.get("last_price") or 0)
+                ce_ltp = float(floor_ce_q.get("last_price") or 0)
+            else:
+                pe_oi, ce_oi, pcr = ceil_pe_oi, ceil_ce_oi, pcr_ceil
+                pe_sym = tokens.get('ceil_pe')
+                ce_sym = tokens.get('ceil_ce')
+                pe_ltp = float(ceil_pe_q.get("last_price") or 0)
+                ce_ltp = float(ceil_ce_q.get("last_price") or 0)
+
             oi_trend = "INSTITUTIONAL PE BUYING (SUPPORT)" if pcr >= 1.2 else "CE CALL WRITING (RESISTANCE)" if pcr <= 0.8 else "NEUTRAL OI"
             
             # PCR Trajectory Tracking (15-minute rolling window)
             if not hasattr(self, '_pcr_history'):
                 self._pcr_history = []
             self._pcr_history.append((now, pcr))
-            # Keep history for 15 minutes (900 seconds)
             self._pcr_history = [(t, p) for t, p in self._pcr_history if now - t <= 900]
             
-            # Find PCR value ~5 mins ago (between 240s and 360s ago)
             pcr_5m_ago = next((p for t, p in reversed(self._pcr_history) if 240 <= (now - t) <= 360), pcr)
             pcr_change_5m = round(pcr - pcr_5m_ago, 2)
             
@@ -839,6 +858,9 @@ class OptionsAutoTrader:
                 pcr_direction = f"FALLING ({pcr_change_5m:.2f} in 5m)"
             else:
                 pcr_direction = "STABLE"
+
+            # Check if there is strong Put support at floor_strike (e.g. 24150) or ceil_strike
+            best_support_strike = floor_strike if pcr_floor >= 1.1 else (ceil_strike if pcr_ceil >= 1.1 else None)
 
             # Trade Recommendation Logic based on PCR Trajectory & Levels
             rec = {}
@@ -864,18 +886,17 @@ class OptionsAutoTrader:
                     "sl_opt": round(max(1.0, ce_ltp - 10.0), 2),
                     "reason": f"Put writers building strong support & PCR is RISING ({pcr_direction}). High conviction CE momentum."
                 }
-            elif pcr >= 1.1:
-                sell_s = strike - 100  # Ultra-Safe 120-pt Cushion
+            elif best_support_strike:
+                sell_s = int(best_support_strike - 100)
                 buy_s = sell_s - 100
-                sell_std = strike - 50 # Standard 70-pt Cushion
+                support_pcr = pcr_floor if best_support_strike == floor_strike else pcr_ceil
                 rec = {
                     "action": f"SELL {sell_s} PE / BUY {buy_s} PE",
                     "type": "BULL_PUT_SPREAD",
                     "sell_strike": sell_s,
                     "buy_strike": buy_s,
-                    "sell_strike_std": sell_std,
                     "cushion_pts": int(round(spot_ltp - sell_s)),
-                    "reason": f"Solid Institutional Support Floor at {strike} (PCR {pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
+                    "reason": f"Solid Put Support Floor at {int(best_support_strike)} (PCR {support_pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
                 }
             else:
                 if pcr < 0.9 and pcr_change_5m > 0:
