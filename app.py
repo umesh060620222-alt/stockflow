@@ -1750,6 +1750,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps({"buy": AT.BUYER.status(), "sell": AT.SELLER.status()}))
         if path == "/api/options/autotrader/status":
             return self._send(200, dumps(options_trader.status()))
+        if path == "/api/oi_metrics":
+            return self._send(200, dumps(options_trader.get_live_oi_metrics()))
         if path == "/api/autotrader/stop":
             import autotrader as AT
             from urllib.parse import urlparse, parse_qs

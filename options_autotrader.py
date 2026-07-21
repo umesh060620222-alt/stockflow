@@ -832,6 +832,19 @@ class OptionsAutoTrader:
             log.warning(f"Failed to fetch OI metrics: {e}")
             return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
 
+    def get_live_oi_metrics(self):
+        """Fetch live OI metrics from Zerodha even when autotrader thread is not running."""
+        try:
+            kc = Z.kite()
+            q = kc.quote(["NSE:NIFTY 50"])
+            d_q = q.get("NSE:NIFTY 50")
+            if d_q and d_q.get("last_price"):
+                spot = float(d_q["last_price"])
+                return self._fetch_oi_metrics(kc, spot)
+        except Exception as e:
+            log.warning(f"Error fetching live OI: {e}")
+        return getattr(self, "_oi_metrics", {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+
     def _manage_pending_order(self, kc, spot_ltp, quote_data=None):
         t = self.active_trade
         if not t:
