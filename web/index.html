@@ -4102,7 +4102,7 @@ async function pollLiveOiMetrics() {
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px">
           <div>Strike: <b style="color:#fbbf24">ATM ${oi.strike}</b></div>
           <div>Put-Call Ratio (PCR): <b style="color:${pcrCol};font-size:15px">${oi.pcr}</b></div>
-          <div>Trajectory (5m): <b style="color:${dirCol}">${pcrDir}</b></div>
+          <div>PCR Trajectory: <b style="color:#fbbf24;font-size:12px">${pcrDir}</b></div>
           <div>Put OI: <b style="color:#34d399">${(oi.pe_oi/100000).toFixed(1)} Lakhs</b></div>
           <div>Call OI: <b style="color:#f87171">${(oi.ce_oi/100000).toFixed(1)} Lakhs</b></div>
           <div style="color:${pcrCol};font-weight:bold;padding:3px 10px;border-radius:6px;background:#23252a;border:1px solid ${pcrCol}">▸ ${oi.oi_trend}</div>

@@ -843,21 +843,22 @@ class OptionsAutoTrader:
 
             oi_trend = "INSTITUTIONAL PE BUYING (SUPPORT)" if pcr >= 1.2 else "CE CALL WRITING (RESISTANCE)" if pcr <= 0.8 else "NEUTRAL OI"
             
-            # PCR Trajectory Tracking (15-minute rolling window)
+            # PCR Trajectory Tracking (20-minute rolling window to hold 10m history)
             if not hasattr(self, '_pcr_history'):
                 self._pcr_history = []
             self._pcr_history.append((now, pcr))
-            self._pcr_history = [(t, p) for t, p in self._pcr_history if now - t <= 900]
+            self._pcr_history = [(t, p) for t, p in self._pcr_history if now - t <= 1200]
             
             pcr_5m_ago = next((p for t, p in reversed(self._pcr_history) if 240 <= (now - t) <= 360), pcr)
             pcr_change_5m = round(pcr - pcr_5m_ago, 2)
             
-            if pcr_change_5m >= 0.04:
-                pcr_direction = f"RISING (+{pcr_change_5m:.2f} in 5m)"
-            elif pcr_change_5m <= -0.04:
-                pcr_direction = f"FALLING ({pcr_change_5m:.2f} in 5m)"
-            else:
-                pcr_direction = "STABLE"
+            pcr_10m_ago = next((p for t, p in reversed(self._pcr_history) if 540 <= (now - t) <= 660), pcr)
+            pcr_change_10m = round(pcr - pcr_10m_ago, 2)
+            
+            # Format combined direction string
+            dir_5m = f"RISING (+{pcr_change_5m:.2f})" if pcr_change_5m >= 0.04 else (f"FALLING ({pcr_change_5m:.2f})" if pcr_change_5m <= -0.04 else "STABLE")
+            dir_10m = f"RISING (+{pcr_change_10m:.2f})" if pcr_change_10m >= 0.08 else (f"FALLING ({pcr_change_10m:.2f})" if pcr_change_10m <= -0.08 else "STABLE")
+            pcr_direction = f"5m: {dir_5m} | 10m: {dir_10m}"
 
             # Check if there is strong Put support at floor_strike, ceil_strike, or primary ATM strike
             best_support_strike = floor_strike if pcr_floor >= 1.05 else (ceil_strike if pcr_ceil >= 1.05 else (strike if pcr >= 1.05 else None))
@@ -921,6 +922,7 @@ class OptionsAutoTrader:
                 "oi_trend": oi_trend,
                 "pcr_direction": pcr_direction,
                 "pcr_change_5m": pcr_change_5m,
+                "pcr_change_10m": pcr_change_10m,
                 "ce_sym": ce_sym,
                 "pe_sym": pe_sym,
                 "ce_ltp": ce_ltp,
