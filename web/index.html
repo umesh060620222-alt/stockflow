@@ -4288,6 +4288,9 @@ async function pollLiveOiMetrics() {
                 • <b>Profit Target</b>: Exit at <b style="color:#34d399">+₹800 - ₹1,000 profit per lot</b> (50% max decay)<br>
                 • <b>Invalidation / Stop Loss</b>: Close spread if Nifty Spot breaks below <b style="color:#f87171">₹${rec.sell_strike - 30}</b>
               </div>
+              <div style="margin-top:10px">
+                <button class="btn btn-yellow" onclick="executeSpreadOrder('BULL_PUT_SPREAD', ${rec.sell_strike}, ${rec.buy_strike}, 65)" style="margin:0;padding:6px 12px;font-size:12px;width:auto;font-weight:bold;border-radius:6px;height:auto">⚡ Execute Spread on Zerodha (65 Qty)</button>
+              </div>
             </div>
           `;
         } else if (rec.type === 'BEAR_CALL_SPREAD') {
@@ -4305,6 +4308,9 @@ async function pollLiveOiMetrics() {
                 • <b>Institutional Confirmation</b>: ${rec.reason}<br>
                 • <b>Profit Target</b>: Exit at <b style="color:#34d399">+₹800 - ₹1,000 profit per lot</b> (50% max decay)<br>
                 • <b>Invalidation / Stop Loss</b>: Close spread if Nifty Spot breaks above <b style="color:#f87171">₹${rec.sell_strike + 30}</b>
+              </div>
+              <div style="margin-top:10px">
+                <button class="btn btn-danger" onclick="executeSpreadOrder('BEAR_CALL_SPREAD', ${rec.sell_strike}, ${rec.buy_strike}, 65)" style="margin:0;padding:6px 12px;font-size:12px;width:auto;font-weight:bold;border-radius:6px;height:auto;background:#ef4444;color:#fff">⚡ Execute Spread on Zerodha (65 Qty)</button>
               </div>
             </div>
           `;
@@ -4395,6 +4401,23 @@ async function pollSectorValues() {
 // Poll sector values every 5 seconds (matched to User requirement)
 setInterval(pollSectorValues, 5000);
 pollSectorValues();
+
+async function executeSpreadOrder(type, sellStrike, buyStrike, qty) {
+  if (!confirm(`Are you sure you want to execute NIFTY ${type} on Zerodha?\n\n- SELL Strike: ${sellStrike}\n- BUY Strike: ${buyStrike}\n- Quantity: ${qty}`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/options/execute_spread?type=${type}&sell_strike=${sellStrike}&buy_strike=${buyStrike}&qty=${qty}`);
+    const data = await res.json();
+    if (data.success) {
+      alert(`🚀 Orders Executed Successfully!\n\n${data.message}`);
+    } else {
+      alert(`❌ Execution Failed:\n\n${data.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`❌ Error executing order: ${e}`);
+  }
+}
 </script>
 </body>
 </html>

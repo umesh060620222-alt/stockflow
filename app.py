@@ -1752,6 +1752,67 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(options_trader.status()))
         if path == "/api/oi_metrics":
             return self._send(200, dumps(options_trader.get_live_oi_metrics()))
+        if path == "/api/options/execute_spread":
+            from urllib.parse import urlparse, parse_qs
+            import zerodha as Z
+            try:
+                params = parse_qs(urlparse(self.path).query)
+                spread_type = params.get("type", [""])[0]
+                sell_strike = int(params.get("sell_strike", [0])[0])
+                buy_strike = int(params.get("buy_strike", [0])[0])
+                qty = int(params.get("qty", [65])[0])
+                
+                if not spread_type or not sell_strike or not buy_strike:
+                    return self._send(200, dumps({"error": "Missing parameters (type, sell_strike, buy_strike)"}))
+                    
+                kc = Z.kite()
+                today_date = options_trader._ist().date()
+                expiry_date = Z.get_expiry_date(kc, today_date)
+                
+                opt_kind = "PE" if "PUT" in spread_type else "CE"
+                
+                sell_tok = Z.get_option_token(kc, "NIFTY", expiry_date, sell_strike, opt_kind)
+                buy_tok = Z.get_option_token(kc, "NIFTY", expiry_date, buy_strike, opt_kind)
+                
+                insts = Z.get_nfo_instruments(kc)
+                
+                sell_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == sell_tok), None)
+                buy_sym = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == buy_tok), None)
+                
+                if not sell_sym or not buy_sym:
+                    return self._send(200, dumps({"error": f"Option symbols not found for strikes {sell_strike} / {buy_strike}"}))
+                
+                # SEQUENCED EXECUTION: Buy hedge first, then Sell to secure margin benefit
+                # 1. Place BUY order
+                buy_order_id = kc.place_order(
+                    variety=kc.VARIETY_REGULAR,
+                    exchange=kc.EXCHANGE_NFO,
+                    tradingsymbol=buy_sym,
+                    transaction_type=kc.TRANSACTION_TYPE_BUY,
+                    quantity=qty,
+                    product=kc.PRODUCT_NRML,
+                    order_type=kc.ORDER_TYPE_MARKET
+                )
+                
+                # 2. Place SELL order
+                sell_order_id = kc.place_order(
+                    variety=kc.VARIETY_REGULAR,
+                    exchange=kc.EXCHANGE_NFO,
+                    tradingsymbol=sell_sym,
+                    transaction_type=kc.TRANSACTION_TYPE_SELL,
+                    quantity=qty,
+                    product=kc.PRODUCT_NRML,
+                    order_type=kc.ORDER_TYPE_MARKET
+                )
+                
+                return self._send(200, dumps({
+                    "success": True,
+                    "buy_order_id": buy_order_id,
+                    "sell_order_id": sell_order_id,
+                    "message": f"Successfully executed spread orders for NIFTY {sell_strike} / {buy_strike} {opt_kind} (Qty: {qty})"
+                }))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/sector_values":
             try:
                 import zerodha as Z

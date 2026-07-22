@@ -895,8 +895,8 @@ class OptionsAutoTrader:
 
             rec = {}
             if is_past_10am:
-                # 10:00 AM Pivot Strategy: Trend + PCR Confirmation
-                if is_price_green and pcr >= 1.10:
+                # 10:00 AM Pivot Strategy: Trend + PCR Sniper Confirmation (0.5 and 1.5)
+                if is_price_green and pcr >= 1.50:
                     sell_s = int(strike_atm - 100)
                     buy_s = sell_s - 100
                     rec = {
@@ -905,9 +905,9 @@ class OptionsAutoTrader:
                         "sell_strike": sell_s,
                         "buy_strike": buy_s,
                         "cushion_pts": int(round(spot_ltp - sell_s)),
-                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is GREEN relative to Open (+{price_diff:.1f} pts) & PCR is BULLISH ({pcr:.2f}). Probability of green close is 66.7%."
+                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is GREEN relative to Open (+{price_diff:.1f} pts) & PCR is BULLISH (>1.50: {pcr:.2f}). Sniper Mode Bull Setup."
                     }
-                elif not is_price_green and pcr <= 0.90:
+                elif not is_price_green and pcr <= 0.50:
                     sell_s = int(strike_atm + 50)
                     buy_s = sell_s + 100
                     rec = {
@@ -916,25 +916,25 @@ class OptionsAutoTrader:
                         "sell_strike": sell_s,
                         "buy_strike": buy_s,
                         "cushion_pts": int(round(sell_s - spot_ltp)),
-                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is RED relative to Open ({price_diff:.1f} pts) & PCR is BEARISH ({pcr:.2f}). Probability of red close is 70.8%."
+                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is RED relative to Open ({price_diff:.1f} pts) & PCR is BEARISH (<0.50: {pcr:.2f}). Sniper Mode Bear Setup."
                     }
-                elif is_price_green and pcr < 0.90:
+                elif is_price_green and pcr < 0.50:
                     rec = {
                         "action": "STAND ASIDE / CONFLICT",
                         "type": "WAIT_NEUTRAL",
-                        "reason": f"⚠️ 10:00 AM Conflict: Price is GREEN relative to Open (+{price_diff:.1f} pts), but PCR is BEARISH ({pcr:.2f}). Stand aside for alignment."
+                        "reason": f"⚠️ 10:00 AM Conflict: Price is GREEN relative to Open (+{price_diff:.1f} pts), but PCR is BEARISH (<0.50: {pcr:.2f}). Stand aside."
                     }
-                elif not is_price_green and pcr > 1.10:
+                elif not is_price_green and pcr > 1.50:
                     rec = {
                         "action": "STAND ASIDE / CONFLICT",
                         "type": "WAIT_NEUTRAL",
-                        "reason": f"⚠️ 10:00 AM Conflict: Price is RED relative to Open ({price_diff:.1f} pts), but PCR is BULLISH ({pcr:.2f}). Stand aside for alignment."
+                        "reason": f"⚠️ 10:00 AM Conflict: Price is RED relative to Open ({price_diff:.1f} pts), but PCR is BULLISH (>1.50: {pcr:.2f}). Stand aside."
                     }
                 else:
                     rec = {
                         "action": "WAIT / NEUTRAL",
                         "type": "WAIT_NEUTRAL",
-                        "reason": f"10:00 AM Pivot Neutral: PCR {pcr:.2f} & Price relative to Open ({price_diff:+.1f} pts) are in a sideways zone."
+                        "reason": f"10:00 AM Pivot Neutral: PCR {pcr:.2f} & Price relative to Open ({price_diff:+.1f} pts) are in a sideways zone (Target PCR: >1.5 or <0.5)."
                     }
             else:
                 # Before 10:00 AM: Standard Real-Time Momentum Logic
