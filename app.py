@@ -1752,6 +1752,29 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(options_trader.status()))
         if path == "/api/oi_metrics":
             return self._send(200, dumps(options_trader.get_live_oi_metrics()))
+        if path == "/api/sector_values":
+            try:
+                import zerodha as Z
+                kc = Z.kite()
+                sec_syms = [
+                    "NSE:NIFTY BANK",
+                    "NSE:NIFTY IT",
+                    "NSE:NIFTY AUTO",
+                    "NSE:NIFTY FMCG",
+                    "NSE:NIFTY METAL",
+                    "NSE:NIFTY PHARMA"
+                ]
+                quotes = kc.quote(sec_syms)
+                out = {}
+                for k, q in quotes.items():
+                    name = k.replace("NSE:", "")
+                    ltp = q.get("last_price", 0)
+                    close = q.get("ohlc", {}).get("close", 0)
+                    chg = round(((ltp - close) / close * 100), 2) if close > 0 else 0.0
+                    out[name] = {"ltp": ltp, "change": chg}
+                return self._send(200, dumps(out))
+            except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
         if path == "/api/autotrader/stop":
             import autotrader as AT
             from urllib.parse import urlparse, parse_qs
