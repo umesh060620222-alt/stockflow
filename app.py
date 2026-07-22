@@ -1754,7 +1754,6 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, dumps(options_trader.get_live_oi_metrics()))
         if path == "/api/options/execute_spread":
             from urllib.parse import urlparse, parse_qs
-            import zerodha as Z
             try:
                 params = parse_qs(urlparse(self.path).query)
                 spread_type = params.get("type", [""])[0]
@@ -1815,7 +1814,6 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/sector_values":
             try:
-                import zerodha as Z
                 kc = Z.kite()
                 sec_syms = [
                     "NSE:NIFTY BANK",
