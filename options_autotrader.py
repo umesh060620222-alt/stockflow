@@ -380,12 +380,12 @@ class OptionsAutoTrader:
                     continue
 
                 # Set session open price if missing
-                if self.nifty_open is None:
-                    self.nifty_open = ltp
+                if getattr(self, 'nifty_open', None) is None:
+                    self.nifty_open = float(d_q.get("ohlc", {}).get("open") or ltp)
                     self._log(f"First Nifty Spot Tick observed. Session Open locked at Rs. {self.nifty_open}")
 
                 # Fetch real-time ATM Put & Call Open Interest (OI) metrics
-                self._fetch_oi_metrics(kc, ltp)
+                self._fetch_oi_metrics(kc, ltp, self.nifty_open)
 
                 ist = self._ist()
                 time_str = ist.strftime("%H:%M")
@@ -785,7 +785,7 @@ class OptionsAutoTrader:
                 "started_at": time.time()
             }
 
-    def _fetch_oi_metrics(self, kc, spot_ltp):
+    def _fetch_oi_metrics(self, kc, spot_ltp, nifty_open=None):
         """Fetch ATM Put & Call Open Interest from Zerodha to check institutional dip buying."""
         now = time.time()
         # Allow 4-second polling intervals
@@ -794,6 +794,13 @@ class OptionsAutoTrader:
         
         self._last_oi_fetch = now
         try:
+            if nifty_open is None:
+                try:
+                    q_nifty = kc.quote(["NSE:NIFTY 50"]).get("NSE:NIFTY 50", {})
+                    nifty_open = float(q_nifty.get("ohlc", {}).get("open") or spot_ltp)
+                except:
+                    nifty_open = spot_ltp
+                    
             today_date = self._ist().date()
             expiry_date = Z.get_expiry_date(kc, today_date)
             
@@ -879,54 +886,105 @@ class OptionsAutoTrader:
             # Check if there is strong Put support
             best_support_strike = floor_strike if pcr_floor >= 1.05 else (ceil_strike if pcr_ceil >= 1.05 else (strike_atm if pcr_atm >= 1.05 else None))
 
+            # 10:00 AM Pivot Strategy Check
+            ist_now = self._ist()
+            is_past_10am = ist_now.hour >= 10
+            nifty_open = nifty_open or spot_ltp
+            is_price_green = spot_ltp >= nifty_open
+            price_diff = spot_ltp - nifty_open
+
             rec = {}
-            if pcr <= 0.75 and pcr_change_5m <= -0.04:
-                rec = {
-                    "action": "BUY PE (PUT)",
-                    "type": "BUY_PE",
-                    "symbol": pe_sym,
-                    "strike": strike_atm,
-                    "opt_ltp": pe_ltp,
-                    "target_opt": round(pe_ltp + 15.0, 2),
-                    "sl_opt": round(max(1.0, pe_ltp - 10.0), 2),
-                    "reason": f"Call writers in control & PCR is FALLING ({pcr_direction}). PE momentum."
-                }
-            elif pcr >= 1.0 and pcr_change_5m >= 0.04:
-                rec = {
-                    "action": "BUY CE (CALL)",
-                    "type": "BUY_CE",
-                    "symbol": ce_sym,
-                    "strike": strike_atm,
-                    "opt_ltp": ce_ltp,
-                    "target_opt": round(ce_ltp + 15.0, 2),
-                    "sl_opt": round(max(1.0, ce_ltp - 10.0), 2),
-                    "reason": f"Put writers building support & PCR is RISING ({pcr_direction}). CE momentum."
-                }
-            elif best_support_strike:
-                sell_s = int(best_support_strike - 100)
-                buy_s = sell_s - 100
-                support_pcr = pcr_floor if best_support_strike == floor_strike else pcr_ceil
-                rec = {
-                    "action": f"SELL {sell_s} PE / BUY {buy_s} PE",
-                    "type": "BULL_PUT_SPREAD",
-                    "sell_strike": sell_s,
-                    "buy_strike": buy_s,
-                    "cushion_pts": int(round(spot_ltp - sell_s)),
-                    "reason": f"Put Support Floor at {int(best_support_strike)} (PCR {support_pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
-                }
-            else:
-                if pcr < 0.9 and pcr_change_5m > 0:
+            if is_past_10am:
+                # 10:00 AM Pivot Strategy: Trend + PCR Confirmation
+                if is_price_green and pcr >= 1.10:
+                    sell_s = int(strike_atm - 100)
+                    buy_s = sell_s - 100
                     rec = {
-                        "action": "WAIT / DO NOT BUY PE",
-                        "type": "WAIT_RISING_PCR",
-                        "reason": f"PCR is RISING ({pcr_direction}) from low level ({pcr}). Put writers building floor — DO NOT BUY PE! Wait for PCR >= 1.0 to Buy CE."
+                        "action": f"SELL {sell_s} PE / BUY {buy_s} PE (10 AM BULL)",
+                        "type": "BULL_PUT_SPREAD",
+                        "sell_strike": sell_s,
+                        "buy_strike": buy_s,
+                        "cushion_pts": int(round(spot_ltp - sell_s)),
+                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is GREEN relative to Open (+{price_diff:.1f} pts) & PCR is BULLISH ({pcr:.2f}). Probability of green close is 66.7%."
+                    }
+                elif not is_price_green and pcr <= 0.90:
+                    sell_s = int(strike_atm + 50)
+                    buy_s = sell_s + 100
+                    rec = {
+                        "action": f"SELL {sell_s} CE / BUY {buy_s} CE (10 AM BEAR)",
+                        "type": "BEAR_CALL_SPREAD",
+                        "sell_strike": sell_s,
+                        "buy_strike": buy_s,
+                        "cushion_pts": int(round(sell_s - spot_ltp)),
+                        "reason": f"🔥 10:00 AM Pivot CONFIRMED: Price is RED relative to Open ({price_diff:.1f} pts) & PCR is BEARISH ({pcr:.2f}). Probability of red close is 70.8%."
+                    }
+                elif is_price_green and pcr < 0.90:
+                    rec = {
+                        "action": "STAND ASIDE / CONFLICT",
+                        "type": "WAIT_NEUTRAL",
+                        "reason": f"⚠️ 10:00 AM Conflict: Price is GREEN relative to Open (+{price_diff:.1f} pts), but PCR is BEARISH ({pcr:.2f}). Stand aside for alignment."
+                    }
+                elif not is_price_green and pcr > 1.10:
+                    rec = {
+                        "action": "STAND ASIDE / CONFLICT",
+                        "type": "WAIT_NEUTRAL",
+                        "reason": f"⚠️ 10:00 AM Conflict: Price is RED relative to Open ({price_diff:.1f} pts), but PCR is BULLISH ({pcr:.2f}). Stand aside for alignment."
                     }
                 else:
                     rec = {
                         "action": "WAIT / NEUTRAL",
                         "type": "WAIT_NEUTRAL",
-                        "reason": f"PCR {pcr} is in neutral range ({pcr_direction}). Awaiting clear institutional trend."
+                        "reason": f"10:00 AM Pivot Neutral: PCR {pcr:.2f} & Price relative to Open ({price_diff:+.1f} pts) are in a sideways zone."
                     }
+            else:
+                # Before 10:00 AM: Standard Real-Time Momentum Logic
+                if pcr <= 0.75 and pcr_change_5m <= -0.04:
+                    rec = {
+                        "action": "BUY PE (PUT)",
+                        "type": "BUY_PE",
+                        "symbol": pe_sym,
+                        "strike": strike_atm,
+                        "opt_ltp": pe_ltp,
+                        "target_opt": round(pe_ltp + 15.0, 2),
+                        "sl_opt": round(max(1.0, pe_ltp - 10.0), 2),
+                        "reason": f"Call writers in control & PCR is FALLING ({pcr_direction}). PE momentum."
+                    }
+                elif pcr >= 1.0 and pcr_change_5m >= 0.04:
+                    rec = {
+                        "action": "BUY CE (CALL)",
+                        "type": "BUY_CE",
+                        "symbol": ce_sym,
+                        "strike": strike_atm,
+                        "opt_ltp": ce_ltp,
+                        "target_opt": round(ce_ltp + 15.0, 2),
+                        "sl_opt": round(max(1.0, ce_ltp - 10.0), 2),
+                        "reason": f"Put writers building support & PCR is RISING ({pcr_direction}). CE momentum."
+                    }
+                elif best_support_strike:
+                    sell_s = int(best_support_strike - 100)
+                    buy_s = sell_s - 100
+                    support_pcr = pcr_floor if best_support_strike == floor_strike else pcr_ceil
+                    rec = {
+                        "action": f"SELL {sell_s} PE / BUY {buy_s} PE",
+                        "type": "BULL_PUT_SPREAD",
+                        "sell_strike": sell_s,
+                        "buy_strike": buy_s,
+                        "cushion_pts": int(round(spot_ltp - sell_s)),
+                        "reason": f"Put Support Floor at {int(best_support_strike)} (PCR {support_pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
+                    }
+                else:
+                    if pcr < 0.9 and pcr_change_5m > 0:
+                        rec = {
+                            "action": "WAIT / DO NOT BUY PE",
+                            "type": "WAIT_RISING_PCR",
+                            "reason": f"PCR is RISING ({pcr_direction}) from low level ({pcr}). Put writers building floor — DO NOT BUY PE! Wait for PCR >= 1.0 to Buy CE."
+                        }
+                    else:
+                        rec = {
+                            "action": "WAIT / NEUTRAL",
+                            "type": "WAIT_NEUTRAL",
+                            "reason": f"PCR {pcr} is in neutral range ({pcr_direction}). Awaiting clear institutional trend."
+                        }
 
             self._oi_metrics = {
                 "pcr": pcr,
@@ -967,7 +1025,8 @@ class OptionsAutoTrader:
             d_q = q.get("NSE:NIFTY 50")
             if d_q and d_q.get("last_price"):
                 spot = float(d_q["last_price"])
-                return self._fetch_oi_metrics(kc, spot)
+                nifty_open = float(d_q.get("ohlc", {}).get("open") or spot)
+                return self._fetch_oi_metrics(kc, spot, nifty_open)
         except Exception as e:
             log.warning(f"Error fetching live OI: {e}")
         return getattr(self, "_oi_metrics", {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})

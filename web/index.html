@@ -4290,6 +4290,24 @@ async function pollLiveOiMetrics() {
               </div>
             </div>
           `;
+        } else if (rec.type === 'BEAR_CALL_SPREAD') {
+          bullContentEl.innerHTML = `
+            <div style="background:#2a0c0c;border:1px solid #7f1d1d;border-radius:8px;padding:10px 14px;color:#e4e4e7">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span class="pill neg" style="font-size:12px;font-weight:700;padding:3px 10px;background:#3f1a1a;color:#f87171;border:1px solid #7f1d1d">🔴 10:00 AM CONFIRMED BEAR CALL SPREAD</span>
+                <span style="font-weight:700;color:#f87171">Nifty Spot: ₹${spotPrice.toFixed(2)}</span>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:4px">
+                Trade Setup: SELL 1 Lot NIFTY ${rec.sell_strike} CE & BUY 1 Lot NIFTY ${rec.buy_strike} CE
+              </div>
+              <div style="font-size:11px;color:#d1d5db;line-height:1.5">
+                • <b>Bearish Cushion</b>: <b style="color:#f87171">${rec.cushion_pts || 50} Points Buffer</b> above Nifty Spot (Bearish Pivot)<br>
+                • <b>Institutional Confirmation</b>: ${rec.reason}<br>
+                • <b>Profit Target</b>: Exit at <b style="color:#34d399">+₹800 - ₹1,000 profit per lot</b> (50% max decay)<br>
+                • <b>Invalidation / Stop Loss</b>: Close spread if Nifty Spot breaks above <b style="color:#f87171">₹${rec.sell_strike + 30}</b>
+              </div>
+            </div>
+          `;
         } else {
           bullContentEl.innerHTML = `
             <div style="background:#1a1c20;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#9ca3af">
