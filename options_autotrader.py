@@ -788,25 +788,37 @@ class OptionsAutoTrader:
     def _fetch_oi_metrics(self, kc, spot_ltp):
         """Fetch ATM Put & Call Open Interest from Zerodha to check institutional dip buying."""
         now = time.time()
-        if hasattr(self, '_last_oi_fetch') and now - getattr(self, '_last_oi_fetch', 0) < 10.0:
+        # Allow 4-second polling intervals
+        if hasattr(self, '_last_oi_fetch') and now - getattr(self, '_last_oi_fetch', 0) < 4.0:
             return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
         
         self._last_oi_fetch = now
         try:
             today_date = self._ist().date()
             expiry_date = Z.get_expiry_date(kc, today_date)
+            
+            strike_atm = int(round(spot_ltp / 50.0) * 50.0)
+            strike_minus = strike_atm - 50
+            strike_plus = strike_atm + 50
+            
             floor_strike = int(spot_ltp // 50.0) * 50.0
             ceil_strike = floor_strike + 50.0
-            strike = int(round(spot_ltp / 50.0) * 50.0)
             
-            floor_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, floor_strike, "PE")
-            floor_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, floor_strike, "CE")
-            ceil_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, ceil_strike, "PE")
-            ceil_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, ceil_strike, "CE")
+            # Resolve tokens for ATM, ATM-50, ATM+50
+            atm_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_atm, "PE")
+            atm_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_atm, "CE")
+            minus_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_minus, "PE")
+            minus_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_minus, "CE")
+            plus_pe_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_plus, "PE")
+            plus_ce_tok = Z.get_option_token(kc, "NIFTY", expiry_date, strike_plus, "CE")
             
             insts = Z.get_nfo_instruments(kc)
             tokens = {}
-            for t_val, name_val in [(floor_pe_tok, "floor_pe"), (floor_ce_tok, "floor_ce"), (ceil_pe_tok, "ceil_pe"), (ceil_ce_tok, "ceil_ce")]:
+            for t_val, name_val in [
+                (atm_pe_tok, "atm_pe"), (atm_ce_tok, "atm_ce"),
+                (minus_pe_tok, "minus_pe"), (minus_ce_tok, "minus_ce"),
+                (plus_pe_tok, "plus_pe"), (plus_ce_tok, "plus_ce")
+            ]:
                 if t_val:
                     sym_val = next((i["tradingsymbol"] for i in insts if int(i.get("instrument_token") or 0) == t_val), None)
                     if sym_val:
@@ -815,35 +827,39 @@ class OptionsAutoTrader:
             symbols_list = [f"NFO:{s}" for s in tokens.values()]
             quotes = kc.quote(symbols_list) if symbols_list else {}
 
-            floor_pe_q = quotes.get(f"NFO:{tokens.get('floor_pe')}", {})
-            floor_ce_q = quotes.get(f"NFO:{tokens.get('floor_ce')}", {})
-            ceil_pe_q = quotes.get(f"NFO:{tokens.get('ceil_pe')}", {})
-            ceil_ce_q = quotes.get(f"NFO:{tokens.get('ceil_ce')}", {})
+            def parse_opt(name):
+                q = quotes.get(f"NFO:{tokens.get(name)}", {})
+                return {
+                    "oi": int(q.get("oi") or 0),
+                    "ltp": float(q.get("last_price") or 0)
+                }
 
-            floor_pe_oi = int(floor_pe_q.get("oi") or 0)
-            floor_ce_oi = int(floor_ce_q.get("oi") or 0)
-            ceil_pe_oi = int(ceil_pe_q.get("oi") or 0)
-            ceil_ce_oi = int(ceil_ce_q.get("oi") or 0)
+            atm_pe = parse_opt("atm_pe")
+            atm_ce = parse_opt("atm_ce")
+            minus_pe = parse_opt("minus_pe")
+            minus_ce = parse_opt("minus_ce")
+            plus_pe = parse_opt("plus_pe")
+            plus_ce = parse_opt("plus_ce")
 
-            pcr_floor = round(floor_pe_oi / floor_ce_oi, 2) if floor_ce_oi > 0 else 1.0
-            pcr_ceil = round(ceil_pe_oi / ceil_ce_oi, 2) if ceil_ce_oi > 0 else 1.0
+            pcr_atm = round(atm_pe["oi"] / atm_ce["oi"], 2) if atm_ce["oi"] > 0 else 1.0
+            pcr_minus = round(minus_pe["oi"] / minus_ce["oi"], 2) if minus_ce["oi"] > 0 else 1.0
+            pcr_plus = round(plus_pe["oi"] / plus_ce["oi"], 2) if plus_ce["oi"] > 0 else 1.0
 
-            if strike == floor_strike:
-                pe_oi, ce_oi, pcr = floor_pe_oi, floor_ce_oi, pcr_floor
-                pe_sym = tokens.get('floor_pe')
-                ce_sym = tokens.get('floor_ce')
-                pe_ltp = float(floor_pe_q.get("last_price") or 0)
-                ce_ltp = float(floor_ce_q.get("last_price") or 0)
-            else:
-                pe_oi, ce_oi, pcr = ceil_pe_oi, ceil_ce_oi, pcr_ceil
-                pe_sym = tokens.get('ceil_pe')
-                ce_sym = tokens.get('ceil_ce')
-                pe_ltp = float(ceil_pe_q.get("last_price") or 0)
-                ce_ltp = float(ceil_ce_q.get("last_price") or 0)
+            # Map floor/ceil PCRs for the dual-strike support checks
+            pcr_floor = pcr_atm if floor_strike == strike_atm else (pcr_minus if floor_strike == strike_minus else pcr_plus)
+            pcr_ceil = pcr_atm if ceil_strike == strike_atm else (pcr_plus if ceil_strike == strike_plus else pcr_minus)
+
+            pcr = pcr_atm
+            pe_oi = atm_pe["oi"]
+            ce_oi = atm_ce["oi"]
+            pe_ltp = atm_pe["ltp"]
+            ce_ltp = atm_ce["ltp"]
+            pe_sym = tokens.get("atm_pe")
+            ce_sym = tokens.get("atm_ce")
 
             oi_trend = "INSTITUTIONAL PE BUYING (SUPPORT)" if pcr >= 1.2 else "CE CALL WRITING (RESISTANCE)" if pcr <= 0.8 else "NEUTRAL OI"
             
-            # PCR Trajectory Tracking (20-minute rolling window to hold 10m history)
+            # PCR Trajectory Tracking (20-minute rolling window)
             if not hasattr(self, '_pcr_history'):
                 self._pcr_history = []
             self._pcr_history.append((now, pcr))
@@ -860,32 +876,31 @@ class OptionsAutoTrader:
             dir_10m = f"RISING (+{pcr_change_10m:.2f})" if pcr_change_10m >= 0.08 else (f"FALLING ({pcr_change_10m:.2f})" if pcr_change_10m <= -0.08 else "STABLE")
             pcr_direction = f"5m: {dir_5m} | 10m: {dir_10m}"
 
-            # Check if there is strong Put support at floor_strike, ceil_strike, or primary ATM strike
-            best_support_strike = floor_strike if pcr_floor >= 1.05 else (ceil_strike if pcr_ceil >= 1.05 else (strike if pcr >= 1.05 else None))
+            # Check if there is strong Put support
+            best_support_strike = floor_strike if pcr_floor >= 1.05 else (ceil_strike if pcr_ceil >= 1.05 else (strike_atm if pcr_atm >= 1.05 else None))
 
-            # Trade Recommendation Logic based on PCR Trajectory & Levels
             rec = {}
             if pcr <= 0.75 and pcr_change_5m <= -0.04:
                 rec = {
                     "action": "BUY PE (PUT)",
                     "type": "BUY_PE",
                     "symbol": pe_sym,
-                    "strike": strike,
+                    "strike": strike_atm,
                     "opt_ltp": pe_ltp,
                     "target_opt": round(pe_ltp + 15.0, 2),
                     "sl_opt": round(max(1.0, pe_ltp - 10.0), 2),
-                    "reason": f"Call writers in full control & PCR is FALLING ({pcr_direction}). High conviction PE momentum."
+                    "reason": f"Call writers in control & PCR is FALLING ({pcr_direction}). PE momentum."
                 }
             elif pcr >= 1.0 and pcr_change_5m >= 0.04:
                 rec = {
                     "action": "BUY CE (CALL)",
                     "type": "BUY_CE",
                     "symbol": ce_sym,
-                    "strike": strike,
+                    "strike": strike_atm,
                     "opt_ltp": ce_ltp,
                     "target_opt": round(ce_ltp + 15.0, 2),
                     "sl_opt": round(max(1.0, ce_ltp - 10.0), 2),
-                    "reason": f"Put writers building strong support & PCR is RISING ({pcr_direction}). High conviction CE momentum."
+                    "reason": f"Put writers building support & PCR is RISING ({pcr_direction}). CE momentum."
                 }
             elif best_support_strike:
                 sell_s = int(best_support_strike - 100)
@@ -897,7 +912,7 @@ class OptionsAutoTrader:
                     "sell_strike": sell_s,
                     "buy_strike": buy_s,
                     "cushion_pts": int(round(spot_ltp - sell_s)),
-                    "reason": f"Solid Put Support Floor at {int(best_support_strike)} (PCR {support_pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
+                    "reason": f"Put Support Floor at {int(best_support_strike)} (PCR {support_pcr}). Ultra-Safe {int(round(spot_ltp - sell_s))}-pt Cushion Entry."
                 }
             else:
                 if pcr < 0.9 and pcr_change_5m > 0:
@@ -917,7 +932,7 @@ class OptionsAutoTrader:
                 "pcr": pcr,
                 "pe_oi": pe_oi,
                 "ce_oi": ce_oi,
-                "strike": strike,
+                "strike": strike_atm,
                 "spot": round(spot_ltp, 2),
                 "oi_trend": oi_trend,
                 "pcr_direction": pcr_direction,
@@ -927,7 +942,17 @@ class OptionsAutoTrader:
                 "pe_sym": pe_sym,
                 "ce_ltp": ce_ltp,
                 "pe_ltp": pe_ltp,
-                "trade_recommendation": rec
+                "trade_recommendation": rec,
+                
+                # Multi-strike metrics for charting
+                "strike_minus": strike_minus,
+                "strike_plus": strike_plus,
+                "pcr_minus": pcr_minus,
+                "pcr_plus": pcr_plus,
+                "pe_oi_minus": minus_pe["oi"],
+                "ce_oi_minus": minus_ce["oi"],
+                "pe_oi_plus": plus_pe["oi"],
+                "ce_oi_plus": plus_ce["oi"]
             }
             return self._oi_metrics
         except Exception as e:

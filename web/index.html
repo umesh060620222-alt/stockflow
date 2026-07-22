@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>stockflow</title>
 <style>
@@ -314,6 +315,11 @@
         <span id="scBullTime" style="font-size:11px;color:#6b7280"></span>
       </div>
       <div id="scBullContent" style="font-size:12px;color:#9ca3af">Analyzing real-time Nifty Spot & Option OI for Bullish entries...</div>
+    </div>
+    <!-- Real-Time PCR Multi-Strike Chart -->
+    <div id="scOiChartContainer" style="margin-bottom:14px;padding:12px 16px;background:#1a1c20;border-radius:10px;border:1px solid #2a2c30">
+      <div style="font-size:11px;color:#a1a1aa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;font-weight:700">📈 Live Multi-Strike PCR Trend (ATM-50 vs ATM vs ATM+50 · 5s Real-Time)</div>
+      <canvas id="oiLineChart" style="max-height:160px;width:100%"></canvas>
     </div>
     <div style="margin-bottom:10px"><b style="font-size:14px">Volume Watch</b></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
@@ -4087,6 +4093,93 @@ async function loadLiveSignalLogs() {
 // Load daily signal logs list on startup
 loadLiveSignalLogs();
 
+let oiChart = null;
+const oiChartLabels = [];
+const oiChartDataMinus = [];
+const oiChartDataAtm = [];
+const oiChartDataPlus = [];
+
+function updateOiChart(oi) {
+  if (!oiChart) {
+    const ctx = document.getElementById('oiLineChart');
+    if (!ctx) return;
+    oiChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: oiChartLabels,
+        datasets: [
+          {
+            label: `ATM-50 (${oi.strike_minus})`,
+            data: oiChartDataMinus,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            borderWidth: 2,
+            pointRadius: 1,
+            tension: 0.3
+          },
+          {
+            label: `ATM (${oi.strike})`,
+            data: oiChartDataAtm,
+            borderColor: '#fbbf24',
+            backgroundColor: 'rgba(251, 191, 36, 0.1)',
+            borderWidth: 3,
+            pointRadius: 2,
+            tension: 0.3
+          },
+          {
+            label: `ATM+50 (${oi.strike_plus})`,
+            data: oiChartDataPlus,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            borderWidth: 2,
+            pointRadius: 1,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            grid: { color: '#23252a' },
+            ticks: { color: '#9ca3af', font: { size: 9 } }
+          },
+          y: {
+            grid: { color: '#23252a' },
+            ticks: { color: '#9ca3af', font: { size: 10 } }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: { color: '#cbd5e1', font: { size: 10 } }
+          }
+        }
+      }
+    });
+  }
+
+  const timeLabel = new Date().toLocaleTimeString('en-GB');
+  oiChartLabels.push(timeLabel);
+  oiChartDataMinus.push(oi.pcr_minus);
+  oiChartDataAtm.push(oi.pcr);
+  oiChartDataPlus.push(oi.pcr_plus);
+
+  if (oiChartLabels.length > 30) {
+    oiChartLabels.shift();
+    oiChartDataMinus.shift();
+    oiChartDataAtm.shift();
+    oiChartDataPlus.shift();
+  }
+
+  // Update strike labels dynamically if ATM shifts
+  oiChart.data.datasets[0].label = `ATM-50 (${oi.strike_minus})`;
+  oiChart.data.datasets[1].label = `ATM (${oi.strike})`;
+  oiChart.data.datasets[2].label = `ATM+50 (${oi.strike_plus})`;
+
+  oiChart.update('none'); // silent update for performance
+}
+
 async function pollLiveOiMetrics() {
   const el = document.getElementById('scOiContent');
   const elLive = document.getElementById('scOiContentLive');
@@ -4097,7 +4190,6 @@ async function pollLiveOiMetrics() {
     if (oi && oi.strike) {
       const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
       const pcrDir = oi.pcr_direction || 'STABLE';
-      const dirCol = pcrDir.includes('RISING') ? '#34d399' : (pcrDir.includes('FALLING') ? '#f87171' : '#9ca3af');
       const html = `
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px">
           <div>Strike: <b style="color:#fbbf24">ATM ${oi.strike}</b></div>
@@ -4110,6 +4202,9 @@ async function pollLiveOiMetrics() {
       `;
       if (el) el.innerHTML = html;
       if (elLive) elLive.innerHTML = html;
+
+      // Update Chart with latest data points
+      updateOiChart(oi);
 
       // Render Live Option Trade Advisor (Smart PCR Trajectory Engine)
       const bullContentEl = document.getElementById('scBullContent');
@@ -4209,8 +4304,8 @@ async function pollLiveOiMetrics() {
   }
 }
 
-// Poll continuously every 4 seconds
-setInterval(pollLiveOiMetrics, 4000);
+// Poll continuously every 5 seconds
+setInterval(pollLiveOiMetrics, 5000);
 pollLiveOiMetrics();
 </script>
 </body>
