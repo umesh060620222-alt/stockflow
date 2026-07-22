@@ -310,7 +310,10 @@
     </div>
     <!-- Sectoral Index Watch Banner -->
     <div id="scSectorBanner" style="margin-bottom:14px;padding:10px 14px;background:#1a1c20;border-radius:8px;border:1px solid #2a2c30">
-      <b style="font-size:12px;color:#a1a1aa;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">🏛 Live Sectoral Index Watch (Real-Time)</b>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <b style="font-size:12px;color:#a1a1aa;text-transform:uppercase;letter-spacing:.05em">🏛 Live Sectoral Index Watch (5s Real-Time)</b>
+        <span id="scSectorRec" style="font-size:11px;font-weight:bold;padding:2px 8px;border-radius:4px"></span>
+      </div>
       <div id="scSectorContent" style="display:flex;flex-wrap:wrap;gap:10px;font-size:12px">Fetching sector values...</div>
     </div>
     <!-- Live Bullish Option Trade Advisor Card -->
@@ -4315,11 +4318,13 @@ pollLiveOiMetrics();
 
 async function pollSectorValues() {
   const el = document.getElementById('scSectorContent');
+  const recEl = document.getElementById('scSectorRec');
   if (!el) return;
   try {
     const res = await fetch('/api/sector_values');
     const data = await res.json();
     if (data && !data.error) {
+      // Render sector cards
       el.innerHTML = Object.keys(data).map(key => {
         const s = data[key];
         const col = s.change >= 0 ? '#34d399' : '#f87171';
@@ -4332,16 +4337,45 @@ async function pollSectorValues() {
           </div>
         `;
       }).join('');
+
+      // Calculate weighted index score: Bank (33%), IT (14%), Auto (8%), FMCG (9%), Metal (3%), Pharma (3%)
+      const getChg = name => (data[name] || {}).change || 0.0;
+      const score = (0.33 * getChg("NIFTY BANK")) + 
+                    (0.14 * getChg("NIFTY IT")) + 
+                    (0.08 * getChg("NIFTY AUTO")) + 
+                    (0.09 * getChg("NIFTY FMCG")) + 
+                    (0.03 * getChg("NIFTY METAL")) + 
+                    (0.03 * getChg("NIFTY PHARMA"));
+      
+      if (recEl) {
+        if (score >= 0.12) {
+          recEl.style.background = '#0c2a1c';
+          recEl.style.color = '#34d399';
+          recEl.style.border = '1px solid #14532d';
+          recEl.textContent = '🟢 SECTOR BULLISH BIAS';
+        } else if (score <= -0.12) {
+          recEl.style.background = '#2a1414';
+          recEl.style.color = '#f87171';
+          recEl.style.border = '1px solid #4c1d1d';
+          recEl.textContent = '🔴 SECTOR BEARISH BIAS';
+        } else {
+          recEl.style.background = '#23252a';
+          recEl.style.color = '#9ca3af';
+          recEl.style.border = '1px solid #374151';
+          recEl.textContent = '🟡 SECTOR NEUTRAL';
+        }
+      }
     } else {
       el.textContent = 'Sector data temporarily unavailable.';
+      if (recEl) recEl.textContent = '';
     }
   } catch (e) {
     console.error('Error fetching sectors:', e);
   }
 }
 
-// Poll sector values every 8 seconds (to avoid rate limits)
-setInterval(pollSectorValues, 8000);
+// Poll sector values every 5 seconds (matched to User requirement)
+setInterval(pollSectorValues, 5000);
 pollSectorValues();
 </script>
 </body>
