@@ -1195,7 +1195,7 @@ class OptionsAutoTrader:
         exit_premium = t["current_premium"]
         total_shares = t["lots"] * t["lot_size"]
         options_brokerage = 40.0
-        options_slippage = 2.0
+        options_slippage = 0.5
 
         if self.mode == "live" and t["tradingsymbol"]:
             try:
@@ -1338,7 +1338,7 @@ class OptionsAutoTrader:
                 t = self.active_trade
                 total_shares = t["lots"] * t["lot_size"]
                 options_brokerage = 40.0
-                options_slippage = 2.0
+                options_slippage = 0.5
                 pnl_gross = (t["current_premium"] - t["entry_premium"]) * total_shares
                 floating_pnl = pnl_gross - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
 
