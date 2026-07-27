@@ -1212,6 +1212,19 @@ class OptionsAutoTrader:
             self._exit_position(kc, "TIMEOUT", spot_ltp)
             return
 
+        # Check Volume PCR Early Exit safety gate
+        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+        if is_call:
+            if vol_pcr_val >= 1.30:
+                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE exit barrier >= 1.30). Exiting trade early.")
+                self._exit_position(kc, "LOSS", spot_ltp)
+                return
+        else:
+            if vol_pcr_val <= 0.70:
+                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE exit barrier <= 0.70). Exiting trade early.")
+                self._exit_position(kc, "LOSS", spot_ltp)
+                return
+
         # Check trailing breakeven condition (commented out)
         # if not reached_halfway:
         #     if is_call:
