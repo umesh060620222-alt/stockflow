@@ -3917,8 +3917,14 @@ function updateOptAutoTraderUI(d) {
       if (d.oi_metrics && d.oi_metrics.strike) {
         const oi = d.oi_metrics;
         const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
+        const volPcr = oi.vol_pcr !== undefined ? oi.vol_pcr : 1.0;
+        const raw10sVolPcr = oi.raw_10s_vol_pcr !== undefined ? oi.raw_10s_vol_pcr : 1.0;
+        const volPcrCol = volPcr <= 0.75 ? '#34d399' : (volPcr >= 1.25 ? '#f87171' : '#fbbf24');
+        const rawVolPcrCol = raw10sVolPcr <= 0.75 ? '#34d399' : (raw10sVolPcr >= 1.25 ? '#f87171' : '#fbbf24');
+        
         oiHtml = `<div style="margin-top:6px;padding-top:4px;border-top:1px dashed #2a2c30;font-size:11px">
           🏛 <b>Institutional OI (ATM ${oi.strike}):</b> PCR <b style="color:${pcrCol}">${oi.pcr}</b> · Put OI: ${(oi.pe_oi/100000).toFixed(1)}L · Call OI: ${(oi.ce_oi/100000).toFixed(1)}L
+          <div style="margin-top:2px">📊 <b>Volume PCR:</b> 1m EMA <b style="color:${volPcrCol}">${volPcr.toFixed(2)}</b> · Raw 10s <b style="color:${rawVolPcrCol}">${raw10sVolPcr.toFixed(2)}</b></div>
           <div style="color:${pcrCol};font-weight:bold;margin-top:2px">▸ ${oi.oi_trend}</div>
         </div>`;
       }
@@ -4198,10 +4204,17 @@ async function pollLiveOiMetrics() {
     if (oi && oi.strike) {
       const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
       const pcrDir = oi.pcr_direction || 'STABLE';
+      const volPcr = oi.vol_pcr !== undefined ? oi.vol_pcr : 1.0;
+      const raw10sVolPcr = oi.raw_10s_vol_pcr !== undefined ? oi.raw_10s_vol_pcr : 1.0;
+      const volPcrCol = volPcr <= 0.75 ? '#34d399' : (volPcr >= 1.25 ? '#f87171' : '#fbbf24');
+      const rawVolPcrCol = raw10sVolPcr <= 0.75 ? '#34d399' : (raw10sVolPcr >= 1.25 ? '#f87171' : '#fbbf24');
+
       const html = `
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px">
           <div>Strike: <b style="color:#fbbf24">ATM ${oi.strike}</b></div>
           <div>Put-Call Ratio (PCR): <b style="color:${pcrCol};font-size:15px">${oi.pcr}</b></div>
+          <div>Vol PCR (1m EMA): <b style="color:${volPcrCol};font-size:15px">${volPcr.toFixed(2)}</b></div>
+          <div>Vol PCR (Raw 10s): <b style="color:${rawVolPcrCol};font-size:13px">${raw10sVolPcr.toFixed(2)}</b></div>
           <div>PCR Trajectory: <b style="color:#fbbf24;font-size:12px">${pcrDir}</b></div>
           <div>Put OI: <b style="color:#34d399">${(oi.pe_oi/100000).toFixed(1)} Lakhs</b></div>
           <div>Call OI: <b style="color:#f87171">${(oi.ce_oi/100000).toFixed(1)} Lakhs</b></div>

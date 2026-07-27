@@ -436,10 +436,16 @@ class OptionsAutoTrader:
                             curr_t = time.time()
                             pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                             is_pcr_bullish = pcr_val >= 1.50
-                            if not hasattr(self, '_last_filter_log_time') or curr_t - self._last_filter_log_time > 10.0:
-                                self._last_filter_log_time = curr_t
-                                self._log(f"[FILTER CHECK] Long CE target ₹{bounce_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'})")
-                            if long_trend_ok and self.has_vol_conf and is_pcr_bullish:
+                            
+                            # Real-time Volume PCR check to protect against bearish volume dumps
+                            vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                            raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                            is_vol_pcr_ok = vol_pcr_val <= 1.25
+                            
+                            if not hasattr(self, '_last_call_log_time') or curr_t - self._last_call_log_time > 10.0:
+                                self._last_call_log_time = curr_t
+                                self._log(f"[FILTER CHECK] Long CE target ₹{bounce_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 1m EMA: {vol_pcr_val:.2f} {'OK' if is_vol_pcr_ok else 'FAIL'})")
+                            if long_trend_ok and self.has_vol_conf and is_pcr_bullish and is_vol_pcr_ok:
                                 self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
                                 self.l_peak = None
                                 self.l_trough = None
@@ -476,10 +482,16 @@ class OptionsAutoTrader:
                                 curr_t = time.time()
                                 pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                                 is_pcr_bearish = pcr_val <= 0.60
-                                if not hasattr(self, '_last_filter_log_time') or curr_t - self._last_filter_log_time > 10.0:
-                                    self._last_filter_log_time = curr_t
-                                    self._log(f"[FILTER CHECK] Short PE target ₹{short_trigger_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'})")
-                                if short_trend_ok and self.has_vol_conf and is_pcr_bearish:
+                                
+                                # Real-time Volume PCR check to protect against bullish short-squeeze surges
+                                vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                                raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                                is_vol_pcr_ok = vol_pcr_val >= 0.75
+                                
+                                if not hasattr(self, '_last_put_log_time') or curr_t - self._last_put_log_time > 10.0:
+                                    self._last_put_log_time = curr_t
+                                    self._log(f"[FILTER CHECK] Short PE target ₹{short_trigger_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 1m EMA: {vol_pcr_val:.2f} {'OK' if is_vol_pcr_ok else 'FAIL'})")
+                                if short_trend_ok and self.has_vol_conf and is_pcr_bearish and is_vol_pcr_ok:
                                     self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
                                     self.s_trough = None
                                     self.s_peak = None
@@ -842,7 +854,8 @@ class OptionsAutoTrader:
                 q = quotes.get(f"NFO:{tokens.get(name)}", {})
                 return {
                     "oi": int(q.get("oi") or 0),
-                    "ltp": float(q.get("last_price") or 0)
+                    "ltp": float(q.get("last_price") or 0),
+                    "volume": int(q.get("volume") or 0)
                 }
 
             atm_pe = parse_opt("atm_pe")
@@ -851,6 +864,55 @@ class OptionsAutoTrader:
             minus_ce = parse_opt("minus_ce")
             plus_pe = parse_opt("plus_pe")
             plus_ce = parse_opt("plus_ce")
+
+            total_put_vol = atm_pe.get("volume", 0) + minus_pe.get("volume", 0) + plus_pe.get("volume", 0)
+            total_call_vol = atm_ce.get("volume", 0) + minus_ce.get("volume", 0) + plus_ce.get("volume", 0)
+
+            # 10-Second Volume Delta Tracking
+            if not hasattr(self, '_raw_vol_snapshots'):
+                self._raw_vol_snapshots = []
+            self._raw_vol_snapshots.append({
+                "time": now,
+                "put_vol": total_put_vol,
+                "call_vol": total_call_vol
+            })
+            self._raw_vol_snapshots = [s for s in self._raw_vol_snapshots if now - s["time"] <= 30]
+
+            # Find snapshot closest to 10 seconds ago
+            target_time = now - 10.0
+            past_snap = None
+            if len(self._raw_vol_snapshots) > 1:
+                past_snap = min(self._raw_vol_snapshots[:-1], key=lambda s: abs(s["time"] - target_time))
+
+            if past_snap and abs(past_snap["time"] - target_time) <= 6.0:
+                delta_put = total_put_vol - past_snap["put_vol"]
+                delta_call = total_call_vol - past_snap["call_vol"]
+            else:
+                delta_put = total_put_vol
+                delta_call = total_call_vol
+
+            # Raw 10s Volume PCR
+            raw_10s_vol_pcr = round(delta_put / delta_call, 2) if delta_call > 0 else 1.0
+
+            # 1-Minute Rolling EMA of 10s Delta Volume PCR
+            if not hasattr(self, '_vol_pcr_10s_history'):
+                self._vol_pcr_10s_history = []
+            self._vol_pcr_10s_history.append((now, raw_10s_vol_pcr))
+            self._vol_pcr_10s_history = [(t_h, v_h) for t_h, v_h in self._vol_pcr_10s_history if now - t_h <= 60]
+
+            if len(self._vol_pcr_10s_history) > 1:
+                sorted_hist = sorted(self._vol_pcr_10s_history, key=lambda x: x[0])
+                values = [x[1] for x in sorted_hist]
+                N_periods = 15.0  # 60s / 4s = 15 periods
+                alpha_val = 2.0 / (N_periods + 1.0)
+                vol_pcr_ema = values[0]
+                for val in values[1:]:
+                    vol_pcr_ema = (val * alpha_val) + (vol_pcr_ema * (1.0 - alpha_val))
+                vol_pcr_ema = round(vol_pcr_ema, 2)
+            else:
+                vol_pcr_ema = raw_10s_vol_pcr
+
+            vol_pcr = vol_pcr_ema
 
             pcr_atm = round(atm_pe["oi"] / atm_ce["oi"], 2) if atm_ce["oi"] > 0 else 1.0
             pcr_minus = round(minus_pe["oi"] / minus_ce["oi"], 2) if minus_ce["oi"] > 0 else 1.0
@@ -992,6 +1054,11 @@ class OptionsAutoTrader:
 
             self._oi_metrics = {
                 "pcr": pcr,
+                "vol_pcr": vol_pcr,
+                "vol_pcr_ema": vol_pcr_ema,
+                "raw_10s_vol_pcr": raw_10s_vol_pcr,
+                "total_put_vol": total_put_vol,
+                "total_call_vol": total_call_vol,
                 "pe_oi": pe_oi,
                 "ce_oi": ce_oi,
                 "strike": strike_atm,
@@ -1019,7 +1086,7 @@ class OptionsAutoTrader:
             return self._oi_metrics
         except Exception as e:
             log.warning(f"Failed to fetch OI metrics: {e}")
-            return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
+            return getattr(self, '_oi_metrics', {"pcr": 1.0, "vol_pcr": 1.0, "vol_pcr_ema": 1.0, "raw_10s_vol_pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
 
     def get_live_oi_metrics(self):
         """Fetch live OI metrics from Zerodha even when autotrader thread is not running."""
