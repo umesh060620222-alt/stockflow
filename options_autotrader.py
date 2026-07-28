@@ -435,7 +435,7 @@ class OptionsAutoTrader:
                             long_trend_ok = is_nifty_above_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today)
                             curr_t = time.time()
                             pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                            is_pcr_bullish = pcr_val >= 1.50
+                            is_pcr_bullish = pcr_val >= 1.20
                             
                             # Real-time Volume PCR check to protect against bearish volume dumps
                             vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
@@ -481,7 +481,7 @@ class OptionsAutoTrader:
                                 short_trend_ok = is_nifty_below_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
                                 curr_t = time.time()
                                 pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                                is_pcr_bearish = pcr_val <= 0.60
+                                is_pcr_bearish = pcr_val <= 0.80
                                 
                                 # Real-time Volume PCR check to protect against bullish short-squeeze surges
                                 vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
