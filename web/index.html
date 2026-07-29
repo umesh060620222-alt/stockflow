@@ -263,6 +263,56 @@
           <div><span id="at_pos_pnl_lbl" class="muted">LTP / P&L:</span> <b id="at_pos_pnl">-</b></div>
         </div>
       </div>
+      
+      <!-- Volume PCR-Only Strategy Card (Paper Trading) -->
+      <div class="card" style="margin-top:14px;background:#13151b;border:1px solid #232530">
+          <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Volume PCR-Only Strategy (Paper)</h3>
+          
+          <div id="vol_opt_status" style="font-size:13px;font-weight:bold;color:#10b981">
+              Status: Offline (Idle)
+          </div>
+          <div id="vol_opt_setup_levels" style="margin-top:8px;font-size:12px;background:#18191c;border:1px solid #2a2c30;border-radius:6px;padding:8px 10px;display:none;color:#d4d4d8;line-height:1.6">
+              <!-- Populated dynamically -->
+          </div>
+          
+          <!-- Vol PCR Active Position -->
+          <div id="vol_pos_card" class="card" style="margin-top:14px;background:#18191c;border:1px solid #2a2c30;display:none;padding:10px">
+              <b style="font-size:13px;display:block;margin-bottom:8px;color:#10b981">Active Floating Position (Vol PCR Strategy)</b>
+              <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:10px;font-size:12px">
+                  <div><span class="muted">Symbol:</span> <b id="vol_pos_sym">-</b></div>
+                  <div><span class="muted">Side:</span> <b id="vol_pos_side">-</b></div>
+                  <div><span class="muted">Entry Price:</span> <b id="vol_pos_entry">-</b></div>
+                  <div><span class="muted">LTP / P&L:</span> <b id="vol_pos_pnl">-</b></div>
+              </div>
+          </div>
+          
+          <!-- Vol PCR Completed Trades -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:6px">
+              <b style="font-size:12px">Completed Trades Today (Vol PCR Strategy)</b>
+              <button onclick="copyVolCompletedTrades()" style="width:auto;margin:0;padding:4px 8px;font-size:11px;background:#2a2c30;color:#e4e4e7;border:1px solid #3f3f46;border-radius:4px;cursor:pointer">Copy Trades</button>
+          </div>
+          <div style="max-height:120px;overflow-y:auto;border:1px solid #2a2c30;border-radius:6px">
+              <table>
+                  <thead>
+                      <tr>
+                          <th>Entry Time</th>
+                          <th>Exit Time</th>
+                          <th>Duration</th>
+                          <th>Symbol</th>
+                          <th>Side</th>
+                          <th>Lots</th>
+                          <th>Entry Prem</th>
+                          <th>Exit Prem</th>
+                          <th>Result</th>
+                          <th>P&L</th>
+                      </tr>
+                  </thead>
+                  <tbody id="vol_opt_trades_body">
+                      <tr><td colspan="10" class="muted" style="text-align:center">No trades completed today</td></tr>
+                  </tbody>
+              </table>
+          </div>
+      </div>
     </div>
     
     <div class="card">
