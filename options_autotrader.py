@@ -30,6 +30,8 @@ class OptionsAutoTrader:
         self.candles = []    # list of dicts: {"open", "high", "low", "close", "atr", "nifty_ema", "date"}
         self.active_trade = None  # None or dict of active trade parameters
         self.completed_trades = []
+        self.vol_pcr_active_trade = None
+        self.vol_pcr_completed_trades = []
         self.thread = None
         self._stop = False
         self.nifty_open = None
@@ -57,7 +59,9 @@ class OptionsAutoTrader:
                 "completed_trades": self.completed_trades,
                 "logs": self.logs,
                 "nifty_open": self.nifty_open,
-                "active_trade": self.active_trade
+                "active_trade": self.active_trade,
+            "vol_pcr_active_trade": self.vol_pcr_active_trade,
+            "vol_pcr_completed_trades": self.vol_pcr_completed_trades
             }
             with open("state_autotrader.json", "w") as f:
                 json.dump(state, f)
@@ -76,6 +80,8 @@ class OptionsAutoTrader:
                     self.logs = state.get("logs", [])
                     self.nifty_open = state.get("nifty_open")
                     self.active_trade = state.get("active_trade")
+                    self.vol_pcr_active_trade = state.get("vol_pcr_active_trade")
+                    self.vol_pcr_completed_trades = state.get("vol_pcr_completed_trades", [])
                     ts = self._ist().strftime("%H:%M:%S")
                     self.logs.append(f"[{ts}] Restored today's trade history and logs from state file.")
         except Exception as e:
@@ -492,6 +498,18 @@ class OptionsAutoTrader:
                                 self.s_trough = None
                                 self.s_peak = None
                                 self.s_stage = 1
+                    
+                    # --- VOLUME PCR-ONLY PAPER STRATEGY SCANNER ---
+                    if not self.vol_pcr_active_trade:
+                        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                        # CE Entry: Vol PCR <= 0.80 + Nifty above 5-min EMA + Nifty above 1-min EMA
+                        if vol_pcr_val <= 0.80 and is_nifty_above_macro_ema and is_nifty_above_ema:
+                            self._enter_vol_pcr_position(kc, "BUY CALL (CE)", ltp, atr_val)
+                        # PE Entry: Vol PCR >= 1.25 + Nifty below 5-min EMA + Nifty below 1-min EMA
+                        elif vol_pcr_val >= 1.25 and is_nifty_below_macro_ema and is_nifty_below_ema:
+                            self._enter_vol_pcr_position(kc, "BUY PUT (PE)", ltp, atr_val)
+                    else:
+                        self._manage_vol_pcr_position(kc, ltp)
 
                 # Accumulate 1-minute candle
                 if current_minute != minute_key:
@@ -1402,6 +1420,185 @@ class OptionsAutoTrader:
 
         self._log(f"TRADE CLOSED: {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
 
+
+
+    def _enter_vol_pcr_position(self, kc, side, spot_ltp, atr_val):
+        is_call = "CALL" in side
+        opt_type = "CE" if is_call else "PE"
+        expiry_date = Z.get_expiry_date(kc, self._ist().date())
+        today_date = self._ist().date()
+        if today_date == expiry_date:
+            now_ist = self._ist()
+            if now_ist.hour > 12 or (now_ist.hour == 12 and now_ist.minute >= 30):
+                insts = Z.get_nfo_instruments(kc)
+                next_exp = None
+                if insts:
+                    try:
+                        expiries = sorted(list({
+                            dt.datetime.strptime(i["expiry"], "%Y-%m-%d").date()
+                            for i in insts
+                            if i.get("name") == "NIFTY" and i.get("expiry")
+                        }))
+                        idx = expiries.index(expiry_date)
+                        if idx + 1 < len(expiries):
+                            next_exp = expiries[idx + 1]
+                    except Exception:
+                        pass
+                if next_exp:
+                    expiry_date = next_exp
+        
+        strike = int(round(spot_ltp / 50.0) * 50.0)
+        opt_token = Z.get_option_token(kc, "NIFTY", expiry_date, strike, opt_type)
+        tradingsymbol = ""
+        lot_size = 75
+        if opt_token:
+            insts = Z.get_nfo_instruments(kc)
+            matched = next((i for i in insts if int(i.get("instrument_token") or 0) == opt_token), None)
+            if matched:
+                tradingsymbol = matched["tradingsymbol"]
+                lot_size = int(matched.get("lot_size") or 75)
+        
+        entry_premium = spot_ltp * 0.005
+        if tradingsymbol:
+            try:
+                quote = kc.quote([f"NFO:{tradingsymbol}"])
+                opt_q = quote.get(f"NFO:{tradingsymbol}")
+                if opt_q:
+                    entry_premium = float(opt_q.get("last_price") or entry_premium)
+            except Exception:
+                pass
+        
+        # Apply the fixed 2-point premium discount
+        discounted_premium = max(1.0, entry_premium - 2.0)
+        lots = 1
+        
+        # SL/Target based on 2.0 ATR Spot gap
+        spot_sl = (spot_ltp - 2.0 * atr_val) if is_call else (spot_ltp + 2.0 * atr_val)
+        spot_target = (spot_ltp + 2.0 * atr_val) if is_call else (spot_ltp - 2.0 * atr_val)
+        
+        symbol_str = f"NIFTY {expiry_date.strftime('%d %b').upper()} {strike} {opt_type}"
+        self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {discounted_premium:.2f} premium (LTP: Rs. {entry_premium:.2f}, 2.0pt discount applied)")
+        
+        with self.lock:
+            self.vol_pcr_active_trade = {
+                "side": side,
+                "symbol": symbol_str,
+                "tradingsymbol": tradingsymbol,
+                "entry_time": self._ist().strftime("%H:%M:%S"),
+                "entry_spot": spot_ltp,
+                "spot_sl": spot_sl,
+                "spot_target": spot_target,
+                "current_sl": spot_sl,
+                "entry_premium": discounted_premium,
+                "current_premium": discounted_premium,
+                "lots": lots,
+                "lot_size": lot_size,
+                "started_at": time.time()
+            }
+            self._save_state()
+
+    def _manage_vol_pcr_position(self, kc, spot_ltp):
+        t = self.vol_pcr_active_trade
+        if not t:
+            return
+        
+        side = t["side"]
+        entry_spot = t["entry_spot"]
+        target = t["spot_target"]
+        sl = t["spot_sl"]
+        is_call = "CALL" in side
+        
+        # Paper premium tracking (delta = 0.50)
+        spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
+        t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
+        
+        # Max loss floor (50%)
+        if t["current_premium"] <= 0.50 * t["entry_premium"]:
+            self._log(f"[VOL PCR PAPER] Max Loss Trigger: Premium lost 50% value. Exiting.")
+            self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
+            return
+        
+        # Timeout 45m
+        elapsed_mins = (time.time() - t["started_at"]) / 60.0
+        if elapsed_mins >= 45.0:
+            self._log(f"[VOL PCR PAPER] Time-Decay Timeout (45m). Exiting.")
+            self._exit_vol_pcr_position(kc, "TIMEOUT", spot_ltp)
+            return
+            
+        # Vol PCR exits (soft stops)
+        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+        if is_call:
+            if vol_pcr_val >= 1.30:
+                self._log(f"[VOL PCR PAPER] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.30). Exiting early.")
+                self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
+                return
+        else:
+            if vol_pcr_val <= 0.70:
+                self._log(f"[VOL PCR PAPER] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.70). Exiting early.")
+                self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
+                return
+                
+        # SL/Target Spot Check
+        exit_triggered = False
+        verdict = "OPEN"
+        exit_spot = spot_ltp
+        
+        if is_call:
+            if spot_ltp <= sl:
+                exit_triggered = True
+                verdict = "LOSS"
+                exit_spot = sl
+            elif spot_ltp >= target:
+                exit_triggered = True
+                verdict = "WIN"
+                exit_spot = target
+        else:
+            if spot_ltp >= sl:
+                exit_triggered = True
+                verdict = "LOSS"
+                exit_spot = sl
+            elif spot_ltp <= target:
+                exit_triggered = True
+                verdict = "WIN"
+                exit_spot = target
+                
+        if exit_triggered:
+            self._exit_vol_pcr_position(kc, verdict, exit_spot)
+
+    def _exit_vol_pcr_position(self, kc, verdict, exit_spot):
+        t = self.vol_pcr_active_trade
+        if not t:
+            return
+            
+        exit_premium = t["current_premium"]
+        total_shares = t["lots"] * t["lot_size"]
+        options_brokerage = 40.0
+        options_slippage = 0.5
+        
+        gross_pnl = (exit_premium - t["entry_premium"]) * total_shares
+        net_pnl = gross_pnl - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
+        
+        completed_trade = {
+            "entry_time": t["entry_time"],
+            "exit_time": self._ist().strftime("%H:%M:%S"),
+            "duration": f"{int((time.time() - t['started_at']) / 60.0)}m",
+            "symbol": t["symbol"],
+            "side": t["side"],
+            "lots": t["lots"],
+            "entry_premium": t["entry_premium"],
+            "exit_premium": exit_premium,
+            "result": verdict,
+            "pnl": round(net_pnl)
+        }
+        
+        with self.lock:
+            self.vol_pcr_completed_trades.append(completed_trade)
+            self.vol_pcr_active_trade = None
+            self._save_state()
+            
+        self._log(f"[VOL PCR PAPER CLOSED] {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
+
+
     def status(self):
         with self.lock:
             floating_pnl = 0
@@ -1428,7 +1625,30 @@ class OptionsAutoTrader:
                 "s_drop_target": round(self.s_peak - config.ATR_BOUNCE_MULT * (self.s_trough_atr or 7.0), 2) if (self.s_stage == 3 and self.s_peak) else None,
             }
 
+            # Calculate Vol PCR strategy active trade metrics
+            pt = self.vol_pcr_active_trade
+            vol_pcr_floating_pnl = 0
+            if pt:
+                pt_shares = pt["lots"] * pt["lot_size"]
+                opt_brokerage = 40.0
+                opt_slippage = 0.5
+                pt_pnl_gross = (pt["current_premium"] - pt["entry_premium"]) * pt_shares
+                vol_pcr_floating_pnl = pt_pnl_gross - (pt["lots"] * opt_brokerage) - (opt_slippage * pt_shares)
+
             return {
+                "vol_pcr_active_trade": {
+                    "symbol": pt["symbol"] if self.vol_pcr_active_trade else "-",
+                    "side": pt["side"] if self.vol_pcr_active_trade else "-",
+                    "entry_time": pt["entry_time"] if self.vol_pcr_active_trade else "-",
+                    "entry_spot": round(pt["entry_spot"], 2) if self.vol_pcr_active_trade else 0,
+                    "spot_target": round(pt["spot_target"], 2) if self.vol_pcr_active_trade else 0,
+                    "current_sl": round(pt["current_sl"], 2) if self.vol_pcr_active_trade else 0,
+                    "entry_premium": round(pt["entry_premium"], 2) if self.vol_pcr_active_trade else 0,
+                    "current_premium": round(pt["current_premium"], 2) if self.vol_pcr_active_trade else 0,
+                    "lots": pt["lots"] if self.vol_pcr_active_trade else 0,
+                    "pnl": round(vol_pcr_floating_pnl) if self.vol_pcr_active_trade else 0
+                } if self.vol_pcr_active_trade else None,
+                "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
                 "running": self.running,
                 "mode": self.mode,
                 "capital": self.capital,
