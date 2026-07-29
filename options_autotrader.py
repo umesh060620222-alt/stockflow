@@ -408,7 +408,7 @@ class OptionsAutoTrader:
 
                 # Real-Time Tick Trigger Checks when in Stage 3
                 is_valid_time = "09:20" <= time_str < "15:30"
-                if len(self.candles) > 0 and is_valid_time and (not self.active_trade or self.state == "waiting-fill"):
+                if len(self.candles) > 0 and is_valid_time and not self.active_trade:
                     last_c = self.candles[-1]
                     atr_val = last_c.get("atr", 7.0)
                     ema_val = last_c.get("nifty_ema", ltp)
@@ -1158,9 +1158,9 @@ class OptionsAutoTrader:
 
         # Cancel if pending for more than 60 seconds (prevent stale fills)
         elapsed_sec = time.time() - t["started_at"]
-        if elapsed_sec >= 60.0:
+        if elapsed_sec >= 120.0:
             cancel_needed = True
-            reason = f"Order pending timeout (60s elapsed)"
+            reason = f"Order pending timeout (120s elapsed)"
 
         elif is_call:
             if spot_ltp <= sl:
@@ -1601,9 +1601,9 @@ class OptionsAutoTrader:
 
         # Cancel if pending for more than 60 seconds (prevent stale fills)
         elapsed_sec = time.time() - t["started_at"]
-        if elapsed_sec >= 60.0:
+        if elapsed_sec >= 120.0:
             cancel_needed = True
-            reason = f"Order pending timeout (60s elapsed)"
+            reason = f"Order pending timeout (120s elapsed)"
 
         elif is_call:
             if spot_ltp <= sl:
