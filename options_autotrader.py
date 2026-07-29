@@ -1156,7 +1156,13 @@ class OptionsAutoTrader:
         cancel_needed = False
         reason = ""
 
-        if is_call:
+        # Cancel if pending for more than 60 seconds (prevent stale fills)
+        elapsed_sec = time.time() - t["started_at"]
+        if elapsed_sec >= 60.0:
+            cancel_needed = True
+            reason = f"Order pending timeout (60s elapsed)"
+
+        elif is_call:
             if spot_ltp <= sl:
                 cancel_needed = True
                 reason = f"Spot price hit SL ₹{sl:.2f} before fill"
@@ -1593,7 +1599,13 @@ class OptionsAutoTrader:
         cancel_needed = False
         reason = ""
 
-        if is_call:
+        # Cancel if pending for more than 60 seconds (prevent stale fills)
+        elapsed_sec = time.time() - t["started_at"]
+        if elapsed_sec >= 60.0:
+            cancel_needed = True
+            reason = f"Order pending timeout (60s elapsed)"
+
+        elif is_call:
             if spot_ltp <= sl:
                 cancel_needed = True
                 reason = f"Spot price hit SL Rs. {sl:.2f} before fill"
