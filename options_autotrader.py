@@ -380,6 +380,8 @@ class OptionsAutoTrader:
                 with self.lock:
                     if self.active_trade and self.mode == "live" and self.active_trade.get("tradingsymbol"):
                         symbols_to_quote.append(f"NFO:{self.active_trade['tradingsymbol']}")
+                    if self.vol_pcr_active_trade and self.vol_pcr_mode == "live" and self.vol_pcr_active_trade.get("tradingsymbol"):
+                        symbols_to_quote.append(f"NFO:{self.vol_pcr_active_trade['tradingsymbol']}")
                 
                 q = kc.quote(symbols_to_quote)
                 d_q = q.get("NSE:NIFTY 50")
@@ -534,12 +536,6 @@ class OptionsAutoTrader:
                             if is_nifty_below_macro_ema and is_nifty_below_ema:
                                 self._enter_vol_pcr_position(kc, "BUY PUT (PE)", ltp, atr_val)
                                 self.vol_pcr_has_rallied = False
-                    else:
-                        if not self.vol_pcr_active_trade.get("filled", True):
-                            self._manage_vol_pcr_pending_order(kc, ltp)
-                        else:
-                            self._manage_vol_pcr_position(kc, ltp)
-                            
                     self.prev_vol_pcr = vol_pcr_val
 
                 # Accumulate 1-minute candle
@@ -631,6 +627,12 @@ class OptionsAutoTrader:
                         self._manage_pending_order(kc, ltp, quote_data=q)
                     else:
                         self._manage_active_position(kc, ltp, quote_data=q)
+
+                if self.vol_pcr_active_trade:
+                    if not self.vol_pcr_active_trade.get("filled", True):
+                        self._manage_vol_pcr_pending_order(kc, ltp, quote_data=q)
+                    else:
+                        self._manage_vol_pcr_position(kc, ltp, quote_data=q)
 
             except Exception as e:
                 self._log(f"Loop error: {e}")
@@ -1579,7 +1581,7 @@ class OptionsAutoTrader:
                 }
                 self._save_state()
 
-    def _manage_vol_pcr_pending_order(self, kc, spot_ltp):
+    def _manage_vol_pcr_pending_order(self, kc, spot_ltp, quote_data=None):
         t = self.vol_pcr_active_trade
         if not t:
             return
@@ -1644,7 +1646,7 @@ class OptionsAutoTrader:
             except Exception as e:
                 self._log(f"[VOL PCR PENDING] Error checking order status: {e}")
 
-    def _manage_vol_pcr_position(self, kc, spot_ltp):
+    def _manage_vol_pcr_position(self, kc, spot_ltp, quote_data=None):
         t = self.vol_pcr_active_trade
         if not t:
             return
@@ -1659,8 +1661,11 @@ class OptionsAutoTrader:
         if self.vol_pcr_mode == "live" and t["tradingsymbol"]:
             try:
                 opt_key = f"NFO:{t['tradingsymbol']}"
-                quote = kc.quote([opt_key])
-                opt_q = quote.get(opt_key)
+                if quote_data and opt_key in quote_data:
+                    opt_q = quote_data[opt_key]
+                else:
+                    quote = kc.quote([opt_key])
+                    opt_q = quote.get(opt_key)
                 if opt_q:
                     t["current_premium"] = float(opt_q.get("last_price") or t["current_premium"])
             except Exception:
