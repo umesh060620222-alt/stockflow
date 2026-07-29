@@ -509,7 +509,10 @@ class OptionsAutoTrader:
                         elif vol_pcr_val >= 1.25 and is_nifty_below_macro_ema and is_nifty_below_ema:
                             self._enter_vol_pcr_position(kc, "BUY PUT (PE)", ltp, atr_val)
                     else:
-                        self._manage_vol_pcr_position(kc, ltp)
+                        if not self.vol_pcr_active_trade.get("filled", True):
+                            self._manage_vol_pcr_pending_order(kc, ltp)
+                        else:
+                            self._manage_vol_pcr_position(kc, ltp)
 
                 # Accumulate 1-minute candle
                 if current_minute != minute_key:
@@ -1465,6 +1468,7 @@ class OptionsAutoTrader:
                 lot_size = int(matched.get("lot_size") or 75)
         
         entry_premium = spot_ltp * 0.005
+        opt_q = None
         if tradingsymbol:
             try:
                 quote = kc.quote([f"NFO:{tradingsymbol}"])
@@ -1474,34 +1478,143 @@ class OptionsAutoTrader:
             except Exception:
                 pass
         
-        # Apply the fixed 2-point premium discount
-        discounted_premium = max(1.0, entry_premium - 2.0)
-        lots = 1
+        # Apply the fixed 2.0 point premium discount on entry
+        buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
+        current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
+        limit_price = max(1.0, round(current_bid - 2.0, 1))
         
-        # SL/Target based on 2.0 ATR Spot gap
+        lots = 1
         spot_sl = (spot_ltp - 2.0 * atr_val) if is_call else (spot_ltp + 2.0 * atr_val)
         spot_target = (spot_ltp + 2.0 * atr_val) if is_call else (spot_ltp - 2.0 * atr_val)
-        
         symbol_str = f"NIFTY {expiry_date.strftime('%d %b').upper()} {strike} {opt_type}"
-        self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {discounted_premium:.2f} premium (LTP: Rs. {entry_premium:.2f}, 2.0pt discount applied)")
         
-        with self.lock:
-            self.vol_pcr_active_trade = {
-                "side": side,
-                "symbol": symbol_str,
-                "tradingsymbol": tradingsymbol,
-                "entry_time": self._ist().strftime("%H:%M:%S"),
-                "entry_spot": spot_ltp,
-                "spot_sl": spot_sl,
-                "spot_target": spot_target,
-                "current_sl": spot_sl,
-                "entry_premium": discounted_premium,
-                "current_premium": discounted_premium,
-                "lots": lots,
-                "lot_size": lot_size,
-                "started_at": time.time()
-            }
+        if self.mode == "live":
+            if not tradingsymbol:
+                raise ValueError(f"Could not resolve live Nifty Option tradingsymbol for Vol PCR entry.")
+            lot_cost = limit_price * lot_size
+            required_capital = lot_cost * lots
+            if self.capital < required_capital:
+                raise ValueError(f"Insufficient capital for Vol PCR Strategy. Required: Rs. {required_capital}, Available: Rs. {self.capital}")
+            
+            self._log(f"[LIVE VOL PCR] Placing PASSIVE LIMIT BUY order with 2.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+            try:
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NFO,
+                    tradingsymbol    = tradingsymbol,
+                    transaction_type = kc.TRANSACTION_TYPE_BUY,
+                    quantity         = lots * lot_size,
+                    product          = kc.PRODUCT_MIS,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = limit_price
+                )
+                with self.lock:
+                    self.vol_pcr_active_trade = {
+                        "side": side,
+                        "symbol": symbol_str,
+                        "tradingsymbol": tradingsymbol,
+                        "entry_time": self._ist().strftime("%H:%M:%S"),
+                        "entry_spot": spot_ltp,
+                        "spot_sl": spot_sl,
+                        "spot_target": spot_target,
+                        "current_sl": spot_sl,
+                        "entry_premium": limit_price,
+                        "current_premium": limit_price,
+                        "lots": lots,
+                        "lot_size": lot_size,
+                        "started_at": time.time(),
+                        "order_id": oid,
+                        "filled": False
+                    }
+                    self._save_state()
+            except Exception as e:
+                self._log(f"[LIVE VOL PCR ERROR] Failed to place limit order: {e}")
+        else:
+            # Paper trading fills immediately
+            self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {limit_price:.2f} premium (LTP: Rs. {entry_premium:.2f}, 2.0pt discount applied)")
+            with self.lock:
+                self.vol_pcr_active_trade = {
+                    "side": side,
+                    "symbol": symbol_str,
+                    "tradingsymbol": tradingsymbol,
+                    "entry_time": self._ist().strftime("%H:%M:%S"),
+                    "entry_spot": spot_ltp,
+                    "spot_sl": spot_sl,
+                    "spot_target": spot_target,
+                    "current_sl": spot_sl,
+                    "entry_premium": limit_price,
+                    "current_premium": limit_price,
+                    "lots": lots,
+                    "lot_size": lot_size,
+                    "started_at": time.time(),
+                    "filled": True
+                }
+                self._save_state()
+
+    def _manage_vol_pcr_pending_order(self, kc, spot_ltp):
+        t = self.vol_pcr_active_trade
+        if not t:
+            return
+
+        is_call = "CALL" in t["side"]
+        sl = t["spot_sl"]
+        target = t["spot_target"]
+
+        cancel_needed = False
+        reason = ""
+
+        if is_call:
+            if spot_ltp <= sl:
+                cancel_needed = True
+                reason = f"Spot price hit SL Rs. {sl:.2f} before fill"
+            elif spot_ltp >= target:
+                cancel_needed = True
+                reason = f"Spot price hit Target Rs. {target:.2f} before fill"
+        else:
+            if spot_ltp >= sl:
+                cancel_needed = True
+                reason = f"Spot price hit SL Rs. {sl:.2f} before fill"
+            elif spot_ltp <= target:
+                cancel_needed = True
+                reason = f"Spot price hit Target Rs. {target:.2f} before fill"
+
+        if cancel_needed:
+            self._log(f"[VOL PCR PENDING] {reason}. Cancelling pending order {t['order_id']}...")
+            try:
+                if self.mode == "live":
+                    kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=t["order_id"])
+            except Exception as ce:
+                self._log(f"[VOL PCR PENDING] Cancel failed: {ce}")
+            self.vol_pcr_active_trade = None
             self._save_state()
+            return
+
+        # Poll order status from exchange once every 2 seconds
+        now = time.time()
+        if not hasattr(self, "_last_vol_order_poll"):
+            self._last_vol_order_poll = 0
+
+        if now - self._last_vol_order_poll >= 2.0:
+            self._last_vol_order_poll = now
+            try:
+                if self.mode == "live":
+                    orders = kc.orders()
+                    o = next((x for x in orders if str(x["order_id"]) == str(t["order_id"])), None)
+                    if o:
+                        status = o["status"]
+                        if status == "COMPLETE":
+                            t["entry_premium"] = float(o["average_price"])
+                            t["current_premium"] = t["entry_premium"]
+                            t["started_at"] = time.time()
+                            t["filled"] = True
+                            self._log(f"[LIVE VOL PCR] Pending order FILLED at Rs. {t['entry_premium']:.2f}")
+                            self._save_state()
+                        elif status in ["CANCELLED", "REJECTED"]:
+                            self._log(f"[LIVE VOL PCR] Pending order was {status}. Reason: {o.get('status_message', 'none')}")
+                            self.vol_pcr_active_trade = None
+                            self._save_state()
+            except Exception as e:
+                self._log(f"[VOL PCR PENDING] Error checking order status: {e}")
 
     def _manage_vol_pcr_position(self, kc, spot_ltp):
         t = self.vol_pcr_active_trade
@@ -1514,20 +1627,31 @@ class OptionsAutoTrader:
         sl = t["spot_sl"]
         is_call = "CALL" in side
         
-        # Paper premium tracking (delta = 0.50)
-        spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
-        t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
+        # Update option LTP for floating P&L display
+        if self.mode == "live" and t["tradingsymbol"]:
+            try:
+                opt_key = f"NFO:{t['tradingsymbol']}"
+                quote = kc.quote([opt_key])
+                opt_q = quote.get(opt_key)
+                if opt_q:
+                    t["current_premium"] = float(opt_q.get("last_price") or t["current_premium"])
+            except Exception:
+                pass
+        else:
+            # Paper premium tracking (delta = 0.50)
+            spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
+            t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
         
         # Max loss floor (50%)
         if t["current_premium"] <= 0.50 * t["entry_premium"]:
-            self._log(f"[VOL PCR PAPER] Max Loss Trigger: Premium lost 50% value. Exiting.")
+            self._log(f"[VOL PCR] Max Loss Trigger: Premium lost 50% value. Exiting.")
             self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
             return
         
         # Timeout 45m
         elapsed_mins = (time.time() - t["started_at"]) / 60.0
         if elapsed_mins >= 45.0:
-            self._log(f"[VOL PCR PAPER] Time-Decay Timeout (45m). Exiting.")
+            self._log(f"[VOL PCR] Time-Decay Timeout (45m). Exiting.")
             self._exit_vol_pcr_position(kc, "TIMEOUT", spot_ltp)
             return
             
@@ -1535,18 +1659,18 @@ class OptionsAutoTrader:
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
             if vol_pcr_val >= 1.30:
-                self._log(f"[VOL PCR PAPER] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.30). Exiting early.")
+                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.30). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
         else:
             if vol_pcr_val <= 0.70:
-                self._log(f"[VOL PCR PAPER] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.70). Exiting early.")
+                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.70). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
                 
         # Check premium profit target of 2.0 points (Everywhere)
         if t["current_premium"] - t["entry_premium"] >= 2.0:
-            self._log(f"[VOL PCR PAPER] Premium Target Reached (+2.0pts): Entry: Rs. {t['entry_premium']:.2f}, Current: Rs. {t['current_premium']:.2f}. Booking profits.")
+            self._log(f"[VOL PCR] Premium Target Reached (+2.0pts): Entry: Rs. {t['entry_premium']:.2f}, Current: Rs. {t['current_premium']:.2f}. Booking profits.")
             self._exit_vol_pcr_position(kc, "WIN", spot_ltp)
             return
             
@@ -1587,6 +1711,42 @@ class OptionsAutoTrader:
         options_brokerage = 40.0
         options_slippage = 0.5
         
+        if self.mode == "live" and t["tradingsymbol"]:
+            try:
+                # Fetch current option quotes
+                quote = kc.quote([f"NFO:{t['tradingsymbol']}"])
+                opt_q = quote.get(f"NFO:{t['tradingsymbol']}")
+                
+                # Place Limit Sell at Best Ask (if winning) or Market (if losing/timeout)
+                if verdict == "WIN":
+                    sell_depth = opt_q.get("depth", {}).get("sell", []) if opt_q else []
+                    best_ask = float(sell_depth[0]["price"]) if sell_depth else exit_premium
+                    limit_price = round(best_ask, 1)
+                    self._log(f"[LIVE VOL PCR] Exiting WIN: Placing LIMIT SELL order at Rs. {limit_price}...")
+                    oid = kc.place_order(
+                        variety          = kc.VARIETY_REGULAR,
+                        exchange         = kc.EXCHANGE_NFO,
+                        tradingsymbol    = t["tradingsymbol"],
+                        transaction_type = kc.TRANSACTION_TYPE_SELL,
+                        quantity         = t["lots"] * t["lot_size"],
+                        product          = kc.PRODUCT_MIS,
+                        order_type       = kc.ORDER_TYPE_LIMIT,
+                        price            = limit_price
+                    )
+                else:
+                    self._log(f"[LIVE VOL PCR] Exiting LOSS/TIMEOUT: Placing MARKET SELL order...")
+                    oid = kc.place_order(
+                        variety          = kc.VARIETY_REGULAR,
+                        exchange         = kc.EXCHANGE_NFO,
+                        tradingsymbol    = t["tradingsymbol"],
+                        transaction_type = kc.TRANSACTION_TYPE_SELL,
+                        quantity         = t["lots"] * t["lot_size"],
+                        product          = kc.PRODUCT_MIS,
+                        order_type       = kc.ORDER_TYPE_MARKET
+                    )
+            except Exception as e:
+                self._log(f"[LIVE VOL PCR EXIT ERROR] Exit order placement failed: {e}")
+            
         gross_pnl = (exit_premium - t["entry_premium"]) * total_shares
         net_pnl = gross_pnl - (t["lots"] * options_brokerage) - (options_slippage * total_shares)
         
@@ -1608,8 +1768,7 @@ class OptionsAutoTrader:
             self.vol_pcr_active_trade = None
             self._save_state()
             
-        self._log(f"[VOL PCR PAPER CLOSED] {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
-
+        self._log(f"[VOL PCR CLOSED] {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
 
     def status(self):
         with self.lock:
