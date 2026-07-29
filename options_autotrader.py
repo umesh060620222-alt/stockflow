@@ -262,7 +262,7 @@ class OptionsAutoTrader:
             self._log("Starting before session open or no today's candles. Will lock open price on first tick.")
 
         # Replay today's candles to reconstruct active stage counters
-        today_trading_candles = [c for c in temp_candles if c["date"].date() == today_date and c["date"].strftime("%H:%M") >= "09:25"]
+        today_trading_candles = [c for c in temp_candles if c["date"].date() == today_date and c["date"].strftime("%H:%M") >= "09:20"]
         
         self.l_stage = 1
         self.l_peak = None
@@ -392,7 +392,7 @@ class OptionsAutoTrader:
                 minute_key = ist.strftime("%Y-%m-%d %H:%M")
 
                 # Real-Time Tick Trigger Checks when in Stage 3
-                is_valid_time = "09:25" <= time_str < "15:30"
+                is_valid_time = "09:20" <= time_str < "15:30"
                 if len(self.candles) > 0 and is_valid_time and (not self.active_trade or self.state == "waiting-fill"):
                     last_c = self.candles[-1]
                     atr_val = last_c.get("atr", 7.0)
