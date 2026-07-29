@@ -33,6 +33,7 @@ class OptionsAutoTrader:
         self.vol_pcr_active_trade = None
         self.vol_pcr_completed_trades = []
         self.prev_vol_pcr = None
+        self.vol_pcr_mode = 'paper'
         self.thread = None
         self._stop = False
         self.nifty_open = None
@@ -62,7 +63,8 @@ class OptionsAutoTrader:
                 "nifty_open": self.nifty_open,
                 "active_trade": self.active_trade,
             "vol_pcr_active_trade": self.vol_pcr_active_trade,
-            "vol_pcr_completed_trades": self.vol_pcr_completed_trades
+            "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
+            "vol_pcr_mode": self.vol_pcr_mode
             }
             with open("state_autotrader.json", "w") as f:
                 json.dump(state, f)
@@ -83,6 +85,7 @@ class OptionsAutoTrader:
                     self.active_trade = state.get("active_trade")
                     self.vol_pcr_active_trade = state.get("vol_pcr_active_trade")
                     self.vol_pcr_completed_trades = state.get("vol_pcr_completed_trades", [])
+                    self.vol_pcr_mode = state.get("vol_pcr_mode", "paper")
                     ts = self._ist().strftime("%H:%M:%S")
                     self.logs.append(f"[{ts}] Restored today's trade history and logs from state file.")
         except Exception as e:
@@ -98,12 +101,13 @@ class OptionsAutoTrader:
             self._save_state()
         log.info(entry)
 
-    def start(self, capital=40000.0, mode="paper", lot_size_mode="auto", fixed_lots=1):
+    def start(self, capital=40000.0, mode="paper", lot_size_mode="auto", fixed_lots=1, vol_pcr_mode="paper"):
         with self.lock:
             if self.running:
                 return False
             self.running = True
             self.mode = mode.lower()
+            self.vol_pcr_mode = vol_pcr_mode.lower()
             self.capital = float(capital)
             self.lot_size_mode = lot_size_mode.lower()
             self.fixed_lots = int(fixed_lots)
@@ -1493,7 +1497,7 @@ class OptionsAutoTrader:
         spot_target = (spot_ltp + 2.0 * atr_val) if is_call else (spot_ltp - 2.0 * atr_val)
         symbol_str = f"NIFTY {expiry_date.strftime('%d %b').upper()} {strike} {opt_type}"
         
-        if self.mode == "live":
+        if self.vol_pcr_mode == "live":
             if not tradingsymbol:
                 raise ValueError(f"Could not resolve live Nifty Option tradingsymbol for Vol PCR entry.")
             lot_cost = limit_price * lot_size
@@ -1586,7 +1590,7 @@ class OptionsAutoTrader:
         if cancel_needed:
             self._log(f"[VOL PCR PENDING] {reason}. Cancelling pending order {t['order_id']}...")
             try:
-                if self.mode == "live":
+                if self.vol_pcr_mode == "live":
                     kc.cancel_order(variety=kc.VARIETY_REGULAR, order_id=t["order_id"])
             except Exception as ce:
                 self._log(f"[VOL PCR PENDING] Cancel failed: {ce}")
@@ -1602,7 +1606,7 @@ class OptionsAutoTrader:
         if now - self._last_vol_order_poll >= 2.0:
             self._last_vol_order_poll = now
             try:
-                if self.mode == "live":
+                if self.vol_pcr_mode == "live":
                     orders = kc.orders()
                     o = next((x for x in orders if str(x["order_id"]) == str(t["order_id"])), None)
                     if o:
@@ -1633,7 +1637,7 @@ class OptionsAutoTrader:
         is_call = "CALL" in side
         
         # Update option LTP for floating P&L display
-        if self.mode == "live" and t["tradingsymbol"]:
+        if self.vol_pcr_mode == "live" and t["tradingsymbol"]:
             try:
                 opt_key = f"NFO:{t['tradingsymbol']}"
                 quote = kc.quote([opt_key])
@@ -1716,7 +1720,7 @@ class OptionsAutoTrader:
         options_brokerage = 40.0
         options_slippage = 0.5
         
-        if self.mode == "live" and t["tradingsymbol"]:
+        if self.vol_pcr_mode == "live" and t["tradingsymbol"]:
             try:
                 # Fetch current option quotes
                 quote = kc.quote([f"NFO:{t['tradingsymbol']}"])
@@ -1825,6 +1829,8 @@ class OptionsAutoTrader:
                     "pnl": round(vol_pcr_floating_pnl) if self.vol_pcr_active_trade else 0
                 } if self.vol_pcr_active_trade else None,
                 "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
+            "vol_pcr_mode": self.vol_pcr_mode,
+                "vol_pcr_mode": self.vol_pcr_mode,
                 "running": self.running,
                 "mode": self.mode,
                 "capital": self.capital,

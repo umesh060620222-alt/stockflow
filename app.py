@@ -2253,9 +2253,10 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/options/autotrader/start":
             capital = float(body.get("capital", 40000.0))
             mode = body.get("mode", "paper").strip().lower()
+            vol_pcr_mode = body.get("vol_pcr_mode", "paper").strip().lower()
             lot_size_mode = body.get("lot_size_mode", "auto").strip().lower()
             fixed_lots = int(body.get("fixed_lots", 1))
-            options_trader.start(capital=capital, mode=mode, lot_size_mode=lot_size_mode, fixed_lots=fixed_lots)
+            options_trader.start(capital=capital, mode=mode, lot_size_mode=lot_size_mode, fixed_lots=fixed_lots, vol_pcr_mode=vol_pcr_mode)
             return self._send(200, dumps(options_trader.status()))
         if path == "/api/options/autotrader/stop":
             options_trader.stop()

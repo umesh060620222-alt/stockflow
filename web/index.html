@@ -266,7 +266,7 @@
       
       <!-- Volume PCR-Only Strategy Card (Paper Trading) -->
       <div class="card" style="margin-top:14px;background:#13151b;border:1px solid #232530">
-          <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px">Volume PCR-Only Strategy (Paper)</h3>
+          <h3 style="margin-top:0;font-size:15px;border-bottom:1px solid #2a2c30;padding-bottom:10px;display:flex;justify-content:space-between;align-items:center"><span>Volume PCR-Only Strategy</span> <span id="vol_opt_mode_badge" class="nf-badge muted" style="font-size:10px;padding:2px 8px;border-radius:4px;background:#2a2c30;color:#a1a1aa">PAPER</span></h3>
           
           <div id="vol_opt_status" style="font-size:13px;font-weight:bold;color:#10b981">
               Status: Offline (Idle)
@@ -3866,7 +3866,8 @@ async function startOptAutoTrader() {
         capital: cap,
         mode: mode,
         lot_size_mode: lotMode,
-        fixed_lots: fixedLots
+        fixed_lots: fixedLots,
+        vol_pcr_mode: document.getElementById('vol_opt_mode').value
       })
     });
     const d = await res.json();
@@ -4041,6 +4042,18 @@ function updateOptAutoTraderUI(d) {
   const vCard = document.getElementById('vol_pos_card');
   const vStatus = document.getElementById('vol_opt_status');
   const vSetup = document.getElementById('vol_opt_setup_levels');
+  const vModeBadge = document.getElementById('vol_opt_mode_badge');
+  
+  if (vModeBadge && d.vol_pcr_mode) {
+      vModeBadge.textContent = d.vol_pcr_mode.toUpperCase();
+      if (d.vol_pcr_mode === 'live') {
+          vModeBadge.style.background = '#7f1d1d';
+          vModeBadge.style.color = '#fca5a5';
+      } else {
+          vModeBadge.style.background = '#2a2c30';
+          vModeBadge.style.color = '#a1a1aa';
+      }
+  }
   
   if (d.vol_pcr_active_trade) {
       vCard.style.display = 'block';
