@@ -429,24 +429,22 @@ class OptionsAutoTrader:
                     elif self.l_stage == 3:
                         if ltp < self.l_trough:
                             self.l_trough = ltp
-                        bounce_required = config.ATR_BOUNCE_MULT * atr_val
-                        bounce_level = self.l_trough + bounce_required
-                        if ltp >= bounce_level:
+                        
+                        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                        raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                        
+                        # Trigger CE Entry when Volume PCR reverses below 0.80 (Call buying dominates at the trough)
+                        if vol_pcr_val <= 0.80:
                             long_trend_ok = is_nifty_above_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today)
                             curr_t = time.time()
                             pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                             is_pcr_bullish = pcr_val >= 1.20
                             
-                            # Real-time Volume PCR check to protect against bearish volume dumps
-                            vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                            raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                            is_vol_pcr_ok = vol_pcr_val <= 1.25
-                            
                             if not hasattr(self, '_last_call_log_time') or curr_t - self._last_call_log_time > 10.0:
                                 self._last_call_log_time = curr_t
-                                self._log(f"[FILTER CHECK] Long CE target ₹{bounce_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 1m EMA: {vol_pcr_val:.2f} {'OK' if is_vol_pcr_ok else 'FAIL'})")
-                            if long_trend_ok and self.has_vol_conf and is_pcr_bullish and is_vol_pcr_ok:
-                                self._enter_position(kc, "BUY CALL (CE)", bounce_level, atr_val, ema_val)
+                                self._log(f"[FILTER CHECK] Long CE Trough Reversal (Vol PCR <= 0.80) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
+                            if long_trend_ok and self.has_vol_conf and is_pcr_bullish:
+                                self._enter_position(kc, "BUY CALL (CE)", ltp, atr_val, ema_val)
                                 self.l_peak = None
                                 self.l_trough = None
                                 self.l_stage = 1
@@ -473,29 +471,27 @@ class OptionsAutoTrader:
                                     self.s_stage = 3
                                     self._log(f"[STAGE] Short Stage 2 -> 3. Trough: {self.s_trough:.2f}, Peak: {self.s_peak:.2f} (Required Rally: {rally_required:.2f} pts)")
                         elif self.s_stage == 3:
-                            if ltp > self.s_peak:
-                                self.s_peak = ltp
-                            drop_required = config.ATR_BOUNCE_MULT * atr_val
-                            short_trigger_level = self.s_peak - drop_required
-                            if ltp <= short_trigger_level:
-                                short_trend_ok = is_nifty_below_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
-                                curr_t = time.time()
-                                pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                                is_pcr_bearish = pcr_val <= 0.80
-                                
-                                # Real-time Volume PCR check to protect against bullish short-squeeze surges
-                                vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                                raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-                                is_vol_pcr_ok = vol_pcr_val >= 0.75
-                                
-                                if not hasattr(self, '_last_put_log_time') or curr_t - self._last_put_log_time > 10.0:
-                                    self._last_put_log_time = curr_t
-                                    self._log(f"[FILTER CHECK] Short PE target ₹{short_trigger_level:.2f} reached. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 1m EMA: {vol_pcr_val:.2f} {'OK' if is_vol_pcr_ok else 'FAIL'})")
-                                if short_trend_ok and self.has_vol_conf and is_pcr_bearish and is_vol_pcr_ok:
-                                    self._enter_position(kc, "BUY PUT (PE)", short_trigger_level, atr_val, ema_val)
-                                    self.s_trough = None
-                                    self.s_peak = None
-                                    self.s_stage = 1
+                          if ltp > self.s_peak:
+                            self.s_peak = ltp
+                        
+                        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                        raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                        
+                        # Trigger PE Entry when Volume PCR reverses above 1.25 (Put buying dominates at the peak)
+                        if vol_pcr_val >= 1.25:
+                            short_trend_ok = is_nifty_below_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
+                            curr_t = time.time()
+                            pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+                            is_pcr_bearish = pcr_val <= 0.80
+                            
+                            if not hasattr(self, '_last_put_log_time') or curr_t - self._last_put_log_time > 10.0:
+                                self._last_put_log_time = curr_t
+                                self._log(f"[FILTER CHECK] Short PE Peak Reversal (Vol PCR >= 1.25) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
+                            if short_trend_ok and self.has_vol_conf and is_pcr_bearish:
+                                self._enter_position(kc, "BUY PUT (PE)", ltp, atr_val, ema_val)
+                                self.s_trough = None
+                                self.s_peak = None
+                                self.s_stage = 1
 
                 # Accumulate 1-minute candle
                 if current_minute != minute_key:
