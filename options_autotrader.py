@@ -721,20 +721,15 @@ class OptionsAutoTrader:
                 if lots == 0:
                     raise ValueError(f"Trade lot size evaluated to 0. Mode: {self.lot_size_mode}")
 
-                # Calculate ideal premium limit price based on Nifty Spot gap (Wait for Price)
+                # Calculate ideal premium limit price (applying a fixed 2.0 point discount on option premium to protect against minor chop)
                 buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
                 current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
                 
-                spot_gap = (current_spot - entry_spot) if opt_type == "CE" else (entry_spot - current_spot)
-                if spot_gap > 0:
-                    ideal_limit = current_bid - (spot_gap * 0.55)
-                else:
-                    ideal_limit = current_bid
-                    
+                ideal_limit = current_bid - 2.0
                 limit_price = max(1.0, round(ideal_limit, 1))
                 
-                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
-                self._log(f"[LIVE] (Signal Spot: ₹{entry_spot:.2f}, Current Spot: ₹{current_spot:.2f}, Spot Gap: {spot_gap:.2f} pts, Original Bid: Rs. {current_bid:.2f})")
+                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order with 2.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+                self._log(f"[LIVE] (Signal Spot: Rs.{entry_spot:.2f}, Current Spot: Rs.{current_spot:.2f}, Original Bid: Rs. {current_bid:.2f})")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
                     exchange         = kc.EXCHANGE_NFO,
