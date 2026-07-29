@@ -3901,7 +3901,7 @@ function updateOptAutoTraderUI(d) {
       } else if (s.l_stage === 2) {
         longMsg = `🟢 <b>Long (CE):</b> Stage 2 (Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.l_drop_target}</span>)`;
       } else if (s.l_stage === 3) {
-        longMsg = `🟢 <b>Long (CE):</b> Stage 3 (Trough: ${s.l_trough || '—'}, Waiting bounce above: <span style="color:#10b981;font-weight:bold">₹${s.l_bounce_target}</span>)`;
+        longMsg = ` <b>Long (CE):</b> Stage 3 (Trough: ${s.l_trough || ''}, Waiting Vol PCR Reversal &le; 0.80) 🟢`;
       }
       
       let shortMsg = '';
@@ -3910,7 +3910,7 @@ function updateOptAutoTraderUI(d) {
       } else if (s.s_stage === 2) {
         shortMsg = `🔴 <b>Short (PE):</b> Stage 2 (Waiting rally above: <span style="color:#10b981;font-weight:bold">₹${s.s_rally_target}</span>)`;
       } else if (s.s_stage === 3) {
-        shortMsg = `🔴 <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || '—'}, Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.s_drop_target}</span>)`;
+        shortMsg = ` <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || ''}, Waiting Vol PCR Reversal &ge; 1.25) 🔴`;
       }
       
       let oiHtml = '';
