@@ -449,7 +449,7 @@ class OptionsAutoTrader:
                         raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                         
                         # Trigger CE Entry when Volume PCR reverses below 0.80 (Call buying dominates at the trough)
-                        if vol_pcr_val <= 0.80:
+                        if vol_pcr_val <= 0.90:
                             long_trend_ok = is_nifty_above_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_green_today)
                             curr_t = time.time()
                             pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
@@ -457,7 +457,7 @@ class OptionsAutoTrader:
                             
                             if not hasattr(self, '_last_call_log_time') or curr_t - self._last_call_log_time > 10.0:
                                 self._last_call_log_time = curr_t
-                                self._log(f"[FILTER CHECK] Long CE Trough Reversal (Vol PCR <= 0.80) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
+                                self._log(f"[FILTER CHECK] Long CE Trough Reversal (Vol PCR <= 0.90) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_above_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_green_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bullish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
                             if long_trend_ok and self.has_vol_conf: # and is_pcr_bullish (Commented out to prevent fill lag)
                                 self._enter_position(kc, "BUY CALL (CE)", ltp, atr_val, ema_val)
                                 self.l_peak = None
@@ -493,7 +493,7 @@ class OptionsAutoTrader:
                         raw_10s_val = self._oi_metrics.get("raw_10s_vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                         
                         # Trigger PE Entry when Volume PCR reverses above 1.25 (Put buying dominates at the peak)
-                        if vol_pcr_val >= 1.25:
+                        if vol_pcr_val >= 1.10:
                             short_trend_ok = is_nifty_below_macro_ema and (not config.USE_NIFTY_FILTER or is_nifty_red_today)
                             curr_t = time.time()
                             pcr_val = self._oi_metrics.get("pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
@@ -501,7 +501,7 @@ class OptionsAutoTrader:
                             
                             if not hasattr(self, '_last_put_log_time') or curr_t - self._last_put_log_time > 10.0:
                                 self._last_put_log_time = curr_t
-                                self._log(f"[FILTER CHECK] Short PE Peak Reversal (Vol PCR >= 1.25) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
+                                self._log(f"[FILTER CHECK] Short PE Peak Reversal (Vol PCR >= 1.10) reached at Rs.{ltp:.2f}. Filters: EMA Trend (5-Min) ({'OK' if is_nifty_below_macro_ema else 'FAIL'}), Daily Trend ({'OK' if (not config.USE_NIFTY_FILTER or is_nifty_red_today) else 'FAIL'}), Volume ({'OK' if self.has_vol_conf else 'FAIL'}), PCR ({pcr_val:.2f} {'OK' if is_pcr_bearish else 'FAIL'}), Vol PCR (Raw 10s: {raw_10s_val:.2f} | 30s EMA: {vol_pcr_val:.2f} OK)")
                             if short_trend_ok and self.has_vol_conf: # and is_pcr_bearish (Commented out to prevent fill lag)
                                 self._enter_position(kc, "BUY PUT (PE)", ltp, atr_val, ema_val)
                                 self.s_trough = None
@@ -1269,13 +1269,13 @@ class OptionsAutoTrader:
         # Check Volume PCR Early Exit safety gate
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            if vol_pcr_val >= 1.30:
-                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE exit barrier >= 1.30). Exiting trade early.")
+            if vol_pcr_val >= 1.10:
+                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE exit barrier >= 1.10). Exiting trade early.")
                 self._exit_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            if vol_pcr_val <= 0.70:
-                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE exit barrier <= 0.70). Exiting trade early.")
+            if vol_pcr_val <= 0.90:
+                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE exit barrier <= 0.90). Exiting trade early.")
                 self._exit_position(kc, "LOSS", spot_ltp)
                 return
 
@@ -1709,13 +1709,13 @@ class OptionsAutoTrader:
         # Vol PCR exits (soft stops)
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            if vol_pcr_val >= 1.30:
-                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.30). Exiting early.")
+            if vol_pcr_val >= 1.10:
+                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.10). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            if vol_pcr_val <= 0.70:
-                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.70). Exiting early.")
+            if vol_pcr_val <= 0.90:
+                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.90). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
                 

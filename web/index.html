@@ -3960,7 +3960,7 @@ function updateOptAutoTraderUI(d) {
       } else if (s.l_stage === 2) {
         longMsg = `🟢 <b>Long (CE):</b> Stage 2 (Waiting drop below: <span style="color:#ef4444;font-weight:bold">₹${s.l_drop_target}</span>)`;
       } else if (s.l_stage === 3) {
-        longMsg = ` <b>Long (CE):</b> Stage 3 (Trough: ${s.l_trough || ''}, Waiting Vol PCR Reversal &le; 0.80) 🟢`;
+        longMsg = ` <b>Long (CE):</b> Stage 3 (Trough: ${s.l_trough || ''}, Waiting Vol PCR Reversal &le; 0.90) 🟢`;
       }
       
       let shortMsg = '';
@@ -3969,7 +3969,7 @@ function updateOptAutoTraderUI(d) {
       } else if (s.s_stage === 2) {
         shortMsg = `🔴 <b>Short (PE):</b> Stage 2 (Waiting rally above: <span style="color:#10b981;font-weight:bold">₹${s.s_rally_target}</span>)`;
       } else if (s.s_stage === 3) {
-        shortMsg = ` <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || ''}, Waiting Vol PCR Reversal &ge; 1.25) 🔴`;
+        shortMsg = ` <b>Short (PE):</b> Stage 3 (Peak: ${s.s_peak || ''}, Waiting Vol PCR Reversal &ge; 1.10) 🔴`;
       }
       
       let oiHtml = '';
@@ -3978,8 +3978,8 @@ function updateOptAutoTraderUI(d) {
         const pcrCol = oi.pcr >= 1.2 ? '#34d399' : (oi.pcr <= 0.8 ? '#f87171' : '#fbbf24');
         const volPcr = oi.vol_pcr !== undefined ? oi.vol_pcr : 1.0;
         const raw10sVolPcr = oi.raw_10s_vol_pcr !== undefined ? oi.raw_10s_vol_pcr : 1.0;
-        const volPcrCol = volPcr <= 0.75 ? '#34d399' : (volPcr >= 1.25 ? '#f87171' : '#fbbf24');
-        const rawVolPcrCol = raw10sVolPcr <= 0.75 ? '#34d399' : (raw10sVolPcr >= 1.25 ? '#f87171' : '#fbbf24');
+        const volPcrCol = volPcr <= 0.90 ? '#34d399' : (volPcr >= 1.10 ? '#f87171' : '#fbbf24');
+        const rawVolPcrCol = raw10sVolPcr <= 0.90 ? '#34d399' : (raw10sVolPcr >= 1.10 ? '#f87171' : '#fbbf24');
         
         oiHtml = `<div style="margin-top:6px;padding-top:4px;border-top:1px dashed #2a2c30;font-size:11px">
           🏛 <b>Institutional OI (ATM ${oi.strike}):</b> PCR <b style="color:${pcrCol}">${oi.pcr}</b> · Put OI: ${(oi.pe_oi/100000).toFixed(1)}L · Call OI: ${(oi.ce_oi/100000).toFixed(1)}L
@@ -4091,8 +4091,8 @@ function updateOptAutoTraderUI(d) {
       vStatus.textContent = d.running ? 'Status: Active (Scanning Vol PCR)' : 'Status: Offline (Idle)';
       vSetup.style.display = 'block';
       vSetup.innerHTML = `
-          <b>Long (CE)</b>: Stage 3 (Trough: ${d.setup.l_trough || ''}, Waiting Vol PCR Reversal &le; 0.80) 🟢<br>
-          <b>Short (PE)</b>: Stage 3 (Peak: ${d.setup.s_peak || ''}, Waiting Vol PCR Reversal &ge; 1.25) 🔴
+          <b>Long (CE)</b>: Stage 3 (Trough: ${d.setup.l_trough || ''}, Waiting Vol PCR Reversal &le; 0.90) 🟢<br>
+          <b>Short (PE)</b>: Stage 3 (Peak: ${d.setup.s_peak || ''}, Waiting Vol PCR Reversal &ge; 1.10) 🔴
       `;
   } else {
       vStatus.textContent = 'Status: Offline (Idle)';
@@ -4363,8 +4363,8 @@ async function pollLiveOiMetrics() {
       const pcrDir = oi.pcr_direction || 'STABLE';
       const volPcr = oi.vol_pcr !== undefined ? oi.vol_pcr : 1.0;
       const raw10sVolPcr = oi.raw_10s_vol_pcr !== undefined ? oi.raw_10s_vol_pcr : 1.0;
-      const volPcrCol = volPcr <= 0.75 ? '#34d399' : (volPcr >= 1.25 ? '#f87171' : '#fbbf24');
-      const rawVolPcrCol = raw10sVolPcr <= 0.75 ? '#34d399' : (raw10sVolPcr >= 1.25 ? '#f87171' : '#fbbf24');
+      const volPcrCol = volPcr <= 0.90 ? '#34d399' : (volPcr >= 1.10 ? '#f87171' : '#fbbf24');
+      const rawVolPcrCol = raw10sVolPcr <= 0.90 ? '#34d399' : (raw10sVolPcr >= 1.10 ? '#f87171' : '#fbbf24');
 
       const html = `
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px">
