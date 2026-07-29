@@ -33,8 +33,8 @@ class OptionsAutoTrader:
         self.vol_pcr_active_trade = None
         self.vol_pcr_completed_trades = []
         self.prev_vol_pcr = None
-        self.vol_pcr_has_pulled_back = False
-        self.vol_pcr_has_rallied = False
+        self.vol_pcr_above_ce_ticks = 0
+        self.vol_pcr_below_pe_ticks = 0
         self.vol_pcr_mode = 'paper'
         self.thread = None
         self._stop = False
@@ -512,30 +512,36 @@ class OptionsAutoTrader:
                     vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                     
                     if not self.vol_pcr_active_trade:
-                        # 1. Update Pullback / Rally state flags
-                        if vol_pcr_val >= 0.95:
-                            self.vol_pcr_has_pulled_back = True
-                        if vol_pcr_val <= 1.10:
-                            self.vol_pcr_has_rallied = True
+                        # 1. Update stability counters
+                        if vol_pcr_val > 0.90:
+                            self.vol_pcr_above_ce_ticks += 1
+                        if vol_pcr_val < 1.10:
+                            self.vol_pcr_below_pe_ticks += 1
                             
-                        # Reset if trend filters are violated to prevent stale triggers
+                        # Reset stability counters if trend filters are violated to prevent stale triggers
                         if not (is_nifty_above_macro_ema and is_nifty_above_ema):
-                            self.vol_pcr_has_pulled_back = False
+                            self.vol_pcr_above_ce_ticks = 0
                         if not (is_nifty_below_macro_ema and is_nifty_below_ema):
-                            self.vol_pcr_has_rallied = False
+                            self.vol_pcr_below_pe_ticks = 0
                             
                         # 2. Check Triggers
-                        # CE Entry: Vol PCR has pulled back (spiked >= 0.95) and now reversed <= 0.80
-                        if getattr(self, "vol_pcr_has_pulled_back", False) and vol_pcr_val <= 0.80:
+                        # CE Entry: PCR was stably above 0.90 (>= 15 ticks) and now crossed below 0.90
+                        if self.vol_pcr_above_ce_ticks >= 15 and vol_pcr_val <= 0.90:
                             if is_nifty_above_macro_ema and is_nifty_above_ema:
                                 self._enter_vol_pcr_position(kc, "BUY CALL (CE)", ltp, atr_val)
-                                self.vol_pcr_has_pulled_back = False
+                                self.vol_pcr_above_ce_ticks = 0
                                 
-                        # PE Entry: Vol PCR has rallied (dropped <= 1.10) and now reversed >= 1.25
-                        elif getattr(self, "vol_pcr_has_rallied", False) and vol_pcr_val >= 1.25:
+                        # PE Entry: PCR was stably below 1.10 (>= 15 ticks) and now crossed above 1.10
+                        elif self.vol_pcr_below_pe_ticks >= 15 and vol_pcr_val >= 1.10:
                             if is_nifty_below_macro_ema and is_nifty_below_ema:
                                 self._enter_vol_pcr_position(kc, "BUY PUT (PE)", ltp, atr_val)
-                                self.vol_pcr_has_rallied = False
+                                self.vol_pcr_below_pe_ticks = 0
+                                
+                        # Reset counters if we cross back without triggering (wiggle protection)
+                        if vol_pcr_val <= 0.90 and self.vol_pcr_above_ce_ticks < 15:
+                            self.vol_pcr_above_ce_ticks = 0
+                        if vol_pcr_val >= 1.10 and self.vol_pcr_below_pe_ticks < 15:
+                            self.vol_pcr_below_pe_ticks = 0
                     self.prev_vol_pcr = vol_pcr_val
 
                 # Accumulate 1-minute candle
