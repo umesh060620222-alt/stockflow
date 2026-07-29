@@ -1249,6 +1249,12 @@ class OptionsAutoTrader:
         #             t["current_sl"] = entry_spot
         #             self._log(f"Trail Trigger: Spot hit 50% progress (1 ATR) Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
+        # Check premium profit target of 2.0 points (Everywhere)
+        if t["current_premium"] - t["entry_premium"] >= 2.0:
+            self._log(f"Premium Target Reached (+2.0pts): Entry: Rs. {t['entry_premium']:.2f}, Current: Rs. {t['current_premium']:.2f}. Booking profits.")
+            self._exit_position(kc, "WIN", spot_ltp)
+            return
+
         # Check exit triggers
         exit_triggered = False
         verdict = "OPEN"
@@ -1538,6 +1544,12 @@ class OptionsAutoTrader:
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
                 
+        # Check premium profit target of 2.0 points (Everywhere)
+        if t["current_premium"] - t["entry_premium"] >= 2.0:
+            self._log(f"[VOL PCR PAPER] Premium Target Reached (+2.0pts): Entry: Rs. {t['entry_premium']:.2f}, Current: Rs. {t['current_premium']:.2f}. Booking profits.")
+            self._exit_vol_pcr_position(kc, "WIN", spot_ltp)
+            return
+            
         # SL/Target Spot Check
         exit_triggered = False
         verdict = "OPEN"
