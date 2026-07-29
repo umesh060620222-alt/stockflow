@@ -782,10 +782,10 @@ class OptionsAutoTrader:
                 buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
                 current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
                 
-                ideal_limit = current_bid - 2.0
+                ideal_limit = current_bid - 1.0
                 limit_price = max(1.0, round(ideal_limit, 1))
                 
-                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order with 2.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order with 1.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
                 self._log(f"[LIVE] (Signal Spot: Rs.{entry_spot:.2f}, Current Spot: Rs.{current_spot:.2f}, Original Bid: Rs. {current_bid:.2f})")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
@@ -1523,7 +1523,7 @@ class OptionsAutoTrader:
         # Apply the fixed 2.0 point premium discount on entry
         buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
         current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
-        limit_price = max(1.0, round(current_bid - 2.0, 1))
+        limit_price = max(1.0, round(current_bid - 1.0, 1))
         
         lots = 1
         spot_sl = (spot_ltp - 2.0 * atr_val) if is_call else (spot_ltp + 2.0 * atr_val)
@@ -1538,7 +1538,7 @@ class OptionsAutoTrader:
             if self.capital < required_capital:
                 raise ValueError(f"Insufficient capital for Vol PCR Strategy. Required: Rs. {required_capital}, Available: Rs. {self.capital}")
             
-            self._log(f"[LIVE VOL PCR] Placing PASSIVE LIMIT BUY order with 2.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+            self._log(f"[LIVE VOL PCR] Placing PASSIVE LIMIT BUY order with 1.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
             try:
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
@@ -1573,7 +1573,7 @@ class OptionsAutoTrader:
                 self._log(f"[LIVE VOL PCR ERROR] Failed to place limit order: {e}")
         else:
             # Paper trading fills immediately
-            self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {limit_price:.2f} premium (LTP: Rs. {entry_premium:.2f}, 2.0pt discount applied)")
+            self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {limit_price:.2f} premium (LTP: Rs. {entry_premium:.2f}, 1.0pt discount applied)")
             with self.lock:
                 self.vol_pcr_active_trade = {
                     "side": side,
