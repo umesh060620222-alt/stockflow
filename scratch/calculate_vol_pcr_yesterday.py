@@ -11,12 +11,11 @@ def reconstruct_pcr():
     print("Connecting to Zerodha Kite client...")
     kc = Z.kite()
     
-    # Yesterday's date
-    yesterday = dt.date.today() - dt.timedelta(days=1)
+    # Target July 28th (2 days ago)
+    yesterday = dt.date.today() - dt.timedelta(days=2)
     
-    # Check if yesterday was a weekend, adjust if needed
+    # Check if target date was a weekend, adjust if needed
     if yesterday.weekday() >= 5: # Saturday or Sunday
-        print("Yesterday was a weekend! Finding the last trading day...")
         yesterday = yesterday - dt.timedelta(days=2 if yesterday.weekday() == 6 else 1)
         
     print(f"Resolving Nifty weekly options active on {yesterday}...")
