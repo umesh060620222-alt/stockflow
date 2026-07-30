@@ -1304,29 +1304,30 @@ class OptionsAutoTrader:
             self._exit_position(kc, "WIN", spot_ltp)
             return
 
-        # Check exit triggers
+        # Check exit triggers (Spot target and Spot SL apply in LIVE mode only)
         exit_triggered = False
         verdict = "OPEN"
         exit_spot = spot_ltp
 
-        if is_call:
-            if spot_ltp <= sl:
-                exit_triggered = True
-                verdict = "LOSS"
-                exit_spot = sl
-            elif spot_ltp >= target:
-                exit_triggered = True
-                verdict = "WIN"
-                exit_spot = target
-        else:
-            if spot_ltp >= sl:
-                exit_triggered = True
-                verdict = "LOSS"
-                exit_spot = sl
-            elif spot_ltp <= target:
-                exit_triggered = True
-                verdict = "WIN"
-                exit_spot = target
+        if self.mode == "live":
+            if is_call:
+                if spot_ltp <= sl:
+                    exit_triggered = True
+                    verdict = "LOSS"
+                    exit_spot = sl
+                elif spot_ltp >= target:
+                    exit_triggered = True
+                    verdict = "WIN"
+                    exit_spot = target
+            else:
+                if spot_ltp >= sl:
+                    exit_triggered = True
+                    verdict = "LOSS"
+                    exit_spot = sl
+                elif spot_ltp <= target:
+                    exit_triggered = True
+                    verdict = "WIN"
+                    exit_spot = target
 
         if exit_triggered:
             self._exit_position(kc, verdict, exit_spot)
@@ -1392,19 +1393,19 @@ class OptionsAutoTrader:
             self._exit_shadow_position(kc, "LOSS", spot_ltp)
             return
 
-        # Check spot SL
-        exit_triggered = False
-        if is_call:
-            if spot_ltp <= sl:
-                exit_triggered = True
-        else:
-            if spot_ltp >= sl:
-                exit_triggered = True
-
-        if exit_triggered:
-            self._log(f"[SHADOW] Spot Stop Loss Triggered. Spot: Rs. {spot_ltp:.2f}, SL: Rs. {sl:.2f}. Exiting.")
-            self._exit_shadow_position(kc, "LOSS", spot_ltp)
-            return
+        # Check spot SL (Disabled for shadow trading)
+        # exit_triggered = False
+        # if is_call:
+        #     if spot_ltp <= sl:
+        #         exit_triggered = True
+        # else:
+        #     if spot_ltp >= sl:
+        #         exit_triggered = True
+        # 
+        # if exit_triggered:
+        #     self._log(f"[SHADOW] Spot Stop Loss Triggered. Spot: Rs. {spot_ltp:.2f}, SL: Rs. {sl:.2f}. Exiting.")
+        #     self._exit_shadow_position(kc, "LOSS", spot_ltp)
+        #     return
 
     def _exit_shadow_position(self, kc, verdict, exit_spot):
         t = self.shadow_active_trade
