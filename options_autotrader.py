@@ -1359,20 +1359,16 @@ class OptionsAutoTrader:
             self._exit_shadow_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Update Volume PCR trailing extremes and run Trailing/Hard exits
+        # Check Volume PCR hard exits (Leg room: CE exit >= 1.30, PE exit <= 0.70)
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
-            limit_pcr = t["min_vol_pcr"] + 0.20
-            if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
-                self._log(f"[SHADOW] Volume PCR Trailing/Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Lowest: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting.")
+            if vol_pcr_val >= 1.30:
+                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 1.30). Exiting.")
                 self._exit_shadow_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
-            limit_pcr = t["max_vol_pcr"] - 0.20
-            if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
-                self._log(f"[SHADOW] Volume PCR Trailing/Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Highest: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting.")
+            if vol_pcr_val <= 0.70:
+                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.70). Exiting.")
                 self._exit_shadow_position(kc, "LOSS", spot_ltp)
                 return
 
