@@ -1489,6 +1489,7 @@ class OptionsAutoTrader:
             self.completed_trades.append(completed_trade)
             self.active_trade = None
             self.state = "scanning"
+        self._reset_scanning_state()
 
         self._log(f"TRADE CLOSED: {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
 
