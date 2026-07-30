@@ -292,71 +292,19 @@ class OptionsAutoTrader:
         self.s_trough_atr = None
         
         if today_trading_candles:
-            self._log(f"Replaying {len(today_trading_candles)} of today's candles to reconstruct active stage counters...")
-            for c in today_trading_candles:
-                high = float(c["high"])
-                low = float(c["low"])
-                atr = float(c["atr"])
-                
-                # LONG SETUP REPLAY
-                if self.l_stage == 1:
-                    if self.l_peak is None or high > self.l_peak:
-                        self.l_peak = high
-                        self.l_peak_atr = atr
-                    else:
-                        self.l_trough = low
-                        self.l_stage = 2
-                elif self.l_stage == 2:
-                    if high > self.l_peak:
-                        self.l_peak = high
-                        self.l_peak_atr = atr
-                        self.l_trough = low
-                        self.l_stage = 1
-                    else:
-                        self.l_trough = min(self.l_trough, low)
-                        drop_required = 2.5 * (self.l_peak_atr if self.l_peak_atr else atr)
-                        if self.l_trough <= self.l_peak - drop_required:
-                            self.l_stage = 3
-                elif self.l_stage == 3:
-                    if low < self.l_trough:
-                        self.l_trough = low
-                    bounce_required = 0.7 * atr
-                    bounce_level = self.l_trough + bounce_required
-                    if high >= bounce_level:
-                        self.l_peak = None
-                        self.l_trough = None
-                        self.l_stage = 1
-                        
-                # SHORT SETUP REPLAY
-                if self.s_stage == 1:
-                    if self.s_trough is None or low < self.s_trough:
-                        self.s_trough = low
-                        self.s_trough_atr = atr
-                    else:
-                        self.s_peak = high
-                        self.s_stage = 2
-                elif self.s_stage == 2:
-                    if low < self.s_trough:
-                        self.s_trough = low
-                        self.s_trough_atr = atr
-                        self.s_peak = high
-                        self.s_stage = 1
-                    else:
-                        self.s_peak = max(self.s_peak, high)
-                        rally_required = 2.5 * (self.s_trough_atr if self.s_trough_atr else atr)
-                        if self.s_peak >= self.s_trough + rally_required:
-                            self.s_stage = 3
-                elif self.s_stage == 3:
-                    if high > self.s_peak:
-                        self.s_peak = high
-                    drop_required = 0.7 * atr
-                    short_trigger_level = self.s_peak - drop_required
-                    if low <= short_trigger_level:
-                        self.s_trough = None
-                        self.s_peak = None
-                        self.s_stage = 1
+            self._log(f"Replaying {len(today_trading_candles)} of today's candles to warm up indicators, but forcing stages to start fresh at Stage 1...")
+            # We skip reconstructing stages from the past to prevent executing stale signals on startup.
+            self.l_stage = 1
+            self.l_peak = None
+            self.l_trough = None
+            self.s_stage = 1
+            self.s_trough = None
+            self.s_peak = None
             
-            self._log(f"Replay complete. Reconstructed State: Long Stage {self.l_stage} (Peak: {self.l_peak}, Trough: {self.l_trough}), Short Stage {self.s_stage} (Trough: {self.s_trough}, Peak: {self.s_peak})")
+            # Record the reset candle index so replay only looks at new candles formed after startup
+            self.reset_replay_index = len(self.candles)
+            
+            self._log(f"Warmup complete. Forced Reconstructed State: Long Stage {self.l_stage}, Short Stage {self.s_stage}")
 
     def _reset_scanning_state(self):
         with self.lock:
