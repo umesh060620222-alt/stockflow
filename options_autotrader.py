@@ -1252,22 +1252,36 @@ class OptionsAutoTrader:
             self._exit_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Update Volume PCR trailing extremes and run Trailing/Hard exits
+        # Volume PCR Exits (Dynamic based on Mode)
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
-        if is_call:
-            t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
-            limit_pcr = t["min_vol_pcr"] + 0.20
-            if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
-                self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Lowest PCR: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting trade early.")
-                self._exit_position(kc, "LOSS", spot_ltp)
-                return
+        if self.mode == "live":
+            # Tight Trailing & Hard Exits (Live Mode)
+            if is_call:
+                t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
+                limit_pcr = t["min_vol_pcr"] + 0.20
+                if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
+                    self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Lowest PCR: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting trade early.")
+                    self._exit_position(kc, "LOSS", spot_ltp)
+                    return
+            else:
+                t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
+                limit_pcr = t["max_vol_pcr"] - 0.20
+                if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
+                    self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Highest PCR: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting trade early.")
+                    self._exit_position(kc, "LOSS", spot_ltp)
+                    return
         else:
-            t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
-            limit_pcr = t["max_vol_pcr"] - 0.20
-            if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
-                self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Highest PCR: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting trade early.")
-                self._exit_position(kc, "LOSS", spot_ltp)
-                return
+            # Wide Legroom Exits (Paper Mode - Hard Gates 1.60 and 0.50)
+            if is_call:
+                if vol_pcr_val >= 1.60:
+                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 1.60). Exiting.")
+                    self._exit_position(kc, "LOSS", spot_ltp)
+                    return
+            else:
+                if vol_pcr_val <= 0.50:
+                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.50). Exiting.")
+                    self._exit_position(kc, "LOSS", spot_ltp)
+                    return
 
         # Check trailing breakeven condition (commented out)
         # if not reached_halfway:
@@ -1284,8 +1298,8 @@ class OptionsAutoTrader:
         #             t["current_sl"] = entry_spot
         #             self._log(f"Trail Trigger: Spot hit 50% progress (1 ATR) Rs. {spot_ltp:.2f}. Trailing Stop-Loss to entry Rs. {entry_spot:.2f}")
 
-        # Check premium profit target of 3.0 points (Everywhere)
-        if t["current_premium"] - t["entry_premium"] >= 3.0:
+        # Check premium profit target of 3.0 points (Live mode only!)
+        if self.mode == "live" and t["current_premium"] - t["entry_premium"] >= 3.0:
             self._log(f"Premium Target Reached (+3.0pts): Entry: Rs. {t['entry_premium']:.2f}, Current: Rs. {t['current_premium']:.2f}. Booking profits.")
             self._exit_position(kc, "WIN", spot_ltp)
             return
