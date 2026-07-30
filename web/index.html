@@ -3998,9 +3998,6 @@ function updateOptAutoTraderUI(d) {
     }
   }
   
-  startBtn.disabled = d.running;
-  stopBtn.disabled = !d.running;
-  
   if (d.running && !optAutoTraderPollInterval) {
     optAutoTraderPollInterval = setInterval(pollOptAutoTraderStatus, 2000);
   } else if (!d.running && optAutoTraderPollInterval) {
