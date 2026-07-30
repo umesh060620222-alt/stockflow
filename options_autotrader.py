@@ -1372,9 +1372,9 @@ class OptionsAutoTrader:
                 self._exit_shadow_position(kc, "LOSS", spot_ltp)
                 return
 
-        # Check hard stop-loss (2.0 premium points SL)
-        if t["entry_premium"] - t["current_premium"] >= 2.0:
-            self._log(f"[SHADOW] Hard Stop Loss Reached (-2.0pts). Current: Rs. {t['current_premium']:.2f}, Entry: Rs. {t['entry_premium']:.2f}. Exiting.")
+        # Check hard stop-loss (25.0 premium points SL)
+        if t["entry_premium"] - t["current_premium"] >= 25.0:
+            self._log(f"[SHADOW] Hard Stop Loss Reached (-25.0pts). Current: Rs. {t['current_premium']:.2f}, Entry: Rs. {t['entry_premium']:.2f}. Exiting.")
             self._exit_shadow_position(kc, "LOSS", spot_ltp)
             return
 
