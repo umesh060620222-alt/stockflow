@@ -103,21 +103,61 @@ def run_reverse_large_gaps_backtest():
         df_trade = df.loc[target_dt:]
         eod_price = df_trade.iloc[-1]['close']
         
-        # Calculate Max Peak and Max Drawdown
+        # Resolve target hits and drawdowns before target hits
+        t20_hit = False
+        t20_idx = None
+        for idx, row in df_trade.iterrows():
+            if is_call:
+                profit = row['high'] - entry_price
+            else:
+                profit = entry_price - row['low']
+            if profit >= 20.0:
+                t20_hit = True
+                t20_idx = idx
+                break
+                
+        if t20_hit:
+            df_before_t20 = df_trade.loc[:t20_idx]
+            if is_call:
+                t20_drawdown = entry_price - df_before_t20['low'].min()
+            else:
+                t20_drawdown = df_before_t20['high'].max() - entry_price
+        else:
+            if is_call:
+                t20_drawdown = entry_price - df_trade['low'].min()
+            else:
+                t20_drawdown = df_trade['high'].max() - entry_price
+                
+        t40_hit = False
+        t40_idx = None
+        for idx, row in df_trade.iterrows():
+            if is_call:
+                profit = row['high'] - entry_price
+            else:
+                profit = entry_price - row['low']
+            if profit >= 40.0:
+                t40_hit = True
+                t40_idx = idx
+                break
+                
+        if t40_hit:
+            df_before_t40 = df_trade.loc[:t40_idx]
+            if is_call:
+                t40_drawdown = entry_price - df_before_t40['low'].min()
+            else:
+                t40_drawdown = df_before_t40['high'].max() - entry_price
+        else:
+            if is_call:
+                t40_drawdown = entry_price - df_trade['low'].min()
+            else:
+                t40_drawdown = df_trade['high'].max() - entry_price
+                
+        # For EOD stats display
         if is_call:
-            highest_price = df_trade['high'].max()
-            lowest_price = df_trade['low'].min()
-            max_profit = highest_price - entry_price
-            max_drawdown = entry_price - lowest_price
-        else: # PUT
-            lowest_price = df_trade['low'].min()
-            highest_price = df_trade['high'].max()
-            max_profit = entry_price - lowest_price
-            max_drawdown = highest_price - entry_price
+            max_profit = df_trade['high'].max() - entry_price
+        else:
+            max_profit = entry_price - df_trade['low'].min()
             
-        t20_hit = max_profit >= 20.0
-        t40_hit = max_profit >= 40.0
-        
         t20_str = "✅ HIT" if t20_hit else "❌ MS"
         t40_str = "✅ HIT" if t40_hit else "❌ MS"
         
@@ -128,12 +168,13 @@ def run_reverse_large_gaps_backtest():
             "entry_price": entry_price,
             "eod_price": eod_price,
             "max_profit": max_profit,
-            "max_drawdown": max_drawdown,
+            "t20_drawdown": t20_drawdown,
+            "t40_drawdown": t40_drawdown,
             "t20_hit": t20_hit,
             "t40_hit": t40_hit
         })
         
-        print(f"{day.strftime('%Y-%m-%d'):<10} | {gap_pct*100:<+6.2f}% | {trade_side:<15} | {entry_price:<9.2f} | {eod_price:<9.2f} | {max_profit:<+8.1f} | -{max_drawdown:<7.1f} | {t20_str:<6} | {t40_str:<6}")
+        print(f"{day.strftime('%Y-%m-%d'):<10} | {gap_pct*100:<+6.2f}% | {trade_side:<15} | {entry_price:<9.2f} | {eod_price:<9.2f} | {max_profit:<+8.1f} | -{t20_drawdown:<7.1f} | {t20_str:<6} | {t40_str:<6}")
         
     print("-"*115)
     
@@ -146,7 +187,7 @@ def run_reverse_large_gaps_backtest():
     t20_losses = 0
     t20_points = 0.0
     for r in results:
-        if r["t20_hit"] and r["max_drawdown"] <= 50.0:
+        if r["t20_hit"] and r["t20_drawdown"] <= 50.0:
             t20_wins += 1
             t20_points += 20.0
         else:
@@ -160,7 +201,7 @@ def run_reverse_large_gaps_backtest():
     t40_losses = 0
     t40_points = 0.0
     for r in results:
-        if r["t40_hit"] and r["max_drawdown"] <= 50.0:
+        if r["t40_hit"] and r["t40_drawdown"] <= 50.0:
             t40_wins += 1
             t40_points += 40.0
         else:
