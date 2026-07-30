@@ -353,6 +353,21 @@ class OptionsAutoTrader:
             
             self._log(f"Replay complete. Reconstructed State: Long Stage {self.l_stage} (Peak: {self.l_peak}, Trough: {self.l_trough}), Short Stage {self.s_stage} (Trough: {self.s_trough}, Peak: {self.s_peak})")
 
+    def _reset_scanning_state(self):
+        with self.lock:
+            self.l_stage = 1
+            self.l_peak = None
+            self.l_trough = None
+            self.l_peak_atr = None
+            self.s_stage = 1
+            self.s_trough = None
+            self.s_peak = None
+            self.s_trough_atr = None
+            self.vol_pcr_above_ce_ticks = 0
+            self.vol_pcr_below_pe_ticks = 0
+            self.prev_vol_pcr = None
+        self._log("TRADER STATE RESET: Re-initialized all scanning stages and tick counters.")
+
     def _loop(self):
         try:
             kc = Z.kite()
@@ -1833,7 +1848,8 @@ class OptionsAutoTrader:
         with self.lock:
             self.vol_pcr_completed_trades.append(completed_trade)
             self.vol_pcr_active_trade = None
-            self._save_state()
+        self._reset_scanning_state()
+        self._save_state()
             
         self._log(f"[VOL PCR CLOSED] {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
 
