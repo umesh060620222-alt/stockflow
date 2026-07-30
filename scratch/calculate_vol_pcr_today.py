@@ -116,8 +116,8 @@ def reconstruct_pcr():
     print(f"   ▸ Call Vol:  {int(df_vol.loc[min_idx, 'call_vol']):,}")
     print("="*80)
     
-    # Print notable spikes (> 1.6 or < 0.4)
-    print("\n📝 NOTABLE EXTREME SPIKES LOG (EMA >= 1.50 or EMA <= 0.45):")
+    # Print notable spikes (>= 1.30 or <= 0.70)
+    print("\n📝 NOTABLE EXTREME SPIKES LOG (EMA >= 1.30 or EMA <= 0.70):")
     print("-"*80)
     print(f"{'Time':<12} | {'Raw PCR':<10} | {'EMA PCR':<10} | {'Put Volume':<12} | {'Call Volume':<12}")
     print("-"*80)
@@ -127,9 +127,9 @@ def reconstruct_pcr():
         raw_pcr = row['raw_vol_pcr']
         ema_pcr = row['vol_pcr_ema']
         
-        if ema_pcr >= 1.50 or ema_pcr <= 0.45:
-            # simple throttle: print at most once every 5 minutes for clean output
-            if last_printed_time is None or (idx - last_printed_time).total_seconds() >= 300:
+        if ema_pcr >= 1.30 or ema_pcr <= 0.70:
+            # print every minute it stays in the extreme zone
+            if last_printed_time is None or (idx - last_printed_time).total_seconds() >= 60:
                 print(f"{idx.strftime('%H:%M:%S'):<12} | {raw_pcr:<10.2f} | {ema_pcr:<10.2f} | {int(row['put_vol']):<12,} | {int(row['call_vol']):<12,}")
                 last_printed_time = idx
     print("="*80)
