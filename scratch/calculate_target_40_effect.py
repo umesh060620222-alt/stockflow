@@ -14,16 +14,16 @@ def analyze_target_40():
     nifty_token = 256265
     today = dt.date.today()
     
-    # Get past 91 trading days (excluding weekends)
+    # Get past 31 trading days (excluding weekends) to get 30 testable days
     trading_days = []
     current_date = today
-    while len(trading_days) < 92:
+    while len(trading_days) < 32:
         if current_date.weekday() < 5:
             trading_days.append(current_date)
         current_date = current_date - dt.timedelta(days=1)
     trading_days.reverse()
     
-    test_days = trading_days[-90:]
+    test_days = trading_days[-30:]
     
     results = []
     
