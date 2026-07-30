@@ -1591,7 +1591,8 @@ class OptionsAutoTrader:
                         "order_id": oid,
                         "filled": False,
                         "min_vol_pcr": entry_vol_pcr,
-                        "max_vol_pcr": entry_vol_pcr
+                        "max_vol_pcr": entry_vol_pcr,
+                        "reached_halfway": False
                     }
                     self._save_state()
             except Exception as e:
@@ -1617,7 +1618,8 @@ class OptionsAutoTrader:
                     "started_at": time.time(),
                     "filled": True,
                     "min_vol_pcr": entry_vol_pcr,
-                    "max_vol_pcr": entry_vol_pcr
+                    "max_vol_pcr": entry_vol_pcr,
+                    "reached_halfway": False
                 }
                 self._save_state()
 
