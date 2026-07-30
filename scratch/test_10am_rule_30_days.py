@@ -55,6 +55,8 @@ def run_30_day_10am_backtest():
                 yesterday_close = y_candles[-1]['close'] if y_candles else None
         except Exception:
             continue
+        if yesterday_close is None:
+            continue
             
         # 2. Fetch Today's Candles
         try:
