@@ -1271,15 +1271,15 @@ class OptionsAutoTrader:
                     self._exit_position(kc, "LOSS", spot_ltp)
                     return
         else:
-            # Wide Legroom Exits (Paper Mode - Hard Gates 2.00 and 0.30)
+            # Wide Legroom Exits (Paper Mode - Hard Gates 2.20 and 0.20)
             if is_call:
-                if vol_pcr_val >= 2.00:
-                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 2.00). Exiting.")
+                if vol_pcr_val >= 2.20:
+                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 2.20). Exiting.")
                     self._exit_position(kc, "LOSS", spot_ltp)
                     return
             else:
-                if vol_pcr_val <= 0.30:
-                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.30). Exiting.")
+                if vol_pcr_val <= 0.20:
+                    self._log(f"Volume PCR Hard Exit (Paper): Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.20). Exiting.")
                     self._exit_position(kc, "LOSS", spot_ltp)
                     return
 
@@ -1374,16 +1374,16 @@ class OptionsAutoTrader:
             self._exit_shadow_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Check Volume PCR hard exits (Leg room: CE exit >= 2.00, PE exit <= 0.30)
+        # Check Volume PCR hard exits (Leg room: CE exit >= 2.20, PE exit <= 0.20)
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            if vol_pcr_val >= 2.00:
-                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 2.00). Exiting.")
+            if vol_pcr_val >= 2.20:
+                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 2.20). Exiting.")
                 self._exit_shadow_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            if vol_pcr_val <= 0.30:
-                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.30). Exiting.")
+            if vol_pcr_val <= 0.20:
+                self._log(f"[SHADOW] Volume PCR Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Hard Barrier: 0.20). Exiting.")
                 self._exit_shadow_position(kc, "LOSS", spot_ltp)
                 return
 
