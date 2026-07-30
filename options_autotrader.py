@@ -104,6 +104,11 @@ class OptionsAutoTrader:
         log.info(entry)
 
     def start(self, capital=40000.0, mode="paper", lot_size_mode="auto", fixed_lots=1, vol_pcr_mode="paper"):
+        # Wait for old thread to terminate if it exists and is alive
+        if hasattr(self, "thread") and self.thread and self.thread.is_alive():
+            self._stop = True
+            self.thread.join(timeout=3.0)
+            
         with self.lock:
             if self.running:
                 return False
