@@ -99,16 +99,16 @@ def run_combined_backtest():
         reason = ""
         
         # CE Entry: Price is at or below Lower BB AND Volume PCR is spiked (Bearish panic)
-        # Note: We use 1.25 on next-week contracts as our extreme threshold
-        if close <= lower and pcr_ema >= 1.25:
+        # Note: We use 1.50 as requested
+        if close <= lower and pcr_ema >= 1.50:
             signal_type = "BUY CE (COMBINED REVERSION)"
-            reason = f"Price ₹{close:.2f} <= Lower BB ₹{lower:.2f} & Vol PCR {pcr_ema:.2f} >= 1.25"
+            reason = f"Price ₹{close:.2f} <= Lower BB ₹{lower:.2f} & Vol PCR {pcr_ema:.2f} >= 1.50"
             
         # PE Entry: Price is at or above Upper BB AND Volume PCR is low (Bullish exhaustion)
-        # Note: We use 0.75 on next-week contracts as our extreme threshold
-        elif close >= upper and pcr_ema <= 0.75:
+        # Note: We use 0.30 as requested
+        elif close >= upper and pcr_ema <= 0.30:
             signal_type = "BUY PE (COMBINED REVERSION)"
-            reason = f"Price ₹{close:.2f} >= Upper BB ₹{upper:.2f} & Vol PCR {pcr_ema:.2f} <= 0.75"
+            reason = f"Price ₹{close:.2f} >= Upper BB ₹{upper:.2f} & Vol PCR {pcr_ema:.2f} <= 0.30"
             
         if signal_type:
             # Simulate trade entry at open of the next candle
