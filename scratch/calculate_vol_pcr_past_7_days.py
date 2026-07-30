@@ -12,8 +12,8 @@ def run_backtest_7_days():
     kc = Z.kite()
     
     # We use the August Monthly Expiry which is active and highly liquid for all past 7 days
-    # The last Thursday of August 2026 is August 27, 2026
-    monthly_expiry = dt.date(2026, 8, 27)
+    # The monthly contract of August 2026 is August 25, 2026
+    monthly_expiry = dt.date(2026, 8, 25)
     print(f"Resolving Nifty monthly options for expiry: {monthly_expiry}")
     
     # Strikes to track
