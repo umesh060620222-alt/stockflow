@@ -30,6 +30,8 @@ class OptionsAutoTrader:
         self.candles = []    # list of dicts: {"open", "high", "low", "close", "atr", "nifty_ema", "date"}
         self.active_trade = None  # None or dict of active trade parameters
         self.completed_trades = []
+        self.shadow_active_trade = None
+        self.shadow_completed_trades = []
         self.vol_pcr_active_trade = None
         self.vol_pcr_completed_trades = []
         self.prev_vol_pcr = None
@@ -64,9 +66,11 @@ class OptionsAutoTrader:
                 "logs": self.logs,
                 "nifty_open": self.nifty_open,
                 "active_trade": self.active_trade,
-            "vol_pcr_active_trade": self.vol_pcr_active_trade,
-            "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
-            "vol_pcr_mode": self.vol_pcr_mode
+                "vol_pcr_active_trade": self.vol_pcr_active_trade,
+                "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
+                "vol_pcr_mode": self.vol_pcr_mode,
+                "shadow_active_trade": self.shadow_active_trade,
+                "shadow_completed_trades": self.shadow_completed_trades
             }
             with open("state_autotrader.json", "w") as f:
                 json.dump(state, f)
@@ -88,6 +92,8 @@ class OptionsAutoTrader:
                     self.vol_pcr_active_trade = state.get("vol_pcr_active_trade")
                     self.vol_pcr_completed_trades = state.get("vol_pcr_completed_trades", [])
                     self.vol_pcr_mode = state.get("vol_pcr_mode", "paper")
+                    self.shadow_active_trade = state.get("shadow_active_trade")
+                    self.shadow_completed_trades = state.get("shadow_completed_trades", [])
                     ts = self._ist().strftime("%H:%M:%S")
                     self.logs.append(f"[{ts}] Restored today's trade history and logs from state file.")
         except Exception as e:
@@ -571,6 +577,9 @@ class OptionsAutoTrader:
                     else:
                         self._manage_active_position(kc, ltp, quote_data=q)
 
+                if self.shadow_active_trade:
+                    self._manage_shadow_position(kc, ltp, quote_data=q)
+
                 if self.vol_pcr_active_trade:
                     if not self.vol_pcr_active_trade.get("filled", True):
                         self._manage_vol_pcr_pending_order(kc, ltp, quote_data=q)
@@ -787,6 +796,24 @@ class OptionsAutoTrader:
                 "lot_size": lot_size,
                 "started_at": time.time()
             }
+            self.shadow_active_trade = {
+                "side": side,
+                "symbol": symbol_str,
+                "tradingsymbol": tradingsymbol,
+                "entry_time": self._ist().strftime("%H:%M:%S"),
+                "entry_spot": current_spot,
+                "spot_sl": spot_sl,
+                "current_sl": spot_sl,
+                "entry_premium": entry_premium,
+                "current_premium": entry_premium,
+                "lots": lots,
+                "lot_size": lot_size,
+                "started_at": time.time(),
+                "filled": True,
+                "min_vol_pcr": self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0,
+                "max_vol_pcr": self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+            }
+            self._log(f"[SHADOW] Parallel paper entry created @ Rs. {entry_premium:.2f} premium (No target, exit on SL/PCR only)")
 
     def _fetch_oi_metrics(self, kc, spot_ltp, nifty_open=None):
         """Fetch ATM Put & Call Open Interest from Zerodha to check institutional dip buying."""
@@ -1153,6 +1180,26 @@ class OptionsAutoTrader:
                             t["filled"] = True
                             self.state = "in-trade"
                             self._log(f"[LIVE] Pending order FILLED at Rs. {t['entry_premium']:.2f}")
+                            
+                            # Parallel shadow paper trade entry
+                            self.shadow_active_trade = {
+                                "side": t["side"],
+                                "symbol": t["symbol"],
+                                "tradingsymbol": t["tradingsymbol"],
+                                "entry_time": self._ist().strftime("%H:%M:%S"),
+                                "entry_spot": t["entry_spot"],
+                                "spot_sl": t["spot_sl"],
+                                "current_sl": t["current_sl"],
+                                "entry_premium": t["entry_premium"],
+                                "current_premium": t["entry_premium"],
+                                "lots": t["lots"],
+                                "lot_size": t["lot_size"],
+                                "started_at": time.time(),
+                                "filled": True,
+                                "min_vol_pcr": t.get("min_vol_pcr", 1.0),
+                                "max_vol_pcr": t.get("max_vol_pcr", 1.0)
+                            }
+                            self._log(f"[SHADOW] Parallel shadow entry initialized @ Rs. {t['entry_premium']:.2f} premium (No target, exit on SL/PCR only)")
                         elif status in ["CANCELLED", "REJECTED"]:
                             self._log(f"[LIVE] Pending order was {status}. Reason: {o.get('status_message', 'none')}")
                             self.active_trade = None
@@ -1269,6 +1316,116 @@ class OptionsAutoTrader:
 
         if exit_triggered:
             self._exit_position(kc, verdict, exit_spot)
+
+    def _manage_shadow_position(self, kc, spot_ltp, quote_data=None):
+        t = self.shadow_active_trade
+        if not t:
+            return
+
+        side = t["side"]
+        entry_spot = t["entry_spot"]
+        sl = t["spot_sl"]
+        is_call = "CALL" in side
+
+        # Update option LTP for floating P&L display
+        if self.mode == "live" and t["tradingsymbol"]:
+            try:
+                opt_key = f"NFO:{t['tradingsymbol']}"
+                if quote_data and opt_key in quote_data:
+                    opt_q = quote_data[opt_key]
+                else:
+                    quote = kc.quote([opt_key])
+                    opt_q = quote.get(opt_key)
+                
+                if opt_q:
+                    t["current_premium"] = float(opt_q.get("last_price") or t["current_premium"])
+            except Exception:
+                pass
+        else:
+            # Paper P&L estimation: change in spot price * delta
+            spot_change = (spot_ltp - entry_spot) if is_call else (entry_spot - spot_ltp)
+            t["current_premium"] = max(1.0, t["entry_premium"] + (spot_change * 0.50))
+
+        # Check premium-based stop-loss safety floor (max 50% loss on option premium)
+        if t["current_premium"] <= 0.50 * t["entry_premium"]:
+            self._log(f"[SHADOW] Max Loss Trigger: Option premium lost 50% of value (Current: Rs. {t['current_premium']:.2f}, Entry: Rs. {t['entry_premium']:.2f}). Exiting trade.")
+            self._exit_shadow_position(kc, "LOSS", spot_ltp)
+            return
+
+        # Check time-decay timeout (45 minutes max hold)
+        elapsed_mins = (time.time() - t["started_at"]) / 60.0
+        if elapsed_mins >= 45.0:
+            self._log(f"[SHADOW] Time-Decay Trigger: Duration exceeded 45 minutes ({elapsed_mins:.1f}m). Exiting trade.")
+            self._exit_shadow_position(kc, "TIMEOUT", spot_ltp)
+            return
+
+        # Update Volume PCR trailing extremes and run Trailing/Hard exits
+        vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
+        if is_call:
+            t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["min_vol_pcr"] + 0.20
+            if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
+                self._log(f"[SHADOW] Volume PCR Trailing/Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Lowest: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting.")
+                self._exit_shadow_position(kc, "LOSS", spot_ltp)
+                return
+        else:
+            t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["max_vol_pcr"] - 0.20
+            if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
+                self._log(f"[SHADOW] Volume PCR Trailing/Hard Exit: Vol PCR hit {vol_pcr_val:.2f} (Highest: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting.")
+                self._exit_shadow_position(kc, "LOSS", spot_ltp)
+                return
+
+        # Check hard stop-loss (2.0 premium points SL)
+        if t["entry_premium"] - t["current_premium"] >= 2.0:
+            self._log(f"[SHADOW] Hard Stop Loss Reached (-2.0pts). Current: Rs. {t['current_premium']:.2f}, Entry: Rs. {t['entry_premium']:.2f}. Exiting.")
+            self._exit_shadow_position(kc, "LOSS", spot_ltp)
+            return
+
+        # Check spot SL
+        exit_triggered = False
+        if is_call:
+            if spot_ltp <= sl:
+                exit_triggered = True
+        else:
+            if spot_ltp >= sl:
+                exit_triggered = True
+
+        if exit_triggered:
+            self._log(f"[SHADOW] Spot Stop Loss Triggered. Spot: Rs. {spot_ltp:.2f}, SL: Rs. {sl:.2f}. Exiting.")
+            self._exit_shadow_position(kc, "LOSS", spot_ltp)
+            return
+
+    def _exit_shadow_position(self, kc, verdict, exit_spot):
+        t = self.shadow_active_trade
+        if not t:
+            return
+
+        exit_premium = t["current_premium"]
+        pnl = (exit_premium - t["entry_premium"]) * t["lots"] * t["lot_size"]
+        
+        completed_trade = {
+            "date": self._ist().strftime("%Y-%m-%d"),
+            "symbol": t["symbol"],
+            "side": t["side"],
+            "entry_time": t["entry_time"],
+            "exit_time": self._ist().strftime("%H:%M:%S"),
+            "duration": f"{int((time.time() - t['started_at'])/60)}m",
+            "entry_spot": t["entry_spot"],
+            "exit_spot": exit_spot,
+            "entry_premium": t["entry_premium"],
+            "exit_premium": exit_premium,
+            "result": verdict,
+            "pnl": round(pnl),
+            "lots": t["lots"]
+        }
+
+        with self.lock:
+            self.shadow_completed_trades.append(completed_trade)
+            self.shadow_active_trade = None
+
+        self._log(f"[SHADOW CLOSED] {completed_trade['side']} -> {verdict} | P&L: Rs. {completed_trade['pnl']:+}")
+        self._save_state()
 
     def _exit_position(self, kc, verdict, exit_spot):
         t = self.active_trade
@@ -1814,6 +1971,8 @@ class OptionsAutoTrader:
                 pt_pnl_gross = (pt["current_premium"] - pt["entry_premium"]) * pt_shares
                 vol_pcr_floating_pnl = pt_pnl_gross - (pt["lots"] * opt_brokerage) - (opt_slippage * pt_shares)
 
+            st = self.shadow_active_trade
+
             return {
                 "vol_pcr_active_trade": {
                     "symbol": pt["symbol"] if self.vol_pcr_active_trade else "-",
@@ -1828,7 +1987,6 @@ class OptionsAutoTrader:
                     "pnl": round(vol_pcr_floating_pnl) if self.vol_pcr_active_trade else 0
                 } if self.vol_pcr_active_trade else None,
                 "vol_pcr_completed_trades": self.vol_pcr_completed_trades,
-            "vol_pcr_mode": self.vol_pcr_mode,
                 "vol_pcr_mode": self.vol_pcr_mode,
                 "running": self.running,
                 "mode": self.mode,
@@ -1848,6 +2006,17 @@ class OptionsAutoTrader:
                     "pnl": round(floating_pnl) if self.active_trade else 0
                 } if self.active_trade else None,
                 "completed_trades": self.completed_trades,
+                "shadow_active_trade": {
+                    "symbol": st["symbol"] if self.shadow_active_trade else "-",
+                    "side": st["side"] if self.shadow_active_trade else "-",
+                    "entry_time": st["entry_time"] if self.shadow_active_trade else "-",
+                    "entry_spot": round(st["entry_spot"], 2) if self.shadow_active_trade else 0,
+                    "entry_premium": round(st["entry_premium"], 2) if self.shadow_active_trade else 0,
+                    "current_premium": round(st["current_premium"], 2) if self.shadow_active_trade else 0,
+                    "lots": st["lots"] if self.shadow_active_trade else 0,
+                    "pnl": round((st["current_premium"] - st["entry_premium"]) * st["lots"] * st["lot_size"]) if self.shadow_active_trade else 0
+                } if self.shadow_active_trade else None,
+                "shadow_completed_trades": self.shadow_completed_trades,
                 "setup": setup_info,
                 "oi_metrics": getattr(self, "_oi_metrics", {})
             }
