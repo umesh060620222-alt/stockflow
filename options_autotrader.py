@@ -782,10 +782,9 @@ class OptionsAutoTrader:
                 buy_depth = opt_q.get("depth", {}).get("buy", []) if opt_q else []
                 current_bid = float(buy_depth[0]["price"]) if buy_depth else entry_premium
                 
-                ideal_limit = current_bid - 1.0
-                limit_price = max(1.0, round(ideal_limit, 1))
+                limit_price = max(1.0, round(current_bid, 1))
                 
-                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order with 1.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+                self._log(f"[LIVE] Placing PASSIVE LIMIT BUY order at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
                 self._log(f"[LIVE] (Signal Spot: Rs.{entry_spot:.2f}, Current Spot: Rs.{current_spot:.2f}, Original Bid: Rs. {current_bid:.2f})")
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
@@ -798,6 +797,7 @@ class OptionsAutoTrader:
                     price            = limit_price,
                 )
                 self._log(f"[LIVE] Limit order placed successfully. ID: {oid}. Waiting for fill (no timeout)...")
+                entry_vol_pcr = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                 with self.lock:
                     self.active_trade = {
                         "side": side,
@@ -815,7 +815,9 @@ class OptionsAutoTrader:
                         "lot_size": lot_size,
                         "started_at": time.time(),
                         "order_id": oid,
-                        "filled": False
+                        "filled": False,
+                        "min_vol_pcr": entry_vol_pcr,
+                        "max_vol_pcr": entry_vol_pcr
                     }
                 self.state = "waiting-fill"
                 return
@@ -1266,16 +1268,20 @@ class OptionsAutoTrader:
             self._exit_position(kc, "TIMEOUT", spot_ltp)
             return
 
-        # Check Volume PCR Early Exit safety gate
+        # Update Volume PCR trailing extremes and run Trailing/Hard exits
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            if vol_pcr_val >= 1.10:
-                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE exit barrier >= 1.10). Exiting trade early.")
+            t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["min_vol_pcr"] + 0.20
+            if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
+                self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Lowest PCR: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting trade early.")
                 self._exit_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            if vol_pcr_val <= 0.90:
-                self._log(f"Volume PCR Early Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE exit barrier <= 0.90). Exiting trade early.")
+            t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["max_vol_pcr"] - 0.20
+            if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
+                self._log(f"Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Highest PCR: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting trade early.")
                 self._exit_position(kc, "LOSS", spot_ltp)
                 return
 
@@ -1538,7 +1544,7 @@ class OptionsAutoTrader:
             if self.capital < required_capital:
                 raise ValueError(f"Insufficient capital for Vol PCR Strategy. Required: Rs. {required_capital}, Available: Rs. {self.capital}")
             
-            self._log(f"[LIVE VOL PCR] Placing PASSIVE LIMIT BUY order with 1.0pt FIXED DISCOUNT at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
+            self._log(f"[LIVE VOL PCR] Placing PASSIVE LIMIT BUY order at Rs. {limit_price} for {lots} lots of {tradingsymbol}...")
             try:
                 oid = kc.place_order(
                     variety          = kc.VARIETY_REGULAR,
@@ -1550,6 +1556,7 @@ class OptionsAutoTrader:
                     order_type       = kc.ORDER_TYPE_LIMIT,
                     price            = limit_price
                 )
+                entry_vol_pcr = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
                 with self.lock:
                     self.vol_pcr_active_trade = {
                         "side": side,
@@ -1566,14 +1573,17 @@ class OptionsAutoTrader:
                         "lot_size": lot_size,
                         "started_at": time.time(),
                         "order_id": oid,
-                        "filled": False
+                        "filled": False,
+                        "min_vol_pcr": entry_vol_pcr,
+                        "max_vol_pcr": entry_vol_pcr
                     }
                     self._save_state()
             except Exception as e:
                 self._log(f"[LIVE VOL PCR ERROR] Failed to place limit order: {e}")
         else:
             # Paper trading fills immediately
-            self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {limit_price:.2f} premium (LTP: Rs. {entry_premium:.2f}, 1.0pt discount applied)")
+            self._log(f"[VOL PCR PAPER] Simulating Buy 1 lots of {symbol_str} @ Rs. {limit_price:.2f} premium (LTP: Rs. {entry_premium:.2f})")
+            entry_vol_pcr = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
             with self.lock:
                 self.vol_pcr_active_trade = {
                     "side": side,
@@ -1589,7 +1599,9 @@ class OptionsAutoTrader:
                     "lots": lots,
                     "lot_size": lot_size,
                     "started_at": time.time(),
-                    "filled": True
+                    "filled": True,
+                    "min_vol_pcr": entry_vol_pcr,
+                    "max_vol_pcr": entry_vol_pcr
                 }
                 self._save_state()
 
@@ -1706,16 +1718,20 @@ class OptionsAutoTrader:
             self._exit_vol_pcr_position(kc, "TIMEOUT", spot_ltp)
             return
             
-        # Vol PCR exits (soft stops)
+        # Vol PCR trailing/hard exits (0.20 offset or opposite triggers)
         vol_pcr_val = self._oi_metrics.get("vol_pcr", 1.0) if getattr(self, "_oi_metrics", None) else 1.0
         if is_call:
-            if vol_pcr_val >= 1.10:
-                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (CE >= 1.10). Exiting early.")
+            t["min_vol_pcr"] = min(t.get("min_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["min_vol_pcr"] + 0.20
+            if vol_pcr_val >= limit_pcr or vol_pcr_val >= 1.10:
+                self._log(f"[VOL PCR] Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Lowest PCR: {t['min_vol_pcr']:.2f} + 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 1.10). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
         else:
-            if vol_pcr_val <= 0.90:
-                self._log(f"[VOL PCR] Vol PCR Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (PE <= 0.90). Exiting early.")
+            t["max_vol_pcr"] = max(t.get("max_vol_pcr", vol_pcr_val), vol_pcr_val)
+            limit_pcr = t["max_vol_pcr"] - 0.20
+            if vol_pcr_val <= limit_pcr or vol_pcr_val <= 0.90:
+                self._log(f"[VOL PCR] Volume PCR Trailing/Hard Exit: Vol PCR EMA hit {vol_pcr_val:.2f} (Highest PCR: {t['max_vol_pcr']:.2f} - 0.20 offset = {limit_pcr:.2f} | Hard Barrier: 0.90). Exiting early.")
                 self._exit_vol_pcr_position(kc, "LOSS", spot_ltp)
                 return
                 
