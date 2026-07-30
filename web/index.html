@@ -219,13 +219,6 @@
       
       <div class="row">
         <div><label>Capital Pool (INR)</label><input id="at_opt_capital" type="number" value="40000" step="1000"></div>
-        <div>
-          <label>Trading Mode</label>
-          <select id="at_opt_mode">
-            <option value="paper">Paper Trading (Simulated)</option>
-            <option value="live">Live Trading (Zerodha NFO)</option>
-          </select>
-        </div>
       </div>
       
       <div class="row" style="margin-top:10px">
@@ -242,9 +235,10 @@
         </div>
       </div>
       
-      <div style="display:flex;gap:10px;margin-top:14px">
-        <button id="at_opt_start_btn" class="btn btn-yellow" onclick="startOptAutoTrader()">Start Auto-Trader</button>
-        <button id="at_opt_stop_btn" class="btn btn-danger" onclick="stopOptAutoTrader()" disabled>Stop Auto-Trader</button>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button id="at_opt_start_paper_btn" class="btn btn-yellow" onclick="startOptAutoTrader('paper')">Start Paper Trader</button>
+        <button id="at_opt_start_live_btn" class="btn btn-danger" onclick="startOptAutoTrader('live')" style="background:#dc2626">Start Live Trader</button>
+        <button id="at_opt_stop_btn" class="btn" style="background:#4b5563" onclick="stopOptAutoTrader()" disabled>Stop Auto-Trader</button>
       </div>
       
       <div id="at_opt_status" style="margin-top:14px;font-size:13px;font-weight:bold;color:#f59e0b">
@@ -3857,15 +3851,16 @@ function renderFutTradesLog(trades) {
 
 let optAutoTraderPollInterval = null;
 
-async function startOptAutoTrader() {
+async function startOptAutoTrader(mode) {
   const cap = parseFloat(document.getElementById('at_opt_capital').value) || 40000;
-  const mode = document.getElementById('at_opt_mode').value;
   const lotMode = document.getElementById('at_opt_lot_mode').value;
   const fixedLots = parseInt(document.getElementById('at_opt_fixed_lots').value) || 1;
-  const startBtn = document.getElementById('at_opt_start_btn');
+  const paperBtn = document.getElementById('at_opt_start_paper_btn');
+  const liveBtn = document.getElementById('at_opt_start_live_btn');
   const stopBtn = document.getElementById('at_opt_stop_btn');
   
-  startBtn.disabled = true;
+  paperBtn.disabled = true;
+  liveBtn.disabled = true;
   try {
     const res = await fetch('/api/options/autotrader/start', {
       method: 'POST',
@@ -3875,7 +3870,7 @@ async function startOptAutoTrader() {
         mode: mode,
         lot_size_mode: lotMode,
         fixed_lots: fixedLots,
-        vol_pcr_mode: document.getElementById('vol_opt_mode').value
+        vol_pcr_mode: 'paper'
       })
     });
     const d = await res.json();
@@ -3887,18 +3882,21 @@ async function startOptAutoTrader() {
     }
   } catch(e) {
     alert('Failed to start Options Auto-Trader: ' + e);
-    startBtn.disabled = false;
+    paperBtn.disabled = false;
+    liveBtn.disabled = false;
   }
 }
 
 async function stopOptAutoTrader() {
-  const startBtn = document.getElementById('at_opt_start_btn');
+  const paperBtn = document.getElementById('at_opt_start_paper_btn');
+  const liveBtn = document.getElementById('at_opt_start_live_btn');
   const stopBtn = document.getElementById('at_opt_stop_btn');
   stopBtn.disabled = true;
   try {
     const res = await fetch('/api/options/autotrader/stop', {method: 'POST'});
     const d = await res.json();
-    startBtn.disabled = false;
+    paperBtn.disabled = false;
+    liveBtn.disabled = false;
     updateOptAutoTraderUI(d);
     
     if (optAutoTraderPollInterval) {
@@ -3924,17 +3922,18 @@ async function pollOptAutoTraderStatus() {
 function updateOptAutoTraderUI(d) {
   const statusEl = document.getElementById('at_opt_status');
   const logsEl = document.getElementById('at_opt_logs');
-  const startBtn = document.getElementById('at_opt_start_btn');
+  const paperBtn = document.getElementById('at_opt_start_paper_btn');
+  const liveBtn = document.getElementById('at_opt_start_live_btn');
   const stopBtn = document.getElementById('at_opt_stop_btn');
   const posCard = document.getElementById('at_opt_position');
   
-  if (d.mode) {
-    document.getElementById('at_opt_mode').value = d.mode;
-  }
-  document.getElementById('at_opt_mode').disabled = d.running;
   document.getElementById('at_opt_capital').disabled = d.running;
   document.getElementById('at_opt_lot_mode').disabled = d.running;
   document.getElementById('at_opt_fixed_lots').disabled = d.running;
+  
+  paperBtn.disabled = d.running;
+  liveBtn.disabled = d.running;
+  stopBtn.disabled = !d.running;
   
   let stateText = d.state.toUpperCase();
   let stateColor = '#f59e0b';
@@ -3942,9 +3941,9 @@ function updateOptAutoTraderUI(d) {
     stateText = 'OFFLINE (IDLE)';
     stateColor = '#6b7280';
   } else if (d.state === 'in-trade') {
-    stateColor = '#10b981';
+     stateColor = '#10b981';
   } else if (d.state === 'error') {
-    stateColor = '#ef4444';
+     stateColor = '#ef4444';
   }
   statusEl.innerHTML = `Status: <span style="color:${stateColor}">${stateText}</span> (${d.mode.toUpperCase()})`;
   
