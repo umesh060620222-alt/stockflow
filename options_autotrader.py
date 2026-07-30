@@ -791,8 +791,8 @@ class OptionsAutoTrader:
     def _fetch_oi_metrics(self, kc, spot_ltp, nifty_open=None):
         """Fetch ATM Put & Call Open Interest from Zerodha to check institutional dip buying."""
         now = time.time()
-        # Allow 4-second polling intervals
-        if hasattr(self, '_last_oi_fetch') and now - getattr(self, '_last_oi_fetch', 0) < 4.0:
+        # Allow 1-second polling intervals (Zerodha quote rate limit is 1 req/sec)
+        if hasattr(self, '_last_oi_fetch') and now - getattr(self, '_last_oi_fetch', 0) < 1.0:
             return getattr(self, '_oi_metrics', {"pcr": 1.0, "pe_oi": 0, "ce_oi": 0, "oi_trend": "NEUTRAL"})
         
         self._last_oi_fetch = now
