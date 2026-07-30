@@ -12,8 +12,18 @@ def reconstruct_pcr():
     kc = Z.kite()
     
     today = dt.date.today()
-    print(f"Resolving Nifty option tokens for today's weekly expiry ({today})...")
+    print("Resolving next week's Nifty weekly options (since today's weekly has expired)...")
     
+    # Resolve the nearest active weekly expiry date
+    try:
+        # Pass tomorrow's date to force it to look at the next weekly expiry
+        tomorrow = today + dt.timedelta(days=1)
+        expiry_date = Z.get_expiry_date(kc, tomorrow)
+        print(f"Nearest active weekly expiry found: {expiry_date}")
+    except Exception as e:
+        print(f"Failed to find next weekly expiry: {e}")
+        return
+        
     # Strikes to track
     strikes = [24200, 24250, 24300, 24350]
     
@@ -28,13 +38,13 @@ def reconstruct_pcr():
     # We resolve tokens for both CE and PE for all active strikes
     for s in strikes:
         for opt_type in ["CE", "PE"]:
-            token = Z.get_option_token(kc, "NIFTY", today, s, opt_type)
+            token = Z.get_option_token(kc, "NIFTY", expiry_date, s, opt_type)
             if token:
                 key = f"{s}_{opt_type}"
                 option_tokens[key] = token
                 
     if not option_tokens:
-        print("Could not resolve option tokens for today's expiry. Today might be post-expiry or weekend.")
+        print(f"Could not resolve option tokens for expiry {expiry_date}.")
         return
         
     print(f"Resolved tokens for {len(option_tokens)} option contracts.")
@@ -64,9 +74,6 @@ def reconstruct_pcr():
     # Align all data series into a single DataFrame
     df_vol = pd.DataFrame(vol_data)
     df_vol.fillna(0, inplace=True)
-    
-    # Calculate 1-minute delta volume (candles show cumulative daily volume or interval volume)
-    # Note: Zerodha historical API for options usually returns interval volume, not cumulative, so we can use it directly.
     
     # Sum Put Volumes
     pe_cols = [c for c in df_vol.columns if "PE" in c]
@@ -109,8 +116,8 @@ def reconstruct_pcr():
     print(f"   ▸ Call Vol:  {int(df_vol.loc[min_idx, 'call_vol']):,}")
     print("="*80)
     
-    # Print notable spikes (> 1.8 or < 0.4)
-    print("\n📝 NOTABLE EXTREME SPIKES LOG:")
+    # Print notable spikes (> 1.6 or < 0.4)
+    print("\n📝 NOTABLE EXTREME SPIKES LOG (EMA >= 1.50 or EMA <= 0.45):")
     print("-"*80)
     print(f"{'Time':<12} | {'Raw PCR':<10} | {'EMA PCR':<10} | {'Put Volume':<12} | {'Call Volume':<12}")
     print("-"*80)
@@ -119,9 +126,8 @@ def reconstruct_pcr():
     for idx, row in df_vol.iterrows():
         raw_pcr = row['raw_vol_pcr']
         ema_pcr = row['vol_pcr_ema']
-        time_str = idx.strftime('%H:%M')
         
-        if ema_pcr >= 1.60 or ema_pcr <= 0.45:
+        if ema_pcr >= 1.50 or ema_pcr <= 0.45:
             # simple throttle: print at most once every 5 minutes for clean output
             if last_printed_time is None or (idx - last_printed_time).total_seconds() >= 300:
                 print(f"{idx.strftime('%H:%M:%S'):<12} | {raw_pcr:<10.2f} | {ema_pcr:<10.2f} | {int(row['put_vol']):<12,} | {int(row['call_vol']):<12,}")
