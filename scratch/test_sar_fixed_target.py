@@ -229,7 +229,7 @@ def run_sar_fixed_target_backtest():
     print("-"*115)
     print(f"🎯 Standard Target +40 Strategy:  {total_points_initial:+.2f} points (₹{total_points_initial*130:+,.0f})")
     print(f"🔄 SAR with Hold-To-EOD:          +921.00 points (₹{+119730:+,.0f})")
-    print(f"🛡️ SAR with Target +50 (Breakeven): {total_points_fixed := total_points_sar_fixed:+.2f} points (₹{total_points_sar_fixed*130:+,.0f})")
+    print(f"🛡️ SAR with Target +50 (Breakeven): {total_points_sar_fixed:+.2f} points (₹{total_points_sar_fixed*130:+,.0f})")
     print("="*115)
 
 if __name__ == "__main__":
