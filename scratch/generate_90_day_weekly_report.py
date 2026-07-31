@@ -225,13 +225,16 @@ def generate_90_day_weekly_report():
         
     df_res = pd.DataFrame(trades)
     
-    # Slice the trades into weeks of exactly 5 trading days each (90 days = 18 weeks)
+    # Slice the trades into weeks of exactly 5 trading days each
     week_results = []
-    for w_idx in range(18):
+    num_weeks = int(np.ceil(len(df_res) / 5))
+    for w_idx in range(num_weeks):
         start_idx = w_idx * 5
-        end_idx = start_idx + 5
+        end_idx = min(start_idx + 5, len(df_res))
         df_w = df_res.iloc[start_idx:end_idx]
-        
+        if df_w.empty:
+            continue
+            
         start_date = df_w.iloc[0]['date']
         end_date = df_w.iloc[-1]['date']
         
