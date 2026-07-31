@@ -1326,6 +1326,9 @@ _LIVE_POSITION = {
     "opt_token": None,
     "lot_size": 1,
     "sl_spot": 0.0,
+    "target_spot": 0.0,
+    "is_sar": False,
+    "sar_done": False,
     "atr": 0.0,
     "order_id": None,
     "exit_order_id": None,
@@ -1412,7 +1415,7 @@ def _exit_live_position(kc, reason):
         )
         
         _LIVE_POSITION["status"] = "CLOSED"
-        _LIVE_POSITION["result"] = "SL" if "Stop Loss" in reason else "MANUAL"
+        _LIVE_POSITION["result"] = "TARGET" if "Target" in reason else "SL" if "Stop Loss" in reason else "MANUAL"
         _LIVE_POSITION["exit_price"] = exit_price
         _LIVE_POSITION["exit_order_id"] = oid
         _LIVE_POSITION["active"] = False
@@ -1420,6 +1423,69 @@ def _exit_live_position(kc, reason):
     except Exception as e:
         print(f"[live-monitor] Failed to exit position: {e}", flush=True)
         _LIVE_POSITION["active"] = False
+
+def _execute_live_sar(kc, symbol, rev_side, entry_spot_price):
+    try:
+        opt = _resolve_option(kc, symbol, entry_spot_price, rev_side)
+        if not opt:
+            print(f"[live-monitor] Failed to resolve reverse option for SAR: {symbol} {rev_side}", flush=True)
+            return
+            
+        tradingsymbol = opt["tradingsymbol"]
+        lot_size = opt["lot_size"]
+        lots = _LIVE_POSITION.get("lots", 1)
+        
+        opt_quote = kc.quote([f"NFO:{tradingsymbol}"])
+        q_data = opt_quote.get(f"NFO:{tradingsymbol}", {})
+        best_ask = q_data.get("depth", {}).get("sell", [{}])[0].get("price") or q_data.get("last_price")
+        
+        if not best_ask:
+            print(f"[live-monitor] Failed to get buy quote for reverse option {tradingsymbol}", flush=True)
+            return
+            
+        price = _round_tick(best_ask, _get_tick_size(kc, "NFO", tradingsymbol))
+        
+        oid = kc.place_order(
+            variety          = kc.VARIETY_REGULAR,
+            exchange         = kc.EXCHANGE_NFO,
+            tradingsymbol    = tradingsymbol,
+            transaction_type = kc.TRANSACTION_TYPE_BUY,
+            quantity         = int(lots * lot_size),
+            product          = kc.PRODUCT_NRML,
+            order_type       = kc.ORDER_TYPE_LIMIT,
+            price            = price
+        )
+        
+        if rev_side == "CE":
+            target_spot = entry_spot_price + 50.0
+            sl_spot = entry_spot_price - 50.0
+        else:
+            target_spot = entry_spot_price - 50.0
+            sl_spot = entry_spot_price + 50.0
+            
+        _LIVE_POSITION.update({
+            "active": True,
+            "symbol": symbol,
+            "side": rev_side,
+            "lots": lots,
+            "entry_spot": entry_spot_price,
+            "entry_opt_price": price,
+            "opt_symbol": tradingsymbol,
+            "opt_token": opt.get("instrument_token"),
+            "lot_size": lot_size,
+            "sl_spot": sl_spot,
+            "target_spot": target_spot,
+            "is_sar": True,
+            "sar_done": True,
+            "order_id": oid,
+            "exit_order_id": None,
+            "status": "OPEN",
+            "result": None,
+            "exit_price": 0.0
+        })
+        print(f"[live-monitor] SAR position entered: {rev_side} {tradingsymbol} at price {price}. Target Spot: {target_spot}, SL Spot: {sl_spot}", flush=True)
+    except Exception as e:
+        print(f"[live-monitor] Error placing SAR order: {e}", flush=True)
 
 def _live_position_monitor_loop():
     import sys
@@ -1431,6 +1497,9 @@ def _live_position_monitor_loop():
                 symbol = _LIVE_POSITION["symbol"]
                 side = _LIVE_POSITION["side"]
                 sl_spot = _LIVE_POSITION["sl_spot"]
+                target_spot = _LIVE_POSITION.get("target_spot", 0.0)
+                is_sar = _LIVE_POSITION.get("is_sar", False)
+                sar_done = _LIVE_POSITION.get("sar_done", False)
                 
                 formatted_sym = symbol
                 if symbol in ("NIFTY", "NIFTY 50"):
@@ -1447,17 +1516,38 @@ def _live_position_monitor_loop():
                     spot_price = quote.get(formatted_sym, {}).get("last_price")
                     
                     if spot_price:
-                        trigger_exit = False
-                        if side == "CE" and spot_price <= sl_spot:
-                            trigger_exit = True
-                            reason = "Stop Loss Hit (Spot dropped below SL)"
-                        elif side == "PE" and spot_price >= sl_spot:
-                            trigger_exit = True
-                            reason = "Stop Loss Hit (Spot rose above SL)"
-                            
-                        if trigger_exit:
-                            print(f"[live-monitor] Triggering exit for {symbol} {side}: {reason} (Spot: {spot_price}, SL: {sl_spot})", flush=True)
+                        # 1. Check Target Hit
+                        hit_target = False
+                        if target_spot > 0.0:
+                            if side == "CE" and spot_price >= target_spot:
+                                hit_target = True
+                            elif side == "PE" and spot_price <= target_spot:
+                                hit_target = True
+                                
+                        if hit_target:
+                            reason = f"Target Hit (Spot reached {target_spot:.2f})"
+                            print(f"[live-monitor] Triggering exit for {symbol} {side}: {reason} (Spot: {spot_price})", flush=True)
                             _exit_live_position(kc, reason)
+                            continue
+                            
+                        # 2. Check Stop Loss Hit
+                        hit_sl = False
+                        if side == "CE" and spot_price <= sl_spot:
+                            hit_sl = True
+                        elif side == "PE" and spot_price >= sl_spot:
+                            hit_sl = True
+                            
+                        if hit_sl:
+                            reason = f"Stop Loss Hit (Spot reached {sl_spot:.2f})"
+                            print(f"[live-monitor] Triggering exit for {symbol} {side}: {reason} (Spot: {spot_price})", flush=True)
+                            _exit_live_position(kc, reason)
+                            
+                            # Check if we should trigger Stop-and-Reverse (SAR)
+                            if not is_sar and not sar_done:
+                                rev_side = "PE" if side == "CE" else "CE"
+                                print(f"[live-monitor] TRIGGERING STOP-AND-REVERSE (SAR): Buying {rev_side}...", flush=True)
+                                _execute_live_sar(kc, symbol, rev_side, sl_spot)
+                            continue
         except Exception as e:
             print(f"[live-monitor] Error: {e}", flush=True)
         time.sleep(1.0)
@@ -1503,6 +1593,86 @@ class H(BaseHTTPRequestHandler):
         if path in ("/premarket", "/premarket.html"):
             with open(os.path.join(HERE, "web", "premarket.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
+        if path == "/api/options/gap_recommendation":
+            try:
+                if not Z.auth_status():
+                    return self._send(200, dumps({"error": "connect Zerodha first"}))
+                kc = Z.kite()
+                nifty_token = 256265
+                today = datetime.date.today()
+                
+                # Resolve yesterday close
+                yesterday = today - datetime.timedelta(days=1)
+                while yesterday.weekday() >= 5:
+                    yesterday -= datetime.timedelta(days=1)
+                    
+                y_candles = kc.historical_data(nifty_token, yesterday, yesterday, "day")
+                if not y_candles:
+                    y_start = datetime.datetime.combine(yesterday, datetime.time(9,15))
+                    y_end = datetime.datetime.combine(yesterday, datetime.time(15,30))
+                    y_candles_m = kc.historical_data(nifty_token, y_start, y_end, "minute")
+                    yesterday_close = y_candles_m[-1]['close'] if y_candles_m else None
+                else:
+                    yesterday_close = y_candles[0]['close']
+                    
+                if not yesterday_close:
+                    return self._send(200, dumps({"status": "error", "message": "Could not resolve yesterday close price."}))
+                    
+                # Resolve today open
+                today_open = None
+                t_candles = kc.historical_data(nifty_token, today, today, "day")
+                if t_candles:
+                    today_open = t_candles[0]['open']
+                else:
+                    t_start = datetime.datetime.combine(today, datetime.time(9,15))
+                    t_end = datetime.datetime.now()
+                    t_candles_m = kc.historical_data(nifty_token, t_start, t_end, "minute")
+                    if t_candles_m:
+                        today_open = t_candles_m[0]['open']
+                        
+                quote = kc.quote(["NSE:NIFTY 50"])
+                spot_ltp = quote.get("NSE:NIFTY 50", {}).get("last_price")
+                
+                if not today_open:
+                    return self._send(200, dumps({
+                        "status": "waiting_for_open",
+                        "yesterday_close": yesterday_close,
+                        "spot_ltp": spot_ltp
+                    }))
+                    
+                gap = today_open - yesterday_close
+                gap_pct = gap / yesterday_close
+                
+                if gap_pct >= 0.008:
+                    side = "PE"
+                    mode = "FADE"
+                    desc = f"PE (Fade Extreme Gap Up {gap_pct*100:+.2f}%)"
+                elif gap_pct <= -0.008:
+                    side = "CE"
+                    mode = "FADE"
+                    desc = f"CE (Fade Extreme Gap Down {gap_pct*100:+.2f}%)"
+                elif gap > 0:
+                    side = "CE"
+                    mode = "FOLLOW"
+                    desc = f"CE (Follow Normal Gap Up {gap_pct*100:+.2f}%)"
+                else:
+                    side = "PE"
+                    mode = "FOLLOW"
+                    desc = f"PE (Follow Normal Gap Down {gap_pct*100:+.2f}%)"
+                    
+                return self._send(200, dumps({
+                    "status": "active",
+                    "yesterday_close": yesterday_close,
+                    "today_open": today_open,
+                    "gap_points": round(gap, 2),
+                    "gap_pct": round(gap_pct * 100, 2),
+                    "side": side,
+                    "mode": mode,
+                    "desc": desc,
+                    "spot_ltp": spot_ltp
+                }))
+            except Exception as e:
+                return self._send(200, dumps({"status": "error", "message": str(e)}))
         if path == "/api/reversal":
             import reversal_scanner as RS
             try:
@@ -1944,6 +2114,128 @@ class H(BaseHTTPRequestHandler):
                     
                 return self._send(200, dumps({"status": "success", "file": file_name}))
             except Exception as e:
+                return self._send(200, dumps({"error": str(e)}))
+        if path == "/api/options/execute_gap_play":
+            if _LIVE_POSITION.get("active"):
+                return self._send(200, dumps({"error": "An active live position is already running."}))
+            try:
+                if not Z.auth_status():
+                    return self._send(200, dumps({"error": "connect Zerodha first"}))
+                kc = Z.kite()
+                lots = int(body.get("lots", 2))
+                
+                nifty_token = 256265
+                today = datetime.date.today()
+                
+                # Resolve yesterday close
+                yesterday = today - datetime.timedelta(days=1)
+                while yesterday.weekday() >= 5:
+                    yesterday -= datetime.timedelta(days=1)
+                    
+                y_candles = kc.historical_data(nifty_token, yesterday, yesterday, "day")
+                if not y_candles:
+                    y_start = datetime.datetime.combine(yesterday, datetime.time(9,15))
+                    y_end = datetime.datetime.combine(yesterday, datetime.time(15,30))
+                    y_candles_m = kc.historical_data(nifty_token, y_start, y_end, "minute")
+                    yesterday_close = y_candles_m[-1]['close'] if y_candles_m else None
+                else:
+                    yesterday_close = y_candles[0]['close']
+                    
+                if not yesterday_close:
+                    return self._send(200, dumps({"error": "Could not resolve yesterday close price."}))
+                    
+                # Resolve today open
+                today_open = None
+                t_candles = kc.historical_data(nifty_token, today, today, "day")
+                if t_candles:
+                    today_open = t_candles[0]['open']
+                else:
+                    t_start = datetime.datetime.combine(today, datetime.time(9,15))
+                    t_end = datetime.datetime.now()
+                    t_candles_m = kc.historical_data(nifty_token, t_start, t_end, "minute")
+                    if t_candles_m:
+                        today_open = t_candles_m[0]['open']
+                        
+                if not today_open:
+                    return self._send(200, dumps({"error": "Waiting for market open price."}))
+                    
+                quote = kc.quote(["NSE:NIFTY 50"])
+                spot_ltp = quote.get("NSE:NIFTY 50", {}).get("last_price")
+                if not spot_ltp:
+                    return self._send(200, dumps({"error": "Could not resolve Nifty Spot LTP."}))
+                    
+                gap = today_open - yesterday_close
+                gap_pct = gap / yesterday_close
+                
+                if gap_pct >= 0.008:
+                    side = "PE"
+                elif gap_pct <= -0.008:
+                    side = "CE"
+                elif gap > 0:
+                    side = "CE"
+                else:
+                    side = "PE"
+                    
+                # Resolve option
+                opt = _resolve_option(kc, "NIFTY", spot_ltp, side)
+                if not opt:
+                    return self._send(200, dumps({"error": f"No nearest {side} option found for NIFTY at strike near {spot_ltp}"}))
+                    
+                tradingsymbol = opt["tradingsymbol"]
+                lot_size = opt["lot_size"]
+                
+                opt_quote = kc.quote([f"NFO:{tradingsymbol}"])
+                q_data = opt_quote.get(f"NFO:{tradingsymbol}", {})
+                best_ask = q_data.get("depth", {}).get("sell", [{}])[0].get("price") or q_data.get("last_price")
+                
+                if not best_ask:
+                    return self._send(200, dumps({"error": f"Could not get option quote for {tradingsymbol}"}))
+                    
+                price = _round_tick(best_ask, _get_tick_size(kc, "NFO", tradingsymbol))
+                
+                if side == "CE":
+                    target_spot = spot_ltp + 40.0
+                    sl_spot = spot_ltp - 50.0
+                else:
+                    target_spot = spot_ltp - 40.0
+                    sl_spot = spot_ltp + 50.0
+                    
+                oid = kc.place_order(
+                    variety          = kc.VARIETY_REGULAR,
+                    exchange         = kc.EXCHANGE_NFO,
+                    tradingsymbol    = tradingsymbol,
+                    transaction_type = kc.TRANSACTION_TYPE_BUY,
+                    quantity         = int(lots * lot_size),
+                    product          = kc.PRODUCT_NRML,
+                    order_type       = kc.ORDER_TYPE_LIMIT,
+                    price            = price
+                )
+                
+                _LIVE_POSITION.update({
+                    "active": True,
+                    "symbol": "NIFTY",
+                    "side": side,
+                    "lots": lots,
+                    "entry_spot": spot_ltp,
+                    "entry_opt_price": price,
+                    "opt_symbol": tradingsymbol,
+                    "opt_token": opt.get("instrument_token"),
+                    "lot_size": lot_size,
+                    "sl_spot": sl_spot,
+                    "target_spot": target_spot,
+                    "is_sar": False,
+                    "sar_done": False,
+                    "order_id": oid,
+                    "exit_order_id": None,
+                    "status": "OPEN",
+                    "result": None,
+                    "exit_price": 0.0
+                })
+                
+                print(f"[live-trading] Gap Play executed: {side} option {tradingsymbol} ({lots} lots) at price {price}. Spot: {spot_ltp}, Target Spot: {target_spot}, SL Spot: {sl_spot}", flush=True)
+                return self._send(200, dumps(_LIVE_POSITION))
+            except Exception as e:
+                traceback.print_exc()
                 return self._send(200, dumps({"error": str(e)}))
         if path == "/api/live/buy":
             if _LIVE_POSITION.get("active"):

@@ -368,6 +368,20 @@
       </div>
       <div id="scSectorContent" style="display:flex;flex-wrap:wrap;gap:10px;font-size:12px">Fetching sector values...</div>
     </div>
+    <!-- 10:00 AM Nifty Gap Play Advisor Card -->
+    <div id="gapPlayAdvisorCard" style="margin-bottom:14px;padding:12px 16px;background:#1e293b;border-radius:10px;border:1px solid #3b82f6">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <b style="font-size:13px;color:#60a5fa">⚡ Nifty 10:00 AM Gap Play Advisor (Live Recommendations)</b>
+        <div id="gapPlayTime" style="font-size:11px;color:#94a3b8">Real-time</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <div id="gapPlayContent" style="font-size:12px;color:#cbd5e1">Fetching Nifty Spot gap metrics & resolving signal...</div>
+        <div style="display:flex;gap:8px">
+          <input id="gapPlayLots" type="number" value="2" min="1" style="background:#0f172a;border:1px solid #475569;color:#f8fafc;padding:4px 8px;border-radius:6px;font-size:12px;width:60px" placeholder="Lots">
+          <button id="gapPlayExecuteBtn" class="btn" style="background:#2563eb;color:#fff;font-size:12px;font-weight:600;padding:4px 12px;margin:0;border-radius:6px;cursor:pointer" onclick="executeGapPlayTrade()">Execute Trade</button>
+        </div>
+      </div>
+    </div>
     <!-- Live Bullish Option Trade Advisor Card -->
     <div id="scBullAdvisorLive" style="margin-bottom:14px;padding:12px 16px;background:#101113;border-radius:10px;border:1px solid #14532d">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -438,11 +452,12 @@
         <b style="font-size:13px;color:#fbbf24">Active Option Position</b>
         <span class="pill pos" id="lvPosSide" style="font-weight:700">CE</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px" class="muted">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;font-size:11px" class="muted">
         <div>Symbol: <span id="lvPosSymbol" style="color:#fff;font-weight:600">—</span></div>
         <div>Lots: <span id="lvPosLots" style="color:#fff;font-weight:600">—</span></div>
         <div>Entry Spot: <span id="lvPosEntrySpot" style="color:#fff;font-weight:600">—</span></div>
         <div>SL Spot: <span id="lvPosSLSpot" style="color:#f87171;font-weight:600">—</span></div>
+        <div>Target Spot: <span id="lvPosTargetSpot" style="color:#4ade80;font-weight:600">—</span></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px;margin-top:8px" class="muted">
         <div>Option Entry: <span id="lvPosEntryOpt" style="color:#fff;font-weight:600">—</span></div>
@@ -2968,6 +2983,7 @@ function updateLivePositionUI(d) {
   document.getElementById('lvPosLots').textContent = d.lots;
   document.getElementById('lvPosEntrySpot').textContent = d.entry_spot.toFixed(2);
   document.getElementById('lvPosSLSpot').textContent = d.sl_spot.toFixed(2);
+  document.getElementById('lvPosTargetSpot').textContent = d.target_spot ? d.target_spot.toFixed(2) : '—';
   document.getElementById('lvPosEntryOpt').textContent = d.entry_opt_price.toFixed(2);
   document.getElementById('lvPosATR').textContent = d.atr.toFixed(2);
   document.getElementById('lvPosOrderId').textContent = d.order_id;
@@ -2981,6 +2997,74 @@ function updateLivePositionUI(d) {
 }
 
 setInterval(pollLivePosition, 2000);
+
+async function pollGapRecommendation() {
+  try {
+    const res = await fetch('/api/options/gap_recommendation');
+    const d = await res.json();
+    const contentEl = document.getElementById('gapPlayContent');
+    const timeEl = document.getElementById('gapPlayTime');
+    const executeBtn = document.getElementById('gapPlayExecuteBtn');
+    
+    if (d.error) {
+      if (d.error.includes("connect Zerodha")) {
+        contentEl.innerHTML = `<span style="color:#f87171">Zerodha disconnected. Click connection tab to authenticate.</span>`;
+        timeEl.innerHTML = `<span style="background:#dc2626;color:#fff;padding:2px 6px;border-radius:4px;font-weight:bold">DISCONNECTED</span>`;
+        executeBtn.disabled = true;
+      } else {
+        contentEl.innerHTML = `<span style="color:#f87171">Error: ${d.error}</span>`;
+        executeBtn.disabled = true;
+      }
+      return;
+    }
+    
+    if (d.status === 'waiting_for_open') {
+      contentEl.innerHTML = `Yesterday Close: <b>${d.yesterday_close.toFixed(2)}</b> | Spot Nifty: <b>${d.spot_ltp ? d.spot_ltp.toFixed(2) : '—'}</b> (Waiting for open)`;
+      timeEl.innerHTML = `<span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-weight:bold">WAITING FOR OPEN</span>`;
+      executeBtn.disabled = true;
+    } else if (d.status === 'active') {
+      contentEl.innerHTML = `Yest Close: <b>${d.yesterday_close.toFixed(2)}</b> | Open: <b>${d.today_open.toFixed(2)}</b> | Gap: <b style="color:${d.gap_points >= 0 ? '#4ade80' : '#f87171'}">${d.gap_points >= 0 ? '+' : ''}${d.gap_points.toFixed(2)} pts (${d.gap_pct >= 0 ? '+' : ''}${d.gap_pct.toFixed(2)}%)</b>`;
+      const badgeColor = d.side === 'CE' ? '#10b981' : '#ef4444';
+      timeEl.innerHTML = `<span style="background:${badgeColor};color:#fff;padding:2px 6px;border-radius:4px;font-weight:bold">BUY ${d.side} (${d.mode})</span>`;
+      executeBtn.disabled = false;
+    } else {
+      contentEl.textContent = d.message || 'Error fetching gap recommendation.';
+      executeBtn.disabled = true;
+    }
+  } catch (e) {
+    console.error('Failed to poll gap recommendation:', e);
+  }
+}
+
+async function executeGapPlayTrade() {
+  const lotsInput = document.getElementById('gapPlayLots');
+  const lots = parseInt(lotsInput.value) || 2;
+  const executeBtn = document.getElementById('gapPlayExecuteBtn');
+  executeBtn.disabled = true;
+  executeBtn.textContent = 'Executing...';
+  try {
+    const res = await fetch('/api/options/execute_gap_play', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ lots: lots })
+    });
+    const d = await res.json();
+    if (d.error) {
+      alert('Gap Play Execution Failed: ' + d.error);
+    } else {
+      alert('⚡ Gap Play Trade successfully placed! Spot SL & Targets armed.');
+      updateLivePositionUI(d);
+    }
+  } catch (e) {
+    alert('Failed to execute gap play: ' + e);
+  } finally {
+    executeBtn.disabled = false;
+    executeBtn.textContent = 'Execute Trade';
+  }
+}
+
+setInterval(pollGapRecommendation, 10000);
+pollGapRecommendation();
 
 function lvParseBinary(buf){
   const view=new DataView(buf); if(buf.byteLength<2) return;
