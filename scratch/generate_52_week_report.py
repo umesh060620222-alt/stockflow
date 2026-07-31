@@ -51,6 +51,11 @@ def generate_52_week_report():
         except Exception as e:
             print(f"Skipped chunk {c_start} to {c_end}: {e}")
             
+    # Fetch official daily closes for yesterday close references
+    print("Fetching official daily candles for close price lookup...")
+    daily_candles = kc.historical_data(nifty_token, start_date - dt.timedelta(days=7), today, "day")
+    daily_close_map = {c['date'].date(): c['close'] for c in daily_candles}
+    
     df_raw = pd.DataFrame(all_candles)
     if df_raw.empty:
         print("No historical data found.")
@@ -72,9 +77,13 @@ def generate_52_week_report():
             continue # need yesterday's close
             
         yesterday = sorted_days[idx - 1]
-        yest_df = days_grouped[yesterday]
-        yesterday_close = yest_df.iloc[-1]['close']
+        yesterday_close = daily_close_map.get(yesterday)
         
+        if yesterday_close is None:
+            # fallback if not in map
+            yest_df = days_grouped[yesterday]
+            yesterday_close = yest_df.iloc[-1]['close']
+            
         today_df = days_grouped[day].copy()
         today_df.set_index('date', inplace=True)
         
