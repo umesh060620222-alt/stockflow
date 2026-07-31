@@ -265,35 +265,26 @@ def generate_sar_weekly_report():
         
     df_res = pd.DataFrame(trades)
     
-    # Slicing weeks dynamically
-    week_results = []
-    num_weeks = int(np.ceil(len(df_res) / 5))
-    for w_idx in range(num_weeks):
-        start_idx = w_idx * 5
-        end_idx = min(start_idx + 5, len(df_res))
-        df_w = df_res.iloc[start_idx:end_idx]
-        if df_w.empty:
-            continue
-            
-        start_date = df_w.iloc[0]['date']
-        end_date = df_w.iloc[-1]['date']
-        
-        pts_t20 = df_w['t20'].sum()
-        pts_t40 = df_w['t40'].sum()
-        pts_sar = df_w['sar'].sum()
-        pts_trail = df_w['trail'].sum()
-        
-        week_results.append({
-            "week_num": w_idx + 1,
-            "period": f"{start_date.strftime('%b %d')} - {end_date.strftime('%b %d')}",
-            "t20_pts": pts_t20,
-            "t40_pts": pts_t40,
-            "sar_pts": pts_sar,
-            "trail_pts": pts_trail
-        })
+    # Group the trades by actual calendar weeks (ending on Friday)
+    df_res['week_start'] = df_res['date'].apply(lambda d: d - dt.timedelta(days=d.weekday()))
+    df_res['week_end'] = df_res['week_start'].apply(lambda d: d + dt.timedelta(days=4))
+    
+    # Generate all calendar weeks in the range
+    min_date = df_res['date'].min()
+    max_date = df_res['date'].max()
+    
+    # Start on the Monday of the first date
+    start_monday = min_date - dt.timedelta(days=min_date.weekday())
+    
+    calendar_weeks = []
+    curr = start_monday
+    while curr <= max_date:
+        w_end = curr + dt.timedelta(days=4)
+        calendar_weeks.append((curr, w_end))
+        curr += dt.timedelta(days=7)
         
     print("\n" + "="*125)
-    print("📊 90-DAY (18-WEEK) WEEK-BY-WEEK STRATEGY REPORT WITH STOP-AND-REVERSE (2 LOTS / 130 SHARES)")
+    print("📊 90-DAY WEEK-BY-WEEK CALENDAR STRATEGY REPORT (2 LOTS / 130 SHARES)")
     print("="*125)
     print(f"{'Week Period':<26} | {'Target +20 P&L':<18} | {'Target +40 P&L':<18} | {'🔄 SAR Strategy P&L':<21} | {'Trailing Breakeven P&L'}")
     print("-"*125)
@@ -303,21 +294,30 @@ def generate_sar_weekly_report():
     grand_sar = 0.0
     grand_trail = 0.0
     
-    for w in week_results:
-        rs_t20 = w['t20_pts'] * 130
-        rs_t40 = w['t40_pts'] * 130
-        rs_sar = w['sar_pts'] * 130
-        rs_trail = w['trail_pts'] * 130
+    for idx, (w_start, w_end) in enumerate(calendar_weeks):
+        # Filter trades in this calendar week
+        df_w = df_res[(df_res['date'] >= w_start) & (df_res['date'] <= w_end)]
+        
+        pts_t20 = df_w['t20'].sum() if not df_w.empty else 0.0
+        pts_t40 = df_w['t40'].sum() if not df_w.empty else 0.0
+        pts_sar = df_w['sar'].sum() if not df_w.empty else 0.0
+        pts_trail = df_w['trail'].sum() if not df_w.empty else 0.0
+        
+        rs_t20 = pts_t20 * 130
+        rs_t40 = pts_t40 * 130
+        rs_sar = pts_sar * 130
+        rs_trail = pts_trail * 130
         
         grand_t20 += rs_t20
         grand_t40 += rs_t40
         grand_sar += rs_sar
         grand_trail += rs_trail
         
-        print(f"W{w['week_num']:02d}: {w['period']:<20} | {w['t20_pts']:>+5.1f} pts (₹{rs_t20:>+6.0f}) | {w['t40_pts']:>+5.1f} pts (₹{rs_t40:>+6.0f}) | {w['sar_pts']:>+5.1f} pts (₹{rs_sar:>+6.0f}) | {w['trail_pts']:>+5.1f} pts (₹{rs_trail:>+6.0f})")
+        period_str = f"{w_start.strftime('%b %d')} - {w_end.strftime('%b %d')}"
+        print(f"W{idx+1:02d}: {period_str:<20} | {pts_t20:>+5.1f} pts (₹{rs_t20:>+6.0f}) | {pts_t40:>+5.1f} pts (₹{rs_t40:>+6.0f}) | {pts_sar:>+5.1f} pts (₹{rs_sar:>+6.0f}) | {pts_trail:>+5.1f} pts (₹{rs_trail:>+6.0f})")
         
     print("-"*125)
-    print(f"{'GRAND TOTAL (18 WEEKS)':<26} | ₹{grand_t20:>+12.2f}      | ₹{grand_t40:>+12.2f}      | ₹{grand_sar:>+12.2f}      | ₹{grand_trail:>+12.2f}")
+    print(f"{'GRAND TOTAL':<26} | ₹{grand_t20:>+12.2f}      | ₹{grand_t40:>+12.2f}      | ₹{grand_sar:>+12.2f}      | ₹{grand_trail:>+12.2f}")
     print("="*125)
 
 if __name__ == "__main__":
