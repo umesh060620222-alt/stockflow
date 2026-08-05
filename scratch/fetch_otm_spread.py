@@ -25,8 +25,29 @@ def fetch_otm_spread():
     
     today = dt.date.today()
     
+    # Helper to standardize expiry dates
+    def parse_expiry(val):
+        if not val:
+            return None
+        if isinstance(val, str):
+            try:
+                return dt.datetime.strptime(val, "%Y-%m-%d").date()
+            except ValueError:
+                return None
+        elif isinstance(val, dt.datetime):
+            return val.date()
+        elif isinstance(val, dt.date):
+            return val
+        return None
+
     # Group by expiry
-    expiries = sorted(list({dt.datetime.strptime(i["expiry"], "%Y-%m-%d").date() for i in nifty_options if i.get("expiry")}))
+    exp_set = set()
+    for i in nifty_options:
+        exp_date = parse_expiry(i.get("expiry"))
+        if exp_date:
+            exp_set.add(exp_date)
+            
+    expiries = sorted(list(exp_set))
     future_expiries = [e for e in expiries if e >= today]
     
     print("\nAvailable Expiries:")
@@ -50,7 +71,7 @@ def fetch_otm_spread():
         days = (exp - today).days
         print(f"\n--- Analyzing Expiry: {exp.strftime('%b %d, %Y')} ({days} days) ---")
         
-        exp_opts = [i for i in nifty_options if dt.datetime.strptime(i["expiry"], "%Y-%m-%d").date() == exp]
+        exp_opts = [i for i in nifty_options if parse_expiry(i.get("expiry")) == exp]
         
         # Bull Put Spread (Sell OTM Put, Buy further OTM Put as protection)
         # Sell Strike: Spot - 8% to 10% OTM
