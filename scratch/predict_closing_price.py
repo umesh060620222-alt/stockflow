@@ -13,11 +13,14 @@ def predict_closing():
     today = dt.date.today()
     nifty_token = 256265
     
-    # Fetch Nifty Spot 1-minute candles from 15:00 to 15:07 PM
-    s_dt = dt.datetime.combine(today, dt.time(15, 0))
-    e_dt = dt.datetime.now()
+    import pytz
+    ist_now = dt.datetime.now(pytz.timezone("Asia/Kolkata")).replace(tzinfo=None)
     
-    print(f"Fetching closing window candles from {s_dt.strftime('%H:%M:%S')} to {e_dt.strftime('%H:%M:%S')}...")
+    # Fetch Nifty Spot 1-minute candles from 15:00 to current time (IST)
+    s_dt = dt.datetime.combine(ist_now.date(), dt.time(15, 0))
+    e_dt = ist_now
+    
+    print(f"Fetching closing window candles from {s_dt.strftime('%H:%M:%S')} to {e_dt.strftime('%H:%M:%S')} (IST)...")
     candles = kc.historical_data(nifty_token, s_dt, e_dt, "minute")
     
     if not candles:
